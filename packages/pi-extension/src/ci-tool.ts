@@ -8,7 +8,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { connectOrStartPipesClient } from "./daemon-client.ts";
 
-const ACTIONS = ["help", "status", "log", "search", "trigger", "wait", "cancel", "stages", "chain"] as const;
+const ACTIONS = ["help", "status", "log", "search", "trigger", "wait", "cancel", "stages", "chain", "pool"] as const;
 
 const PARAMETERS = Type.Object({
 	action: StringEnum(ACTIONS, { description: "Action to perform. Call help first to see configured backends and presets." }),
@@ -52,6 +52,7 @@ export function registerCiTool(pi: ExtensionAPI): void {
 			"Use ci(action=help) before assuming which backends or presets are configured.",
 			"Use ci(action=trigger) then ci(action=wait) then ci(action=status) for a full deploy-and-diagnose flow, instead of ad-hoc polling.",
 			"Use ci(action=status, grep=...) to get a failure's classified cause and log excerpt in one call rather than separately fetching the full log.",
+			"Use ci(action=pool) for a cheap, frequent status check on a run you already triggered — it reads the daemon's locally pooled history and never calls the live backend, unlike status/search.",
 		],
 		parameters: PARAMETERS,
 		async execute(_toolCallId, params) {

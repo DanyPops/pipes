@@ -11,12 +11,23 @@ import {
 	PipelineNotFoundError,
 	StepOutOfRangeError,
 } from "./orchestrator.ts";
+import { isTerminalStatus, type RunPool, type RunSnapshot } from "./run-pool.ts";
 import { VERSION } from "./version.ts";
 
 const DEFAULT_WAIT_TIMEOUT_S = 3600;
 const DEFAULT_WAIT_POLL_MS = 15_000;
 
-export type OperationName = "ci.help" | "ci.status" | "ci.log" | "ci.search" | "ci.trigger" | "ci.wait" | "ci.cancel" | "ci.stages" | "ci.chain";
+export type OperationName =
+	| "ci.help"
+	| "ci.status"
+	| "ci.log"
+	| "ci.search"
+	| "ci.trigger"
+	| "ci.wait"
+	| "ci.cancel"
+	| "ci.stages"
+	| "ci.chain"
+	| "ci.pool";
 
 export interface OperationInputs {
 	"ci.help": Record<string, never>;
@@ -28,6 +39,7 @@ export interface OperationInputs {
 	"ci.cancel": { backend: string; jobRef: string; runId: string };
 	"ci.stages": { backend: string; jobRef: string; runId: string; steps?: boolean; includeFailedLog?: boolean };
 	"ci.chain": { backend: string; jobRef: string; runId: string; depth?: number; artifacts?: boolean };
+	"ci.pool": { backend: string; jobRef: string; limit?: number };
 }
 
 export interface OperationOutputs {
@@ -40,6 +52,8 @@ export interface OperationOutputs {
 	"ci.cancel": { status: "cancelled"; runId: string };
 	"ci.stages": { stages: CIStageNode[] | Array<{ id: string; name: string; status: string; durationMs?: number }> };
 	"ci.chain": CIRunNode;
+	/** Reads only the local pool — never a live backend call, safe to call frequently. Empty when no pool is configured. */
+	"ci.pool": { runs: RunSnapshot[] };
 }
 
 export class UnknownOperationError extends Error {
@@ -53,15 +67,29 @@ export interface PipesService {
 	execute<Name extends OperationName>(op: Name, input: OperationInputs[Name]): Promise<OperationOutputs[Name]>;
 }
 
-const OPERATION_NAMES: OperationName[] = ["ci.help", "ci.status", "ci.log", "ci.search", "ci.trigger", "ci.wait", "ci.cancel", "ci.stages", "ci.chain"];
+const OPERATION_NAMES: OperationName[] = [
+	"ci.help",
+	"ci.status",
+	"ci.log",
+	"ci.search",
+	"ci.trigger",
+	"ci.wait",
+	"ci.cancel",
+	"ci.stages",
+	"ci.chain",
+	"ci.pool",
+];
 
 export interface CreatePipesServiceOptions {
 	/** Overridable for tests; production default is 15s, matching conty's wait ticker. */
 	waitPollIntervalMs?: number;
+	/** Optional: when present, trigger seeds the local pool and ci.pool reads from it. Absent in tests that don't exercise pooling. */
+	runPool?: RunPool;
 }
 
 export function createPipesService(orchestrator: Orchestrator, options: CreatePipesServiceOptions = {}): PipesService {
 	const pollIntervalMs = options.waitPollIntervalMs ?? DEFAULT_WAIT_POLL_MS;
+	const pool = options.runPool;
 
 	async function handleStatus(input: OperationInputs["ci.status"]): Promise<OperationOutputs["ci.status"]> {
 		if (input.pipeline) {
@@ -86,9 +114,15 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 	}
 
 	async function handleTrigger(input: OperationInputs["ci.trigger"]): Promise<OperationOutputs["ci.trigger"]> {
-		if (input.pipeline) return { pipelineRun: await orchestrator.triggerPipeline(input.pipeline) };
+		if (input.pipeline) {
+			const pipelineRun = await orchestrator.triggerPipeline(input.pipeline);
+			if (pool) seedPoolFromPipelineRun(pool, orchestrator.pipelineBackendName(input.pipeline), pipelineRun);
+			return { pipelineRun };
+		}
 		if (!input.backend || !input.jobRef) throw new Error("backend and jobRef are required when pipeline is not set");
-		return { result: await orchestrator.ciTrigger(input.backend, input.jobRef, input.params ?? {}) };
+		const result = await orchestrator.ciTrigger(input.backend, input.jobRef, input.params ?? {});
+		if (pool && result.buildNumber) seedPoolFromTrigger(pool, input.backend, input.jobRef, result.buildNumber);
+		return { result };
 	}
 
 	/** Genuinely blocking: polls ciWatch on an interval until a terminal status or timeout, exactly like conty's wait action. */
@@ -125,6 +159,10 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 		},
 		async execute<Name extends OperationName>(op: Name, input: OperationInputs[Name]): Promise<OperationOutputs[Name]> {
 			switch (op) {
+				case "ci.pool": {
+					const pooled = input as OperationInputs["ci.pool"];
+					return { runs: pool ? pool.recent(pooled.backend, pooled.jobRef, pooled.limit ?? 20) : [] } as OperationOutputs[Name];
+				}
 				case "ci.help":
 					return { backends: orchestrator.backendInfo(), pipelines: orchestrator.listPipelines() } as OperationOutputs[Name];
 				case "ci.status":
@@ -166,6 +204,32 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Seeds one row per resolved step so the background sync loop picks them up on its next tick, without waiting for a caller to ask ci.status first. */
+function seedPoolFromPipelineRun(pool: RunPool, backend: string, pipelineRun: PipelineRun): void {
+	const fetchedAt = new Date();
+	for (const step of pipelineRun.steps) {
+		if (!step.runId) continue;
+		pool.upsert({
+			backend,
+			jobRef: step.jobName,
+			runId: step.runId,
+			status: step.status,
+			result: step.result ?? "",
+			url: step.url ?? "",
+			startedAt: step.startedAt ?? fetchedAt,
+			durationMs: step.durationMs,
+			fetchedAt,
+			watched: !isTerminalStatus(step.status),
+		});
+	}
+}
+
+/** Seeds an approximate "pending" row immediately after trigger — the background sync loop corrects it to the real status on its first tick. */
+function seedPoolFromTrigger(pool: RunPool, backend: string, jobRef: string, runId: string): void {
+	const now = new Date();
+	pool.upsert({ backend, jobRef, runId, status: "pending", result: "", url: "", startedAt: now, fetchedAt: now, watched: true });
 }
 
 async function readOperationBody(request: Request): Promise<{ op?: unknown; input?: unknown }> {

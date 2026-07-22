@@ -1,17 +1,24 @@
 /** Bun composition root: binds and serves via @danypops/daemon-kit's runDaemonProcess. */
+import { buildConfiguredAdapters } from "./adapters/config.ts";
 import { runDaemonProcess } from "@danypops/daemon-kit/daemon";
 import { createLogger } from "@danypops/daemon-kit/logging";
 import { ensureAuthToken } from "@danypops/daemon-kit/paths";
+import { RUN_POOL_SYNC_INTERVAL_MS } from "./constants.ts";
+import { openPipesDb } from "./db.ts";
 import { Orchestrator } from "./orchestrator.ts";
-import { resolvePipesPaths } from "./paths.ts";
+import { resolvePipesCredentialPaths, resolvePipesPaths } from "./paths.ts";
+import { syncRunPool } from "./pool-sync.ts";
 import { defaultPresetsPath, loadPresets } from "./presets.ts";
+import { createRunPool } from "./run-pool.ts";
 import { createApp, createPipesService } from "./service.ts";
 
 const logger = createLogger("pipes-daemon");
 
-/** No real CIBackend adapters are registered here yet — GitHub/GitLab/Jenkins/Prow each add an orchestrator.addAdapter() call once built. */
-function buildOrchestrator(): Orchestrator {
+function buildOrchestrator(credentialPaths: ReturnType<typeof resolvePipesCredentialPaths>): Orchestrator {
 	const orchestrator = new Orchestrator();
+	const { adapters, unconfigured } = buildConfiguredAdapters(credentialPaths);
+	for (const adapter of adapters) orchestrator.addAdapter(adapter);
+	orchestrator.registerUnconfigured(unconfigured);
 	for (const pipeline of loadPresets(defaultPresetsPath())) {
 		orchestrator.registerPipeline(pipeline);
 	}
@@ -21,13 +28,19 @@ function buildOrchestrator(): Orchestrator {
 export function serveMain(): void {
 	const paths = resolvePipesPaths();
 	const token = ensureAuthToken(paths.token, "Pipes");
-	const service = createPipesService(buildOrchestrator());
+	const credentialPaths = resolvePipesCredentialPaths(paths);
+	const orchestrator = buildOrchestrator(credentialPaths);
+	const db = openPipesDb(paths.database);
+	const runPool = createRunPool(db);
+	const service = createPipesService(orchestrator, { runPool });
 
 	runDaemonProcess({
 		daemonLabel: "Pipes",
 		handlePath: paths.handle,
 		logger,
 		buildApp: () => createApp({ service, token }),
+		maintenanceTasks: [{ name: "run-pool-sync", intervalMs: RUN_POOL_SYNC_INTERVAL_MS, run: () => syncRunPool(orchestrator, runPool, logger) }],
+		onShutdown: () => db.close(),
 		onListen: ({ host, port }) => logger.info("listening", { host, port }),
 	});
 }

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { openPipesDb } from "../src/db.ts";
 import { Orchestrator } from "../src/orchestrator.ts";
 import { Capability } from "../src/ports/ci-backend.ts";
+import { createRunPool } from "../src/run-pool.ts";
 import { createPipesService } from "../src/service.ts";
 import { createStubCIBackend } from "./fixtures/stub-ci-backend.ts";
 
@@ -128,5 +130,61 @@ describe("ci.help", () => {
 		const result = await service.execute("ci.help", {});
 		expect(result.backends).toEqual([{ name: "gh", type: "stub", capabilities: "trigger" }]);
 		expect(result.pipelines).toEqual(["deploy"]);
+	});
+});
+
+describe("ci.pool", () => {
+	it("returns an empty list when no run pool is configured, rather than throwing", async () => {
+		const service = createPipesService(new Orchestrator());
+		const result = await service.execute("ci.pool", { backend: "gh", jobRef: "job" });
+		expect(result.runs).toEqual([]);
+	});
+
+	it("reads only the local pool, never the live backend", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({ name: "gh" });
+		orchestrator.addAdapter(backend);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		runPool.upsert({ backend: "gh", jobRef: "job", runId: "1", status: "success", result: "SUCCESS", url: "", startedAt: new Date(0), fetchedAt: new Date(0), watched: false });
+		const service = createPipesService(orchestrator, { runPool });
+
+		const result = await service.execute("ci.pool", { backend: "gh", jobRef: "job" });
+		expect(result.runs).toHaveLength(1);
+		expect(result.runs[0]?.status).toBe("success");
+		expect(backend.calls.getRun).toHaveLength(0);
+	});
+
+	it("seeds the pool immediately on ci.trigger, before any background sync tick has run", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "9" } }),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		await service.execute("ci.trigger", { backend: "gh", jobRef: "job", params: {} });
+
+		const seeded = runPool.get("gh", "job", "9");
+		expect(seeded).toBeDefined();
+		expect(seeded?.watched).toBe(true);
+	});
+
+	it("seeds one pool row per resolved step when triggering a named pipeline", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+				triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "build", runId: "5" },
+			}),
+		);
+		orchestrator.registerPipeline({ name: "deploy", backend: "gh", steps: [{ jobName: "build" }] });
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		await service.execute("ci.trigger", { pipeline: "deploy" });
+
+		expect(runPool.get("gh", "build", "5")).toBeDefined();
 	});
 });

@@ -184,6 +184,11 @@ export class Orchestrator {
 		return [...this.pipelines.keys()];
 	}
 
+	/** The backend a named preset runs against — lets a caller attribute triggerPipeline's per-step results without re-deriving the pipeline's own config. */
+	pipelineBackendName(name: string): string {
+		return this.pipeline(name).backend;
+	}
+
 	backendInfo(): BackendInfo[] {
 		const configured = [...this.adapters.values()].map((backend) => ({
 			name: backend.name(),
