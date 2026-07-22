@@ -16,8 +16,8 @@ switch (command) {
 	}
 	case "backends": {
 		const client = connectPipesClient();
-		const { backends } = await client.call("backends.list", {});
-		console.log(JSON.stringify(backends));
+		const { backends, pipelines } = await client.call("ci.help", {});
+		console.log(JSON.stringify({ backends, pipelines }));
 		break;
 	}
 	default:
