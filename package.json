@@ -1,0 +1,24 @@
+{
+	"name": "pipes-workspace",
+	"private": true,
+	"type": "module",
+	"workspaces": ["packages/*"],
+	"keywords": ["pi-package"],
+	"scripts": {
+		"build": "npm run build --workspaces --if-present",
+		"test": "npm run test --workspaces --if-present",
+		"check": "npm run check --workspaces --if-present"
+	},
+	"pi": {
+		"extensions": ["packages/pi-extension/src/index.ts"]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"typebox": "*"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/DanyPops/pipes.git"
+	},
+	"license": "MIT"
+}

@@ -1,0 +1,28 @@
+{
+	"name": "@danypops/pipes-daemon",
+	"version": "0.1.0",
+	"license": "MIT",
+	"description": "Supervised Bun daemon for pi-pipes: authenticated loopback CI status/trigger/log operations across GitHub, GitLab, Jenkins, and Prow",
+	"type": "module",
+	"files": ["src", "package.json"],
+	"bin": {
+		"pipes-daemon": "src/cli.ts"
+	},
+	"scripts": {
+		"test": "bun test",
+		"check": "bun x tsc --noEmit"
+	},
+	"dependencies": {
+		"@danypops/daemon-kit": "^0.1.1"
+	},
+	"devDependencies": {
+		"@types/node": "^22.19.19",
+		"bun-types": "latest",
+		"typescript": "^5.9.3"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/DanyPops/pipes.git",
+		"directory": "packages/pipes-daemon"
+	}
+}

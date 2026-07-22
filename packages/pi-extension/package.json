@@ -1,0 +1,35 @@
+{
+	"name": "@danypops/pi-pipes",
+	"version": "0.1.0",
+	"license": "MIT",
+	"description": "Pi extension: TUI menu for cross-platform CI (GitHub Actions, GitLab CI, Jenkins, Prow)",
+	"keywords": ["pi-package"],
+	"type": "module",
+	"main": "./src/index.ts",
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	},
+	"dependencies": {
+		"@danypops/pipes-daemon": "^0.1.0"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*"
+	},
+	"scripts": {
+		"test": "bun test",
+		"check": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-coding-agent": "^0.80.10",
+		"@earendil-works/pi-tui": "^0.80.10",
+		"@types/node": "^22.19.19",
+		"bun-types": "latest",
+		"typescript": "^5.9.3"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/DanyPops/pipes.git",
+		"directory": "packages/pi-extension"
+	}
+}
