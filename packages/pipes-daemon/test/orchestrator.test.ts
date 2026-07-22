@@ -1,0 +1,272 @@
+import { describe, expect, it } from "bun:test";
+import type { CIRun } from "../src/domain/ci-run.ts";
+import type { Pipeline } from "../src/domain/pipeline.ts";
+import {
+	applyLogFilter,
+	BackendNotFoundError,
+	CapabilityUnsupportedError,
+	NotOwnedError,
+	Orchestrator,
+	PipelineNotFoundError,
+} from "../src/orchestrator.ts";
+import { Capability } from "../src/ports/ci-backend.ts";
+import { createStubCIBackend } from "./fixtures/stub-ci-backend.ts";
+
+describe("Orchestrator: backends and pipelines registry", () => {
+	it("throws BackendNotFoundError for an unregistered backend", async () => {
+		const orchestrator = new Orchestrator();
+		await expect(orchestrator.ciGetRun("missing", "job", "1")).rejects.toThrow(BackendNotFoundError);
+	});
+
+	it("throws PipelineNotFoundError for an unregistered pipeline", async () => {
+		const orchestrator = new Orchestrator();
+		await expect(orchestrator.triggerPipeline("missing")).rejects.toThrow(PipelineNotFoundError);
+	});
+
+	it("lists configured and unconfigured backends via backendInfo", () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Trigger }));
+		orchestrator.registerUnconfigured([{ name: "gitlab", type: "gitlab" }]);
+		const infos = orchestrator.backendInfo();
+		expect(infos).toContainEqual({ name: "gh", type: "stub", capabilities: "trigger" });
+		expect(infos).toContainEqual({ name: "gitlab", type: "gitlab", capabilities: "unconfigured" });
+	});
+});
+
+describe("Orchestrator.triggerPipeline: named presets", () => {
+	const pipeline: Pipeline = { name: "deploy", backend: "gh", steps: [{ jobName: "build" }, { jobName: "test" }] };
+
+	it("runs all steps and reports success when every step succeeds", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "1" },
+				run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+			}),
+		);
+		orchestrator.registerPipeline(pipeline);
+
+		const run = await orchestrator.triggerPipeline("deploy");
+		expect(run.status).toBe("success");
+		expect(run.steps).toHaveLength(2);
+		expect(run.steps.every((step) => step.status === "success")).toBe(true);
+		expect(orchestrator.getPipelineStatus("deploy")).toBe(run);
+	});
+
+	it("stops at the first failing step and does not run later steps", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "1" },
+				run: { id: "1", name: "run", status: "failure", startedAt: new Date(0) },
+			}),
+		);
+		orchestrator.registerPipeline(pipeline);
+
+		const run = await orchestrator.triggerPipeline("deploy");
+		expect(run.status).toBe("failure");
+		expect(run.steps[0]?.status).toBe("failure");
+		expect(run.steps[1]?.status).toBe("running"); // never reached
+	});
+
+	it("fails immediately when the backend does not support triggering", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh" })); // no Trigger capability
+		orchestrator.registerPipeline(pipeline);
+
+		const run = await orchestrator.triggerPipeline("deploy");
+		expect(run.status).toBe("failure");
+	});
+});
+
+describe("Orchestrator.getVerdict: the compact real-time result", () => {
+	it("returns an empty TestSummary on success, no failure context", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", run: { id: "9", name: "run", status: "success", startedAt: new Date(0) } }));
+
+		const verdict = await orchestrator.getVerdict("gh", "job", undefined, {});
+		expect(verdict.testSummary).toEqual({ total: 0, passed: 0, failed: 0, skipped: 0 });
+		expect(verdict.failure).toBeUndefined();
+		expect(verdict.check.runId).toBe("latest"); // getRun was called with the explicit "latest" sentinel, not a silent guess
+	});
+
+	it("attaches a classified failure context on failure, using the real log", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Stages,
+				run: { id: "9", name: "run", status: "failure", startedAt: new Date(0) },
+				log: "Step 1 ok\nError: connection refused\n",
+				stages: [{ id: "s1", name: "build", status: "success", startedAt: new Date(0) }, { id: "s2", name: "deploy", status: "failure", startedAt: new Date(0) }],
+			}),
+		);
+
+		const verdict = await orchestrator.getVerdict("gh", "job", "9", {});
+		expect(verdict.failure?.classification).toBe("network_timeout");
+		expect(verdict.failure?.canRetry).toBe(true);
+		expect(verdict.failure?.failedJob).toBe("deploy");
+	});
+
+	it("honors an explicit runId rather than silently checking latest", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				runsById: {
+					A: { id: "A", name: "run", status: "success", startedAt: new Date(0) },
+					B: { id: "B", name: "run", status: "failure", startedAt: new Date(0) },
+				},
+			}),
+		);
+
+		const verdictA = await orchestrator.getVerdict("gh", "job", "A", {});
+		const verdictB = await orchestrator.getVerdict("gh", "job", "B", {});
+		expect(verdictA.check.status).toBe("success");
+		expect(verdictB.check.status).toBe("failure");
+	});
+});
+
+describe("Orchestrator.ciWatch: real-time progress", () => {
+	it("computes progress percent and overdue against the estimated duration", async () => {
+		const orchestrator = new Orchestrator();
+		const run: CIRun = { id: "1", name: "run", status: "running", startedAt: new Date(0), durationMs: 60_000 };
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, run, estimatedDurationMs: 120_000 }));
+
+		const watch = await orchestrator.ciWatch("gh", "job", "1");
+		expect(watch.progressPercent).toBe(50);
+		expect(watch.overdue).toBe(false);
+	});
+
+	it("flags overdue once elapsed exceeds 1.5x the estimate", async () => {
+		const orchestrator = new Orchestrator();
+		const run: CIRun = { id: "1", name: "run", status: "running", startedAt: new Date(0), durationMs: 200_000 };
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, run, estimatedDurationMs: 100_000 }));
+
+		const watch = await orchestrator.ciWatch("gh", "job", "1");
+		expect(watch.overdue).toBe(true);
+	});
+});
+
+describe("Orchestrator: trigger records ownership; cancel is ownership-gated", () => {
+	it("refuses to cancel a run this session never triggered", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Trigger }));
+		await expect(orchestrator.ciCancel("gh", "job", "999")).rejects.toThrow(NotOwnedError);
+	});
+
+	it("allows cancel after ciTrigger records ownership for that run", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "42" },
+			}),
+		);
+
+		const result = await orchestrator.ciTrigger("gh", "job", {});
+		expect(result.buildNumber).toBe("42");
+		expect(orchestrator.ownsRun("gh", "42")).toBe(true);
+		await expect(orchestrator.ciCancel("gh", "job", "42")).resolves.toBeUndefined();
+	});
+
+	it("throws CapabilityUnsupportedError when triggering an unsupported backend", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh" }));
+		await expect(orchestrator.ciTrigger("gh", "job", {})).rejects.toThrow(CapabilityUnsupportedError);
+	});
+});
+
+describe("Orchestrator.ciParamsTruncated", () => {
+	it("truncates values over 500 chars and reports which keys were truncated", async () => {
+		const orchestrator = new Orchestrator();
+		const longValue = "x".repeat(600);
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.History, runParams: { SHORT: "ok", LONG: longValue } }));
+
+		const { params, truncatedKeys } = await orchestrator.ciParamsTruncated("gh", "job", "1");
+		expect(params.SHORT).toBe("ok");
+		expect(params.LONG?.length).toBe(503); // 500 chars + "..."
+		expect(truncatedKeys).toEqual(["LONG"]);
+	});
+});
+
+describe("Orchestrator.ciChain: recursive build tree", () => {
+	it("expands children up to the given depth and stops at 0", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				runsById: {
+					root: { id: "root", name: "root", status: "success", startedAt: new Date(0), children: [{ jobRef: "child", runId: "c1" }] },
+					c1: { id: "c1", name: "child", status: "success", startedAt: new Date(0) },
+				},
+			}),
+		);
+
+		const expanded = await orchestrator.ciChain("gh", "job", "root", -1, false);
+		expect(expanded.children).toHaveLength(1);
+		expect(expanded.children?.[0]?.runId).toBe("c1");
+
+		const shallow = await orchestrator.ciChain("gh", "job", "root", 0, false);
+		expect(shallow.children).toBeUndefined();
+	});
+});
+
+describe("Orchestrator.ciArtifactTree: flat list to directory tree", () => {
+	it("groups artifacts by path segments", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Artifacts,
+				artifacts: [
+					{ name: "report.xml", path: "reports/report.xml" },
+					{ name: "top.txt", path: "top.txt" },
+				],
+			}),
+		);
+
+		const tree = await orchestrator.ciArtifactTree("gh", "job", "1");
+		expect(tree.files?.[0]?.name).toBe("top.txt");
+		expect(tree.children?.[0]?.path).toBe("reports");
+		expect(tree.children?.[0]?.files?.[0]?.name).toBe("report.xml");
+	});
+});
+
+describe("applyLogFilter", () => {
+	it("defaults to the last 200 lines when no grep and no explicit tail", () => {
+		const raw = Array.from({ length: 250 }, (_, i) => `line ${i}`).join("\n");
+		const result = applyLogFilter(raw, {});
+		expect(result.lines).toHaveLength(200);
+		expect(result.totalLines).toBe(250);
+		expect(result.truncated).toBe(true);
+		expect(result.lines[0]).toBe("line 50");
+	});
+
+	it("widens to unlimited tail when grep is set but no explicit tail is given", () => {
+		const raw = ["match 1", ...Array.from({ length: 300 }, (_, i) => `noise ${i}`), "match 2"].join("\n");
+		const result = applyLogFilter(raw, { grep: "match" });
+		expect(result.lines).toEqual(["match 1", "match 2"]);
+		expect(result.filtered).toBe(true);
+	});
+
+	it("falls back to a literal case-insensitive substring match for invalid regexp", () => {
+		const raw = "line with [unclosed bracket pattern\nother line";
+		const result = applyLogFilter(raw, { grep: "[unclosed" });
+		expect(result.lines).toEqual(["line with [unclosed bracket pattern"]);
+	});
+
+	it("applies a byte cap that trims from the front after tailing", () => {
+		const longLine = "x".repeat(1000);
+		const raw = Array.from({ length: 100 }, () => longLine).join("\n"); // ~100KB, over the 50KB cap
+		const result = applyLogFilter(raw, { tail: -1 });
+		const totalBytes = result.lines.reduce((sum, line) => sum + line.length + 1, 0);
+		expect(totalBytes).toBeLessThanOrEqual(50 * 1024);
+		expect(result.truncated).toBe(true);
+	});
+});

@@ -1,5 +1,5 @@
 /** Configurable fake CIBackend for tests, mirroring conty's driventest.StubCIAdapter. */
-import type { CIArtifact, CIJob, CIRun, CIStageNode, LogResult } from "../../src/domain/ci-run.ts";
+import type { CIArtifact, CIJob, CIRun, CIStageNode } from "../../src/domain/ci-run.ts";
 import type { TriggerReceipt } from "../../src/domain/trigger.ts";
 import {
 	Capability,
@@ -19,7 +19,8 @@ export interface StubCIBackendOptions {
 	/** getRun keys its response by runId so distinct-ID tests are meaningful by default. */
 	runsById?: Record<string, CIRun>;
 	searchResults?: CIRun[];
-	log?: LogResult;
+	/** Raw log text (unfiltered) — matches the CIBackend.getLog contract. */
+	log?: string;
 	stages?: CIJob[];
 	stageNodes?: CIStageNode[];
 	artifacts?: CIArtifact[];
@@ -55,7 +56,7 @@ export function createStubCIBackend(options: StubCIBackendOptions = {}): StubCIB
 			return { id: runId, name: jobRef, status: "success", startedAt: new Date(0) };
 		},
 		searchRuns: async () => options.searchResults ?? [],
-		getLog: async () => options.log ?? { lines: [], totalLines: 0 },
+		getLog: async () => options.log ?? "",
 		cancelRun: async () => {
 			if (options.err) throw options.err;
 		},
@@ -87,6 +88,7 @@ export function createStubCIBackend(options: StubCIBackendOptions = {}): StubCIB
 		Object.assign(stub, {
 			listStages: async () => options.stages ?? [],
 			listStageNodes: async () => options.stageNodes ?? [],
+			listStageNodesWithLogs: async () => options.stageNodes ?? [],
 		} satisfies CIPipeliner);
 	}
 

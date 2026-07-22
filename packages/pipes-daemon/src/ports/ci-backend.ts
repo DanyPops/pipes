@@ -1,4 +1,4 @@
-import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, LogFilter, LogResult } from "../domain/ci-run.ts";
+import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, LogFilter } from "../domain/ci-run.ts";
 import type { TriggerReceipt } from "../domain/trigger.ts";
 
 export enum Capability {
@@ -40,7 +40,8 @@ export interface CIBackend {
 	capabilities(): CapabilitySet;
 	getRun(jobRef: string, runId: string): Promise<CIRun>;
 	searchRuns(jobRef: string, filter: BuildFilter): Promise<CIRun[]>;
-	getLog(jobRef: string, runId: string, filter: LogFilter): Promise<LogResult>;
+	/** Returns the raw console log; filter is only a hint for backends that support server-side filtering — the orchestrator applies the authoritative tail/grep/byte-cap filtering. */
+	getLog(jobRef: string, runId: string, filter: LogFilter): Promise<string>;
 	cancelRun(jobRef: string, runId: string): Promise<void>;
 }
 
@@ -58,6 +59,8 @@ export interface CIHistorical {
 export interface CIPipeliner {
 	listStages(jobRef: string, runId: string): Promise<CIJob[]>;
 	listStageNodes(jobRef: string, runId: string): Promise<CIStageNode[]>;
+	/** Like listStageNodes but attaches each failed step's log where the backend can do so efficiently. */
+	listStageNodesWithLogs(jobRef: string, runId: string): Promise<CIStageNode[]>;
 }
 
 export interface CIArtifactStore {

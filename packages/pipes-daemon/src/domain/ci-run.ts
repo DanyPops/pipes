@@ -28,6 +28,20 @@ export interface CIRun {
 	failureExcerpt?: string;
 }
 
+/** A fully-expanded build with its children recursively resolved (returned by chain traversal). */
+export interface CIRunNode {
+	jobRef: string;
+	runId: string;
+	name: string;
+	displayName?: string;
+	status: RunStatus;
+	result?: RunResult;
+	url?: string;
+	durationMs?: number;
+	artifacts?: CIArtifact[];
+	children?: CIRunNode[];
+}
+
 export interface CIJob {
 	id: string;
 	name: string;
@@ -60,6 +74,13 @@ export interface CIArtifact {
 	name: string;
 	path: string;
 	sizeBytes?: number;
+}
+
+/** A node in an artifact directory tree: files directly in this directory, plus subdirectories. */
+export interface CIArtifactDir {
+	path: string;
+	files?: CIArtifact[];
+	children?: CIArtifactDir[];
 }
 
 export interface BuildFilter {
