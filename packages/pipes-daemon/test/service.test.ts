@@ -187,4 +187,132 @@ describe("ci.pool", () => {
 
 		expect(runPool.get("gh", "build", "5")).toBeDefined();
 	});
+
+	it("ci.trigger auto-subscribes the triggered job", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "7" } }),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		await service.execute("ci.trigger", { backend: "gh", jobRef: "job", params: {} });
+
+		expect(runPool.isJobSubscribed("gh", "job")).toBe(true);
+	});
+});
+
+describe("ci.subscribe / ci.unsubscribe", () => {
+	it("throws a clear error when no run pool is configured", async () => {
+		const service = createPipesService(new Orchestrator());
+		await expect(service.execute("ci.subscribe", { backend: "gh", jobRef: "job" })).rejects.toThrow(/no local run pool/);
+	});
+
+	it("subscribes, does an immediate fetch, and returns the seeded snapshot", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } }, log: "hello" }));
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		const result = await service.execute("ci.subscribe", { backend: "gh", jobRef: "job" });
+
+		expect(result.subscribed).toBe(true);
+		expect(result.run?.runId).toBe("1");
+		expect(runPool.isJobSubscribed("gh", "job")).toBe(true);
+		expect(runPool.getLog("gh", "job", "1")).toBe("hello");
+	});
+
+	it("still records the subscription even when the immediate fetch fails -- the next sync tick retries", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", err: new Error("not found yet") }));
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		const result = await service.execute("ci.subscribe", { backend: "gh", jobRef: "job" });
+
+		expect(result.subscribed).toBe(true);
+		expect(result.run).toBeUndefined();
+		expect(runPool.isJobSubscribed("gh", "job")).toBe(true);
+	});
+
+	it("immediately unsubscribes if the just-subscribed job's latest run is already terminal", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "success", startedAt: new Date(0) } } }));
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		await service.execute("ci.subscribe", { backend: "gh", jobRef: "job" });
+
+		expect(runPool.isJobSubscribed("gh", "job")).toBe(false);
+	});
+
+	it("ci.unsubscribe is idempotent and safe with no pool configured", async () => {
+		const service = createPipesService(new Orchestrator());
+		await expect(service.execute("ci.unsubscribe", { backend: "gh", jobRef: "job" })).resolves.toEqual({ unsubscribed: true });
+	});
+
+	it("ci.unsubscribe stops the job from being subscribed", async () => {
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		runPool.subscribeJob("gh", "job");
+		const service = createPipesService(new Orchestrator(), { runPool });
+
+		await service.execute("ci.unsubscribe", { backend: "gh", jobRef: "job" });
+
+		expect(runPool.isJobSubscribed("gh", "job")).toBe(false);
+	});
+});
+
+describe("ci.tail", () => {
+	it("reuses a cached log for a terminal run instead of hitting the live backend again", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({ name: "gh" });
+		orchestrator.addAdapter(backend);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		runPool.upsert({ backend: "gh", jobRef: "job", runId: "1", status: "success", result: "SUCCESS", url: "", startedAt: new Date(0), fetchedAt: new Date(0), watched: false });
+		runPool.upsertLog("gh", "job", "1", "cached log");
+		const service = createPipesService(orchestrator, { runPool });
+
+		const result = await service.execute("ci.tail", { backend: "gh", jobRef: "job", runId: "1" });
+
+		expect(result.text).toBe("cached log");
+		expect(backend.calls.getRun).toHaveLength(0);
+	});
+
+	it("always live-resolves when runId is omitted, matching the background sync's autofocus", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById: { latest: { id: "2", name: "job", status: "running", startedAt: new Date(0) } }, log: "fresh log" }));
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		// A stale cached run "1" exists, but a newer run "2" is now latest.
+		runPool.upsert({ backend: "gh", jobRef: "job", runId: "1", status: "success", result: "", url: "", startedAt: new Date(0), fetchedAt: new Date(0), watched: false });
+		runPool.upsertLog("gh", "job", "1", "stale log");
+		const service = createPipesService(orchestrator, { runPool });
+
+		const result = await service.execute("ci.tail", { backend: "gh", jobRef: "job" });
+
+		expect(result.runId).toBe("2");
+		expect(result.text).toBe("fresh log");
+	});
+
+	it("applies the token budget by default and reports truncation", async () => {
+		const orchestrator = new Orchestrator();
+		const longLog = Array.from({ length: 2000 }, (_, i) => `line ${i}`).join("\n");
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "success", startedAt: new Date(0) } }, log: longLog }));
+		const service = createPipesService(orchestrator);
+
+		const result = await service.execute("ci.tail", { backend: "gh", jobRef: "job", maxTokens: 50 });
+
+		expect(result.truncated).toBe(true);
+		expect(result.outputTokens).toBeLessThanOrEqual(50);
+		expect(longLog.endsWith(result.text)).toBe(true);
+	});
+
+	it("works with no run pool configured at all -- always falls back to a live fetch", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "success", startedAt: new Date(0) } }, log: "no pool here" }));
+		const service = createPipesService(orchestrator);
+
+		const result = await service.execute("ci.tail", { backend: "gh", jobRef: "job" });
+
+		expect(result.text).toBe("no pool here");
+	});
 });

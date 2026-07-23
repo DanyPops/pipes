@@ -71,6 +71,7 @@ describe("CIRun.status", () => {
 		expect(isTerminalStatus("success")).toBe(true);
 		expect(isTerminalStatus("failure")).toBe(true);
 		expect(isTerminalStatus("aborted")).toBe(true);
+		expect(isTerminalStatus("not_found")).toBe(true);
 		expect(isTerminalStatus("running")).toBe(false);
 		expect(isTerminalStatus("pending")).toBe(false);
 	});

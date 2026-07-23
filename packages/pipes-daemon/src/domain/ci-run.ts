@@ -1,7 +1,7 @@
 export type RunStatus = "pending" | "running" | "success" | "failure" | "aborted" | "not_found";
 
 export function isTerminalStatus(status: RunStatus): boolean {
-	return status === "success" || status === "failure" || status === "aborted";
+	return status === "success" || status === "failure" || status === "aborted" || status === "not_found";
 }
 
 export type RunResult = "SUCCESS" | "FAILURE" | "UNSTABLE" | "ABORTED" | "";

@@ -8,7 +8,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { connectOrStartPipesClient } from "./daemon-client.ts";
 
-const ACTIONS = ["help", "status", "log", "search", "trigger", "wait", "cancel", "stages", "chain", "pool"] as const;
+const ACTIONS = ["help", "status", "log", "search", "trigger", "wait", "cancel", "stages", "chain", "pool", "subscribe", "unsubscribe", "tail"] as const;
 
 const PARAMETERS = Type.Object({
 	action: StringEnum(ACTIONS, { description: "Action to perform. Call help first to see configured backends and presets." }),
@@ -31,6 +31,7 @@ const PARAMETERS = Type.Object({
 	includeFailedLog: Type.Optional(Type.Boolean({ description: "For stages: attach each failed step's log (requires steps=true)." })),
 	depth: Type.Optional(Type.Integer({ description: "Max recursion depth for chain (default 3, -1 = unlimited)." })),
 	artifacts: Type.Optional(Type.Boolean({ description: "For chain: attach each node's artifact list." })),
+	maxTokens: Type.Optional(Type.Integer({ description: "For tail: token budget for the returned log excerpt (default 2000). The full log is always cached server-side regardless of this." })),
 });
 
 function operationFor(action: (typeof ACTIONS)[number]): string {
@@ -53,6 +54,8 @@ export function registerCiTool(pi: ExtensionAPI): void {
 			"Use ci(action=trigger) then ci(action=wait) then ci(action=status) for a full deploy-and-diagnose flow, instead of ad-hoc polling.",
 			"Use ci(action=status, grep=...) to get a failure's classified cause and log excerpt in one call rather than separately fetching the full log.",
 			"Use ci(action=pool) for a cheap, frequent status check on a run you already triggered — it reads the daemon's locally pooled history and never calls the live backend, unlike status/search.",
+			"Use ci(action=subscribe, backend=..., jobRef=...) to have the daemon keep following a job's latest run in the background — it auto-refocuses onto a new run if one supersedes the last, and auto-unsubscribes once that latest run finishes, so no cleanup call is needed. trigger already subscribes automatically.",
+			"Use ci(action=tail, backend=..., jobRef=...) to check a subscribed job's most recent log output — it returns a token-budgeted excerpt of the full cached log, not the whole thing, so repeated polling doesn't flood context.",
 		],
 		parameters: PARAMETERS,
 		async execute(_toolCallId, params) {

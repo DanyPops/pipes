@@ -82,3 +82,69 @@ describe("createRunPool", () => {
 		expect(watched.map((r) => r.runId)).toEqual(["1"]);
 	});
 });
+
+describe("createRunPool: log cache", () => {
+	it("getLog returns undefined for a run with no status row at all, but '' for one whose log hasn't been fetched yet", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		expect(pool.getLog("gh", "job", "1")).toBeUndefined();
+
+		pool.upsert(snapshot());
+		expect(pool.getLog("gh", "job", "1")).toBe("");
+
+		pool.upsertLog("gh", "job", "1", "line one\nline two");
+		expect(pool.getLog("gh", "job", "1")).toBe("line one\nline two");
+	});
+
+	it("upsertLog overwrites rather than appends", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.upsert(snapshot());
+		pool.upsertLog("gh", "job", "1", "first");
+		pool.upsertLog("gh", "job", "1", "second");
+		expect(pool.getLog("gh", "job", "1")).toBe("second");
+	});
+
+	it("log is scoped to the exact (backend, jobRef, runId), not shared across runs", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.upsert(snapshot({ runId: "1" }));
+		pool.upsert(snapshot({ runId: "2" }));
+		pool.upsertLog("gh", "job", "1", "run one's log");
+
+		expect(pool.getLog("gh", "job", "1")).toBe("run one's log");
+		expect(pool.getLog("gh", "job", "2")).toBe("");
+	});
+});
+
+describe("createRunPool: job-level subscriptions", () => {
+	it("subscribeJob then isJobSubscribed/watchedJobs reflect it", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		expect(pool.isJobSubscribed("gh", "job")).toBe(false);
+
+		pool.subscribeJob("gh", "job");
+		expect(pool.isJobSubscribed("gh", "job")).toBe(true);
+		expect(pool.watchedJobs()).toEqual([{ backend: "gh", jobRef: "job" }]);
+	});
+
+	it("subscribeJob is idempotent", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job");
+		pool.subscribeJob("gh", "job");
+		expect(pool.watchedJobs()).toHaveLength(1);
+	});
+
+	it("unsubscribeJob is idempotent for an already-absent subscription", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		expect(() => pool.unsubscribeJob("gh", "job")).not.toThrow();
+
+		pool.subscribeJob("gh", "job");
+		pool.unsubscribeJob("gh", "job");
+		pool.unsubscribeJob("gh", "job");
+		expect(pool.isJobSubscribed("gh", "job")).toBe(false);
+	});
+
+	it("subscriptions are scoped per (backend, jobRef)", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "a");
+		expect(pool.isJobSubscribed("gh", "b")).toBe(false);
+		expect(pool.isJobSubscribed("gl", "a")).toBe(false);
+	});
+});

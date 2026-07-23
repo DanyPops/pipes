@@ -1,5 +1,6 @@
 /** Operation registry + fetch handler: bearer auth, /health, /ready, /api/v1/ops. */
 import { errorResponse, healthResponse, jsonResponse, readyResponse, requireBearerToken } from "@danypops/daemon-kit/http";
+import { DEFAULT_LOG_TAIL_TOKENS } from "./constants.ts";
 import type { CIRunNode, CIStageNode, LogResult, RunResult } from "./domain/ci-run.ts";
 import type { PipelineRun } from "./domain/pipeline.ts";
 import type { TriggerResult, WatchStatus } from "./domain/trigger.ts";
@@ -12,6 +13,7 @@ import {
 	StepOutOfRangeError,
 } from "./orchestrator.ts";
 import { isTerminalStatus, type RunPool, type RunSnapshot } from "./run-pool.ts";
+import { tailByTokenBudget } from "./truncate.ts";
 import { VERSION } from "./version.ts";
 
 const DEFAULT_WAIT_TIMEOUT_S = 3600;
@@ -27,7 +29,10 @@ export type OperationName =
 	| "ci.cancel"
 	| "ci.stages"
 	| "ci.chain"
-	| "ci.pool";
+	| "ci.pool"
+	| "ci.subscribe"
+	| "ci.unsubscribe"
+	| "ci.tail";
 
 export interface OperationInputs {
 	"ci.help": Record<string, never>;
@@ -40,6 +45,9 @@ export interface OperationInputs {
 	"ci.stages": { backend: string; jobRef: string; runId: string; steps?: boolean; includeFailedLog?: boolean };
 	"ci.chain": { backend: string; jobRef: string; runId: string; depth?: number; artifacts?: boolean };
 	"ci.pool": { backend: string; jobRef: string; limit?: number };
+	"ci.subscribe": { backend: string; jobRef: string };
+	"ci.unsubscribe": { backend: string; jobRef: string };
+	"ci.tail": { backend: string; jobRef: string; runId?: string; maxTokens?: number };
 }
 
 export interface OperationOutputs {
@@ -54,6 +62,11 @@ export interface OperationOutputs {
 	"ci.chain": CIRunNode;
 	/** Reads only the local pool — never a live backend call, safe to call frequently. Empty when no pool is configured. */
 	"ci.pool": { runs: RunSnapshot[] };
+	/** Idempotent: seeds an immediate fetch and starts background refreshing that job's latest run. */
+	"ci.subscribe": { subscribed: true; run?: RunSnapshot };
+	/** Idempotent: no error if the job wasn't subscribed. */
+	"ci.unsubscribe": { unsubscribed: true };
+	"ci.tail": { runId: string; status: string; text: string; truncated: boolean; totalTokens: number; outputTokens: number };
 }
 
 export class UnknownOperationError extends Error {
@@ -78,6 +91,9 @@ const OPERATION_NAMES: OperationName[] = [
 	"ci.stages",
 	"ci.chain",
 	"ci.pool",
+	"ci.subscribe",
+	"ci.unsubscribe",
+	"ci.tail",
 ];
 
 export interface CreatePipesServiceOptions {
@@ -125,6 +141,77 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 		return { result };
 	}
 
+	/** Idempotent: subscribing an already-watched job just re-seeds it with a fresh immediate fetch. */
+	async function handleSubscribe(input: OperationInputs["ci.subscribe"]): Promise<OperationOutputs["ci.subscribe"]> {
+		if (!pool) throw new Error("no local run pool is configured");
+		pool.subscribeJob(input.backend, input.jobRef);
+		try {
+			const run = await orchestrator.ciGetRun(input.backend, input.jobRef, "latest");
+			const log = await orchestrator.ciGetRawLog(input.backend, input.jobRef, run.id);
+			const snapshot: RunSnapshot = {
+				backend: input.backend,
+				jobRef: input.jobRef,
+				runId: run.id,
+				status: run.status,
+				result: run.result ?? "",
+				url: run.url ?? "",
+				startedAt: run.startedAt,
+				durationMs: run.durationMs,
+				fetchedAt: new Date(),
+				watched: !isTerminalStatus(run.status),
+			};
+			pool.upsert(snapshot);
+			pool.upsertLog(input.backend, input.jobRef, run.id, log);
+			if (isTerminalStatus(run.status)) pool.unsubscribeJob(input.backend, input.jobRef);
+			return { subscribed: true, run: snapshot };
+		} catch {
+			// The job watch is still recorded -- the next background sync tick retries. Subscribing to a job that
+			// doesn't exist yet (e.g. about to be triggered) is not itself an error.
+			return { subscribed: true };
+		}
+	}
+
+	function handleUnsubscribe(input: OperationInputs["ci.unsubscribe"]): OperationOutputs["ci.unsubscribe"] {
+		pool?.unsubscribeJob(input.backend, input.jobRef);
+		return { unsubscribed: true };
+	}
+
+	/** Explicit runId reuses a cached terminal (finished, won't change further) log; omitted runId always re-resolves "latest" live, matching the same autofocus the background sync applies. */
+	async function handleTail(input: OperationInputs["ci.tail"]): Promise<OperationOutputs["ci.tail"]> {
+		const maxTokens = input.maxTokens ?? DEFAULT_LOG_TAIL_TOKENS;
+
+		if (input.runId && pool) {
+			const cached = pool.get(input.backend, input.jobRef, input.runId);
+			if (cached && isTerminalStatus(cached.status)) {
+				const log = pool.getLog(input.backend, input.jobRef, input.runId) ?? "";
+				const tail = tailByTokenBudget(log, maxTokens);
+				return { runId: input.runId, status: cached.status, ...tail };
+			}
+		}
+
+		const run = input.runId
+			? await orchestrator.ciGetRun(input.backend, input.jobRef, input.runId)
+			: await orchestrator.ciGetRun(input.backend, input.jobRef, "latest");
+		const log = await orchestrator.ciGetRawLog(input.backend, input.jobRef, run.id);
+		if (pool) {
+			pool.upsert({
+				backend: input.backend,
+				jobRef: input.jobRef,
+				runId: run.id,
+				status: run.status,
+				result: run.result ?? "",
+				url: run.url ?? "",
+				startedAt: run.startedAt,
+				durationMs: run.durationMs,
+				fetchedAt: new Date(),
+				watched: pool.isJobSubscribed(input.backend, input.jobRef) && !isTerminalStatus(run.status),
+			});
+			pool.upsertLog(input.backend, input.jobRef, run.id, log);
+		}
+		const tail = tailByTokenBudget(log, maxTokens);
+		return { runId: run.id, status: run.status, ...tail };
+	}
+
 	/** Genuinely blocking: polls ciWatch on an interval until a terminal status or timeout, exactly like conty's wait action. */
 	async function handleWait(input: OperationInputs["ci.wait"]): Promise<OperationOutputs["ci.wait"]> {
 		if (input.opaqueRef) {
@@ -163,6 +250,12 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 					const pooled = input as OperationInputs["ci.pool"];
 					return { runs: pool ? pool.recent(pooled.backend, pooled.jobRef, pooled.limit ?? 20) : [] } as OperationOutputs[Name];
 				}
+				case "ci.subscribe":
+					return (await handleSubscribe(input as OperationInputs["ci.subscribe"])) as OperationOutputs[Name];
+				case "ci.unsubscribe":
+					return handleUnsubscribe(input as OperationInputs["ci.unsubscribe"]) as OperationOutputs[Name];
+				case "ci.tail":
+					return (await handleTail(input as OperationInputs["ci.tail"])) as OperationOutputs[Name];
 				case "ci.help":
 					return { backends: orchestrator.backendInfo(), pipelines: orchestrator.listPipelines() } as OperationOutputs[Name];
 				case "ci.status":
@@ -211,6 +304,8 @@ function seedPoolFromPipelineRun(pool: RunPool, backend: string, pipelineRun: Pi
 	const fetchedAt = new Date();
 	for (const step of pipelineRun.steps) {
 		if (!step.runId) continue;
+		pool.subscribeJob(backend, step.jobName);
+		if (isTerminalStatus(step.status)) pool.unsubscribeJob(backend, step.jobName);
 		pool.upsert({
 			backend,
 			jobRef: step.jobName,
@@ -229,6 +324,7 @@ function seedPoolFromPipelineRun(pool: RunPool, backend: string, pipelineRun: Pi
 /** Seeds an approximate "pending" row immediately after trigger — the background sync loop corrects it to the real status on its first tick. */
 function seedPoolFromTrigger(pool: RunPool, backend: string, jobRef: string, runId: string): void {
 	const now = new Date();
+	pool.subscribeJob(backend, jobRef);
 	pool.upsert({ backend, jobRef, runId, status: "pending", result: "", url: "", startedAt: now, fetchedAt: now, watched: true });
 }
 

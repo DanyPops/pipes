@@ -5,7 +5,10 @@
  * polling a live CI backend right now.
  */
 import type { Database } from "bun:sqlite";
-import type { RunStatus } from "./domain/ci-run.ts";
+import { isTerminalStatus, type RunStatus } from "./domain/ci-run.ts";
+
+/** Re-exported so callers of run-pool.ts don't need a second import from domain/ci-run.ts — there is exactly one definition, in the domain layer. */
+export { isTerminalStatus };
 
 export interface RunSnapshot {
 	backend: string;
@@ -21,16 +24,24 @@ export interface RunSnapshot {
 	watched: boolean;
 }
 
-export function isTerminalStatus(status: RunStatus): boolean {
-	return status === "success" || status === "failure" || status === "aborted" || status === "not_found";
-}
-
 export interface RunPool {
 	upsert(snapshot: RunSnapshot): void;
 	get(backend: string, jobRef: string, runId: string): RunSnapshot | undefined;
 	recent(backend: string, jobRef: string, limit: number): RunSnapshot[];
 	/** Rows the background sync loop should refresh next tick — never the full table, always bounded by the watched flag itself. */
 	watchedRuns(): RunSnapshot[];
+
+	/** Full cached log text for one run, or undefined if nothing has ever been fetched for it. */
+	getLog(backend: string, jobRef: string, runId: string): string | undefined;
+	/** Overwrites the cached log with the complete, untruncated text — truncation only ever happens on read. */
+	upsertLog(backend: string, jobRef: string, runId: string, logText: string): void;
+
+	/** Job-level watch list: presence means the background sync keeps resolving and refreshing this job's latest run. Idempotent. */
+	subscribeJob(backend: string, jobRef: string): void;
+	/** Idempotent no-op if the job wasn't subscribed. */
+	unsubscribeJob(backend: string, jobRef: string): void;
+	isJobSubscribed(backend: string, jobRef: string): boolean;
+	watchedJobs(): Array<{ backend: string; jobRef: string }>;
 }
 
 interface RunRow {
@@ -103,6 +114,36 @@ export function createRunPool(db: Database): RunPool {
 		watchedRuns(): RunSnapshot[] {
 			const rows = db.query("SELECT * FROM run_snapshots WHERE watched = 1").all() as RunRow[];
 			return rows.map(toSnapshot);
+		},
+
+		getLog(backend: string, jobRef: string, runId: string): string | undefined {
+			const row = db
+				.query("SELECT log_text FROM run_snapshots WHERE backend = ? AND job_ref = ? AND run_id = ?")
+				.get(backend, jobRef, runId) as { log_text: string } | null;
+			return row?.log_text;
+		},
+
+		upsertLog(backend: string, jobRef: string, runId: string, logText: string): void {
+			db.query(
+				"UPDATE run_snapshots SET log_text = ? WHERE backend = ? AND job_ref = ? AND run_id = ?",
+			).run(logText, backend, jobRef, runId);
+		},
+
+		subscribeJob(backend: string, jobRef: string): void {
+			db.query("INSERT OR IGNORE INTO job_watches (backend, job_ref) VALUES (?, ?)").run(backend, jobRef);
+		},
+
+		unsubscribeJob(backend: string, jobRef: string): void {
+			db.query("DELETE FROM job_watches WHERE backend = ? AND job_ref = ?").run(backend, jobRef);
+		},
+
+		isJobSubscribed(backend: string, jobRef: string): boolean {
+			return db.query("SELECT 1 FROM job_watches WHERE backend = ? AND job_ref = ?").get(backend, jobRef) !== null;
+		},
+
+		watchedJobs(): Array<{ backend: string; jobRef: string }> {
+			const rows = db.query("SELECT backend, job_ref FROM job_watches").all() as Array<{ backend: string; job_ref: string }>;
+			return rows.map((row) => ({ backend: row.backend, jobRef: row.job_ref }));
 		},
 	};
 }

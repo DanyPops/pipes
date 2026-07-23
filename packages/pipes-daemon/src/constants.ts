@@ -14,3 +14,6 @@ export const JENKINS_CREDENTIALS_FILENAME = "jenkins-credentials.json";
 
 /** Matches conty's differentiated cache TTL for live status polling (see the ported gotchas doc). */
 export const RUN_POOL_SYNC_INTERVAL_MS = 30_000;
+
+/** Default ci.tail budget — large enough for a genuinely useful excerpt of a CI log, small enough not to dominate an agent's context on every poll. */
+export const DEFAULT_LOG_TAIL_TOKENS = 2000;

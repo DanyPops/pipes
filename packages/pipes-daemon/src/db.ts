@@ -27,9 +27,34 @@ CREATE TABLE run_snapshots (
 CREATE INDEX run_snapshots_watched_idx ON run_snapshots(watched);
 `;
 
+// The full raw log the background sync (or an explicit ci.tail fallback fetch)
+// last observed for a run — kept complete and untruncated; truncation only
+// ever happens on read, in truncate.ts, never on write.
+const MIGRATION_2_LOG_TEXT = `
+ALTER TABLE run_snapshots ADD COLUMN log_text TEXT NOT NULL DEFAULT '';
+`;
+
+// Job-level watch list: presence of a row means the background sync keeps
+// resolving this job's *latest* run every tick (auto-refocusing onto a new
+// run if one supersedes it) and auto-deletes the row once that latest run
+// reaches a terminal status. This is the authoritative list the sync loop
+// iterates — run_snapshots.watched is informational only, per run observed,
+// not what drives polling.
+const MIGRATION_3_JOB_WATCHES = `
+CREATE TABLE job_watches (
+	backend TEXT NOT NULL,
+	job_ref TEXT NOT NULL,
+	PRIMARY KEY (backend, job_ref)
+);
+`;
+
 export function openPipesDb(path: string): Database {
 	return openSqliteWithPragmas(path, {
 		databaseOptions: { create: true, strict: true },
-		migrations: [{ version: 1, up: (db) => db.exec(INITIAL_SCHEMA) }],
+		migrations: [
+			{ version: 1, up: (db) => db.exec(INITIAL_SCHEMA) },
+			{ version: 2, up: (db) => db.exec(MIGRATION_2_LOG_TEXT) },
+			{ version: 3, up: (db) => db.exec(MIGRATION_3_JOB_WATCHES) },
+		],
 	});
 }

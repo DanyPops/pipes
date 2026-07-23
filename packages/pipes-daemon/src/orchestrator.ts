@@ -356,6 +356,11 @@ export class Orchestrator {
 		return this.adapter(backendName).getRun(jobRef, runId);
 	}
 
+	/** Full raw log text, no filtering — every real adapter already ignores the filter argument and returns the complete log, but ciLog's 50KB/tail defaults are for a live one-off read, not for what the local log cache should retain. */
+	async ciGetRawLog(backendName: string, jobRef: string, runId: string): Promise<string> {
+		return this.adapter(backendName).getLog(jobRef, runId, {});
+	}
+
 	async ciHistory(backendName: string, jobRef: string, limit = 10): Promise<CIRun[]> {
 		const backend = this.adapter(backendName);
 		const historical = asHistorical(backend);
