@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { FetchLike } from "../../../src/adapters/github/auth.ts";
 import { createJenkinsAdapter, JenkinsNotFoundError } from "../../../src/adapters/jenkins/jenkins-adapter.ts";
-import { asArtifactStore, asHistorical, asPipeliner, asTriggerable, Capability, hasCapability } from "../../../src/ports/ci-backend.ts";
+import { asArtifactStore, asChainable, asHistorical, asPipeliner, asTriggerable, Capability, hasCapability } from "../../../src/ports/ci-backend.ts";
 
 const CREDENTIALS = { baseUrl: "https://jenkins.example.com", username: "alice", apiToken: "tok123" };
 
@@ -209,18 +209,74 @@ describe("createJenkinsAdapter.listArtifacts", () => {
 });
 
 describe("createJenkinsAdapter: capabilities", () => {
-	it("advertises trigger, history, stages, and artifacts but not chain", () => {
+	it("advertises trigger, history, stages, artifacts, and chain", () => {
 		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS });
 		const caps = adapter.capabilities();
 		expect(hasCapability(caps, Capability.Trigger)).toBe(true);
 		expect(hasCapability(caps, Capability.History)).toBe(true);
 		expect(hasCapability(caps, Capability.Stages)).toBe(true);
 		expect(hasCapability(caps, Capability.Artifacts)).toBe(true);
-		expect(hasCapability(caps, Capability.Chain)).toBe(false);
+		expect(hasCapability(caps, Capability.Chain)).toBe(true);
 
 		expect(asTriggerable(adapter)).toBeDefined();
 		expect(asHistorical(adapter)).toBeDefined();
 		expect(asPipeliner(adapter)).toBeDefined();
 		expect(asArtifactStore(adapter)).toBeDefined();
+		expect(asChainable(adapter)).toBeDefined();
+	});
+});
+
+describe("createJenkinsAdapter.getDownstreamRuns", () => {
+	function buildWithCause(number: number, upstreamProject: string, upstreamBuild: number) {
+		return {
+			number,
+			result: "SUCCESS",
+			building: false,
+			url: `u/${number}`,
+			timestamp: 1,
+			actions: [{ causes: [{ upstreamProject, upstreamBuild }] }],
+		};
+	}
+
+	it("keeps only downstream builds whose cause chain matches the exact upstream project and build number", async () => {
+		let requestedUrl = "";
+		const fetchImpl: FetchLike = async (url) => {
+			requestedUrl = url;
+			return jsonResponse({
+				builds: [
+					buildWithCause(10, "upstream", 5), // matches
+					buildWithCause(11, "upstream", 6), // different upstream build number
+					buildWithCause(12, "other-job", 5), // different upstream project
+				],
+			});
+		};
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl });
+
+		const runs = await adapter.getDownstreamRuns("downstream", "upstream", "5");
+
+		expect(requestedUrl).toContain("/job/downstream/api/json");
+		expect(requestedUrl).toContain("{0,50}"); // bounded scan, not an open-ended fetch
+		expect(runs.map((r) => r.id)).toEqual(["10"]);
+	});
+
+	it("matches the upstream project name case-insensitively, like Jenkins' own project name handling", async () => {
+		const fetchImpl: FetchLike = async () => jsonResponse({ builds: [buildWithCause(20, "Upstream-Job", 5)] });
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl });
+
+		const runs = await adapter.getDownstreamRuns("downstream", "upstream-job", "5");
+
+		expect(runs.map((r) => r.id)).toEqual(["20"]);
+	});
+
+	it("returns an empty list, not an error, when no downstream build matches", async () => {
+		const fetchImpl: FetchLike = async () => jsonResponse({ builds: [buildWithCause(30, "unrelated", 99)] });
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl });
+
+		expect(await adapter.getDownstreamRuns("downstream", "upstream", "5")).toEqual([]);
+	});
+
+	it("rejects a non-numeric upstream run id rather than silently matching nothing", async () => {
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS });
+		await expect(adapter.getDownstreamRuns("downstream", "upstream", "not-a-number")).rejects.toThrow(/invalid upstream run id/);
 	});
 });

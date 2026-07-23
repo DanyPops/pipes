@@ -5,7 +5,7 @@
  */
 import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, CIStep } from "../../domain/ci-run.ts";
 import type { TriggerReceipt } from "../../domain/trigger.ts";
-import { Capability, type CapabilitySet, type CIArtifactStore, type CIBackend, type CIHistorical, type CIPipeliner, type CITriggerable } from "../../ports/ci-backend.ts";
+import { Capability, type CapabilitySet, type CIArtifactStore, type CIBackend, type CIChainable, type CIHistorical, type CIPipeliner, type CITriggerable } from "../../ports/ci-backend.ts";
 import type { FetchLike } from "../github/auth.ts";
 import { type CrumbCache, createCrumbCache, type JenkinsCredentials, withCrumbHeaders } from "./auth.ts";
 
@@ -94,7 +94,7 @@ function mapPipelineStatus(status: string): CIRun["status"] {
 
 export function createJenkinsAdapter(
 	options: JenkinsAdapterOptions,
-): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore {
+): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIChainable {
 	const { name, credentials } = options;
 	const doFetch = options.fetchImpl ?? (fetch as unknown as FetchLike);
 	const crumbCache = options.crumbCache ?? createCrumbCache();
@@ -188,7 +188,7 @@ export function createJenkinsAdapter(
 	return {
 		name: () => name,
 		type: () => "jenkins",
-		capabilities: (): CapabilitySet => Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts,
+		capabilities: (): CapabilitySet => Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Chain,
 
 		async getRun(jobRef: string, runId: string): Promise<CIRun> {
 			const path = `${buildJobPath(jobRef)}/${buildSelector(runId)}/api/json?tree=number,result,building,timestamp,duration,estimatedDuration,url,fullDisplayName,description`;
@@ -308,6 +308,35 @@ export function createJenkinsAdapter(
 			if (!response.ok) throw new JenkinsApiError("GET", `artifact ${path}`, response.status, await response.text());
 			return new Uint8Array(await response.arrayBuffer());
 		},
+
+		/**
+		 * Jenkins has no reverse index from an upstream build to the downstream builds it
+		 * triggered, so this scans downstreamJob's recent builds (bounded to the last 50 via
+		 * Jenkins' own tree range syntax, not an open-ended fetch) and keeps only the ones whose
+		 * cause chain names this exact upstream project+build number -- the real, plugin-free
+		 * mechanism (hudson.model.Cause$UpstreamCause), not conty's fragile description-HTML-
+		 * anchor-parsing hack, which only works if a job manually writes links into its own
+		 * description.
+		 */
+		async getDownstreamRuns(downstreamJob: string, upstreamJob: string, upstreamRunId: string): Promise<CIRun[]> {
+			const upstreamBuildNumber = Number(upstreamRunId);
+			if (!Number.isInteger(upstreamBuildNumber)) throw new Error(`invalid upstream run id: ${upstreamRunId}`);
+
+			const treeParam =
+				"builds[number,result,fullDisplayName,timestamp,duration,url,building," +
+				"actions[causes[upstreamBuild,upstreamProject]]]{0,50}";
+			const page = await get<{ builds: JenkinsBuild[] }>(`${buildJobPath(downstreamJob)}/api/json?tree=${treeParam}`);
+
+			return (page?.builds ?? [])
+				.filter((build) =>
+					(build.actions ?? []).some((action) =>
+						(action.causes ?? []).some(
+							(cause) => cause.upstreamBuild === upstreamBuildNumber && cause.upstreamProject?.toLowerCase() === upstreamJob.toLowerCase(),
+						),
+					),
+				)
+				.map((build) => toCIRun(downstreamJob, build));
+		},
 	};
 }
 
@@ -348,7 +377,8 @@ interface JenkinsBuild {
 
 interface JenkinsBuildAction {
 	parameters?: { name: string; value: unknown }[];
-	causes?: { userId?: string; userName?: string }[];
+	/** Cause objects are polymorphic in Jenkins' API: userId/userName come from UserIdCause, upstreamProject/upstreamBuild from UpstreamCause -- both can appear in the same causes array. */
+	causes?: { userId?: string; userName?: string; upstreamProject?: string; upstreamBuild?: number }[];
 }
 
 interface JenkinsBuildWithActions {
