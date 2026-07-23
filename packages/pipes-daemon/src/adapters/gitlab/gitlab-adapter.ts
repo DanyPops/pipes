@@ -7,7 +7,7 @@
  */
 import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode } from "../../domain/ci-run.ts";
 import type { TriggerReceipt } from "../../domain/trigger.ts";
-import { Capability, type CapabilitySet, type CIArtifactStore, type CIBackend, type CIHistorical, type CIPipeliner, type CITriggerable } from "../../ports/ci-backend.ts";
+import { Capability, type CapabilitySet, type CIArtifactStore, type CIBackend, type CIChainable, type CIHistorical, type CIPipeliner, type CITriggerable } from "../../ports/ci-backend.ts";
 import { parseRateLimitHeaders, parseRetryAfterMs, RateLimitError } from "../http-rate-limit.ts";
 import type { FetchLike } from "../github/auth.ts";
 
@@ -32,7 +32,7 @@ export interface GitLabAdapterOptions {
 	fetchImpl?: FetchLike;
 }
 
-export function createGitLabAdapter(options: GitLabAdapterOptions): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore {
+export function createGitLabAdapter(options: GitLabAdapterOptions): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIChainable {
 	const { name, projectId, token } = options;
 	const apiBaseUrl = `${options.baseUrl.replace(/\/$/, "")}/api/v4`;
 	const doFetch = options.fetchImpl ?? (fetch as unknown as FetchLike);
@@ -134,7 +134,7 @@ export function createGitLabAdapter(options: GitLabAdapterOptions): CIBackend & 
 	return {
 		name: () => name,
 		type: () => "gitlab",
-		capabilities: (): CapabilitySet => Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts,
+		capabilities: (): CapabilitySet => Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Chain,
 
 		/** "latest" is an explicit sentinel routed to a dedicated query; any other runId always fetches that exact pipeline, never a substitute. */
 		async getRun(_jobRef: string, runId: string): Promise<CIRun> {
@@ -245,6 +245,26 @@ export function createGitLabAdapter(options: GitLabAdapterOptions): CIBackend & 
 			if (!response.ok) throw new GitLabApiError("GET", `artifact ${path}`, response.status, await response.text());
 			return new Uint8Array(await response.arrayBuffer());
 		},
+
+		/**
+		 * GitLab bridges are scoped to the parent pipeline itself, so downstreamJob/upstreamJob
+		 * are informational only (matching conty's own GetDownstreamRuns) — the pipeline ID alone
+		 * is enough to look up every direct downstream pipeline it triggered. Prefers trigger_jobs
+		 * (the current endpoint name); bridges was deprecated in GitLab 19.2 but self-managed
+		 * instances predating that release only have the old path, so a 404 falls back to it.
+		 */
+		async getDownstreamRuns(_downstreamJob: string, _upstreamJob: string, upstreamRunId: string): Promise<CIRun[]> {
+			let bridges: GlTriggerJob[] | undefined;
+			try {
+				bridges = await api<GlTriggerJob[]>("GET", `/projects/${projectId}/pipelines/${upstreamRunId}/trigger_jobs?per_page=100`);
+			} catch (error) {
+				if (!(error instanceof GitLabNotFoundError)) throw error;
+				bridges = await api<GlTriggerJob[]>("GET", `/projects/${projectId}/pipelines/${upstreamRunId}/bridges?per_page=100`);
+			}
+			return (bridges ?? [])
+				.filter((bridge): bridge is GlTriggerJob & { downstream_pipeline: GlPipeline } => bridge.downstream_pipeline != null)
+				.map((bridge) => toCIRun(bridge.downstream_pipeline));
+		},
 	};
 }
 
@@ -284,4 +304,8 @@ interface GlJob {
 interface GlPipelineVariable {
 	key: string;
 	value: string;
+}
+
+interface GlTriggerJob {
+	downstream_pipeline: GlPipeline | null;
 }

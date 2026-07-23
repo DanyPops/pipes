@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { FetchLike } from "../../../src/adapters/github/auth.ts";
 import { createGitLabAdapter, GitLabNotFoundError } from "../../../src/adapters/gitlab/gitlab-adapter.ts";
 import { RateLimitError } from "../../../src/adapters/http-rate-limit.ts";
-import { asArtifactStore, asHistorical, asPipeliner, asTriggerable, Capability, hasCapability } from "../../../src/ports/ci-backend.ts";
+import { asArtifactStore, asChainable, asHistorical, asPipeliner, asTriggerable, Capability, hasCapability } from "../../../src/ports/ci-backend.ts";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 	return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" }, ...init });
@@ -168,18 +168,65 @@ describe("createGitLabAdapter.listArtifacts / getArtifact", () => {
 });
 
 describe("createGitLabAdapter: capabilities", () => {
-	it("advertises trigger, history, stages, and artifacts but not chain", () => {
+	it("advertises trigger, history, stages, artifacts, and chain", () => {
 		const adapter = createGitLabAdapter({ name: "gl", baseUrl: "https://gitlab.example.com", projectId: "1" });
 		const caps = adapter.capabilities();
 		expect(hasCapability(caps, Capability.Trigger)).toBe(true);
 		expect(hasCapability(caps, Capability.History)).toBe(true);
 		expect(hasCapability(caps, Capability.Stages)).toBe(true);
 		expect(hasCapability(caps, Capability.Artifacts)).toBe(true);
-		expect(hasCapability(caps, Capability.Chain)).toBe(false);
+		expect(hasCapability(caps, Capability.Chain)).toBe(true);
 
 		expect(asTriggerable(adapter)).toBeDefined();
 		expect(asHistorical(adapter)).toBeDefined();
 		expect(asPipeliner(adapter)).toBeDefined();
 		expect(asArtifactStore(adapter)).toBeDefined();
+		expect(asChainable(adapter)).toBeDefined();
+	});
+});
+
+describe("createGitLabAdapter.getDownstreamRuns", () => {
+	it("maps each bridge's downstream_pipeline to a CIRun via trigger_jobs", async () => {
+		let requestedUrl = "";
+		const fetchImpl: FetchLike = async (url) => {
+			requestedUrl = url;
+			return jsonResponse([
+				{ downstream_pipeline: glPipeline(501, { status: "running" }) },
+				{ downstream_pipeline: glPipeline(502, { status: "success" }) },
+			]);
+		};
+		const adapter = createGitLabAdapter({ name: "gl", baseUrl: "https://gitlab.example.com", projectId: "1", fetchImpl });
+
+		const runs = await adapter.getDownstreamRuns("ignored", "ignored", "100");
+
+		expect(requestedUrl).toContain("/pipelines/100/trigger_jobs");
+		expect(runs.map((r) => r.id)).toEqual(["501", "502"]);
+		expect(runs[1]?.status).toBe("success");
+	});
+
+	it("skips trigger jobs whose downstream pipeline hasn't been created yet", async () => {
+		const fetchImpl: FetchLike = async () =>
+			jsonResponse([{ downstream_pipeline: null }, { downstream_pipeline: glPipeline(503) }]);
+		const adapter = createGitLabAdapter({ name: "gl", baseUrl: "https://gitlab.example.com", projectId: "1", fetchImpl });
+
+		const runs = await adapter.getDownstreamRuns("ignored", "ignored", "100");
+
+		expect(runs.map((r) => r.id)).toEqual(["503"]);
+	});
+
+	it("falls back to the deprecated bridges path on 404, for self-managed instances predating GitLab 19.2", async () => {
+		const requestedUrls: string[] = [];
+		const fetchImpl: FetchLike = async (url) => {
+			requestedUrls.push(url);
+			if (url.includes("/trigger_jobs")) return new Response("", { status: 404 });
+			return jsonResponse([{ downstream_pipeline: glPipeline(504) }]);
+		};
+		const adapter = createGitLabAdapter({ name: "gl", baseUrl: "https://gitlab.example.com", projectId: "1", fetchImpl });
+
+		const runs = await adapter.getDownstreamRuns("ignored", "ignored", "100");
+
+		expect(requestedUrls.some((u) => u.includes("/trigger_jobs"))).toBe(true);
+		expect(requestedUrls.some((u) => u.includes("/bridges"))).toBe(true);
+		expect(runs.map((r) => r.id)).toEqual(["504"]);
 	});
 });
