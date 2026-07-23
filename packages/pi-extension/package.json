@@ -2,7 +2,7 @@
 	"name": "@danypops/pi-pipes",
 	"version": "0.1.0",
 	"license": "MIT",
-	"description": "Pi extension: TUI menu for cross-platform CI (GitHub Actions, GitLab CI, Jenkins, Prow)",
+	"description": "Pi extension: agent-facing CI tool for cross-platform CI (GitHub Actions, GitLab CI, Jenkins)",
 	"keywords": ["pi-package"],
 	"type": "module",
 	"main": "./src/index.ts",

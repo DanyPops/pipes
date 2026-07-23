@@ -1,23 +1,34 @@
 # pi-pipes
 
-A pi extension for cross-platform CI: GitHub Actions, GitLab CI, Jenkins, and
-Prow, from one TUI menu.
+A pi extension and daemon for cross-platform CI: GitHub Actions, GitLab CI,
+and Jenkins, from one agent-facing `ci` tool, without hand-rolling each
+backend's API.
 
 ## Status
 
-Early scaffold. The workspace layout and package boundaries exist; backend
-adapters (GitHub/GitLab/Jenkins/Prow) and the daemon composition are not
-implemented yet. This README will grow an architecture diagram and full
-CLI/operation reference as those land — see `packages/pipes-daemon` and
-`packages/pi-extension` for current package-level status.
+Core is implemented: real GitHub, GitLab, and Jenkins adapters (OAuth device
+flow for GitHub, OAuth2 device flow/PKCE for GitLab, API-token auth for
+Jenkins — the one backend with no delegated-auth API), an orchestration
+layer with named pipeline presets, and a supervised daemon that composes
+them with a local SQLite pool of run status and cached logs. The agent-facing
+`ci` tool supports triggering, blocking waits, status/log/search, job-level
+subscribe/unsubscribe with autofocus onto a job's latest run, token-budgeted
+log tailing, and a bounded chain/artifact crawler for backends that expose
+downstream-pipeline data (GitLab; Jenkins via an explicit job-name lookup).
+
+Remaining: a TUI menu for preset management and manual intervention
+(secondary to the `ci` tool), end-to-end CLI parity, and the npm publish
+workflow.
 
 ## Layout
 
 ```text
 packages/pipes-daemon/    supervised daemon: owns CI credentials, backend
-                          adapters, and a local run-history cache
-packages/pi-extension/    thin pi extension: authenticated daemon client +
-                          TUI menu, no direct network/credential access
+                          adapters, orchestration, and a local run-history
+                          pool (status + logs)
+packages/pi-extension/    pi extension: the agent-facing `ci` tool, an
+                          authenticated daemon client, no direct
+                          network/credential access
 ```
 
 ## Development
@@ -25,5 +36,5 @@ packages/pi-extension/    thin pi extension: authenticated daemon client +
 ```bash
 npm install
 npm run check   # tsc --noEmit across every package
-npm test        # bun test / vitest across every package
+npm test        # bun test across every package
 ```
