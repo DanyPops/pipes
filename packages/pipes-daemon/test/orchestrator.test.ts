@@ -215,7 +215,90 @@ describe("Orchestrator.ciChain: recursive build tree", () => {
 		const shallow = await orchestrator.ciChain("gh", "job", "root", 0, false);
 		expect(shallow.children).toBeUndefined();
 	});
+
+	it("never infinite-loops on a cycle, even with depth=-1 (unlimited)", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				runsById: {
+					a: { id: "a", name: "a", status: "success", startedAt: new Date(0), children: [{ jobRef: "job", runId: "b" }] },
+					b: { id: "b", name: "b", status: "success", startedAt: new Date(0), children: [{ jobRef: "job", runId: "a" }] },
+				},
+			}),
+		);
+
+		const result = await Promise.race([
+			orchestrator.ciChain("gh", "job", "a", -1, false),
+			new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timed out -- likely an infinite loop")), 2000)),
+		]);
+
+		// a -> b -> a: the second "a" is already seen, so b's children list comes back empty, not another "a" node.
+		expect(result.runId).toBe("a");
+		expect(result.children).toHaveLength(1);
+		expect(result.children?.[0]?.runId).toBe("b");
+		expect(result.children?.[0]?.children ?? []).toHaveLength(0);
+	});
+
+	it("stops expanding once the hard node cap is hit, regardless of depth", async () => {
+		const orchestrator = new Orchestrator();
+		const runsById: Record<string, ReturnType<typeof makeChainRun>> = {};
+		// A long chain of 500 distinct runs -- well past CHAIN_CRAWL_MAX_NODES (200) -- linked one to the next.
+		for (let i = 0; i < 500; i++) {
+			runsById[String(i)] = makeChainRun(i, i + 1 < 500 ? [{ jobRef: "job", runId: String(i + 1) }] : []);
+		}
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById }));
+
+		const result = await orchestrator.ciChain("gh", "job", "0", -1, false);
+
+		let count = 0;
+		const countNodes = (node: typeof result): void => {
+			count++;
+			for (const child of node.children ?? []) countNodes(child);
+		};
+		countNodes(result);
+		expect(count).toBeLessThanOrEqual(200);
+	});
+
+	it("supplements run.children with a CIChainable backend's own downstream lookup", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gl",
+				capabilities: Capability.Chain,
+				runsById: { root: { id: "root", name: "root", status: "success", startedAt: new Date(0) } },
+				downstreamRuns: [{ id: "d1", name: "downstream", status: "success", startedAt: new Date(0) }],
+			}),
+		);
+
+		const expanded = await orchestrator.ciChain("gl", "job", "root", -1, false);
+
+		expect(expanded.children).toHaveLength(1);
+		expect(expanded.children?.[0]?.runId).toBe("d1");
+	});
+
+	it("a failed downstream lookup does not fail the whole tree", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({
+			name: "gl",
+			capabilities: Capability.Chain,
+			runsById: { root: { id: "root", name: "root", status: "success", startedAt: new Date(0) } },
+		});
+		(backend as unknown as { getDownstreamRuns: () => Promise<never> }).getDownstreamRuns = async () => {
+			throw new Error("bridges API unreachable");
+		};
+		orchestrator.addAdapter(backend);
+
+		const expanded = await orchestrator.ciChain("gl", "job", "root", -1, false);
+
+		expect(expanded.runId).toBe("root");
+		expect(expanded.children).toBeUndefined();
+	});
 });
+
+function makeChainRun(id: number, children: Array<{ jobRef: string; runId: string }>) {
+	return { id: String(id), name: `run-${id}`, status: "success" as const, startedAt: new Date(0), children };
+}
 
 describe("Orchestrator.ciArtifactTree: flat list to directory tree", () => {
 	it("groups artifacts by path segments", async () => {

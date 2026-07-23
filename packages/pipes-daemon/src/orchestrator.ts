@@ -3,6 +3,7 @@
  * routes through, so nothing talks to a CIBackend adapter directly.
  */
 import { classifyLog } from "./classify.ts";
+import { CHAIN_CRAWL_MAX_NODES } from "./constants.ts";
 import type { BackendInfo } from "./domain/backend.ts";
 import type {
 	BuildFilter,
@@ -10,6 +11,7 @@ import type {
 	CIArtifactDir,
 	CIRun,
 	CIRunNode,
+	CIRunRef,
 	CIStageNode,
 	LogFilter,
 	LogResult,
@@ -447,10 +449,16 @@ export class Orchestrator {
 		return buildArtifactTree(await store.listArtifacts(jobRef, runId));
 	}
 
-	/** Fetches a build and recursively expands its children up to depth levels (-1 = unlimited). */
+	/**
+	 * Fetches a build and recursively expands its children up to depth levels
+	 * (-1 = unlimited). Bounded independent of the caller's depth: a seen set
+	 * (composite backend:jobRef:runId key) blocks cycles, and a hard node
+	 * ceiling (CHAIN_CRAWL_MAX_NODES) stops the walk regardless of how deep
+	 * depth asks to go, mirroring web-spider's crawl.ts (seen set + maxPages).
+	 */
 	async ciChain(backendName: string, jobRef: string, runId: string, depth: number, includeArtifacts: boolean): Promise<CIRunNode> {
 		const backend = this.adapter(backendName);
-		return chainExpand(backend, jobRef, runId, undefined, depth, includeArtifacts);
+		return chainExpand(backend, jobRef, runId, undefined, depth, includeArtifacts, new Set(), { remaining: CHAIN_CRAWL_MAX_NODES });
 	}
 
 	async ciDownstream(backendName: string, downstreamJob: string, upstreamJob: string, upstreamRunId: string): Promise<CIRun[]> {
@@ -471,6 +479,10 @@ function describeBackendCapabilities(backend: CIBackend): string {
 	return parts.length > 0 ? parts.join(" ") : "none";
 }
 
+function chainNodeKey(backend: CIBackend, jobRef: string, runId: string): string {
+	return `${backend.name()}:${jobRef}:${runId}`;
+}
+
 async function chainExpand(
 	backend: CIBackend,
 	jobRef: string,
@@ -478,7 +490,12 @@ async function chainExpand(
 	displayName: string | undefined,
 	depth: number,
 	includeArtifacts: boolean,
+	seen: Set<string>,
+	budget: { remaining: number },
 ): Promise<CIRunNode> {
+	seen.add(chainNodeKey(backend, jobRef, runId));
+	budget.remaining--;
+
 	const run = await backend.getRun(jobRef, runId);
 	const node: CIRunNode = {
 		jobRef,
@@ -496,13 +513,35 @@ async function chainExpand(
 		if (store) node.artifacts = await store.listArtifacts(jobRef, runId);
 	}
 
-	if (depth === 0 || !run.children || run.children.length === 0) return node;
+	if (depth === 0 || budget.remaining <= 0) return node;
 	const nextDepth = depth < 0 ? -1 : depth - 1;
 
-	node.children = [];
-	for (const ref of run.children) {
+	const childRefs: CIRunRef[] = [...(run.children ?? [])];
+	// Supplements (never replaces) run.children with a CIChainable backend's own downstream
+	// lookup, so GitLab's real trigger_jobs data shows up in the tree even though GitLab's
+	// getRun never populates children itself. Called with an empty downstreamJob: GitLab
+	// ignores it entirely (bridges are scoped to the parent pipeline), but Jenkins' adapter
+	// needs a real downstream job name to build its query path, so this generic call harmlessly
+	// finds nothing for Jenkins -- full Jenkins downstream discovery requires the explicit
+	// ci.downstream operation with a known job name, not this automatic tree crawl.
+	const chainable = asChainable(backend);
+	if (chainable) {
 		try {
-			node.children.push(await chainExpand(backend, ref.jobRef, ref.runId, ref.displayName, nextDepth, includeArtifacts));
+			const downstream = await chainable.getDownstreamRuns("", jobRef, run.id);
+			for (const downstreamRun of downstream) childRefs.push({ jobRef: downstreamRun.name, runId: downstreamRun.id, displayName: downstreamRun.name });
+		} catch {
+			// Downstream lookup is best-effort supplementary data; a failed lookup must not fail the whole tree.
+		}
+	}
+	if (childRefs.length === 0) return node;
+
+	node.children = [];
+	for (const ref of childRefs) {
+		if (budget.remaining <= 0) break;
+		const childKey = chainNodeKey(backend, ref.jobRef, ref.runId);
+		if (seen.has(childKey)) continue;
+		try {
+			node.children.push(await chainExpand(backend, ref.jobRef, ref.runId, ref.displayName, nextDepth, includeArtifacts, seen, budget));
 		} catch {
 			node.children.push({ jobRef: ref.jobRef, runId: ref.runId, name: "", displayName: ref.displayName, status: "not_found" });
 		}

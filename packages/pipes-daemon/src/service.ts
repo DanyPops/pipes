@@ -32,7 +32,8 @@ export type OperationName =
 	| "ci.pool"
 	| "ci.subscribe"
 	| "ci.unsubscribe"
-	| "ci.tail";
+	| "ci.tail"
+	| "ci.downstream";
 
 export interface OperationInputs {
 	"ci.help": Record<string, never>;
@@ -48,6 +49,8 @@ export interface OperationInputs {
 	"ci.subscribe": { backend: string; jobRef: string };
 	"ci.unsubscribe": { backend: string; jobRef: string };
 	"ci.tail": { backend: string; jobRef: string; runId?: string; maxTokens?: number };
+	/** Targeted lookup for backends (Jenkins) where ci.chain's automatic tree crawl can't discover children without already knowing the downstream job name. */
+	"ci.downstream": { backend: string; downstreamJob: string; upstreamJob: string; upstreamRunId: string };
 }
 
 export interface OperationOutputs {
@@ -67,6 +70,7 @@ export interface OperationOutputs {
 	/** Idempotent: no error if the job wasn't subscribed. */
 	"ci.unsubscribe": { unsubscribed: true };
 	"ci.tail": { runId: string; status: string; text: string; truncated: boolean; totalTokens: number; outputTokens: number };
+	"ci.downstream": { runs: unknown[] };
 }
 
 export class UnknownOperationError extends Error {
@@ -94,6 +98,7 @@ const OPERATION_NAMES: OperationName[] = [
 	"ci.subscribe",
 	"ci.unsubscribe",
 	"ci.tail",
+	"ci.downstream",
 ];
 
 export interface CreatePipesServiceOptions {
@@ -256,6 +261,11 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 					return handleUnsubscribe(input as OperationInputs["ci.unsubscribe"]) as OperationOutputs[Name];
 				case "ci.tail":
 					return (await handleTail(input as OperationInputs["ci.tail"])) as OperationOutputs[Name];
+				case "ci.downstream": {
+					const downstream = input as OperationInputs["ci.downstream"];
+					const runs = await orchestrator.ciDownstream(downstream.backend, downstream.downstreamJob, downstream.upstreamJob, downstream.upstreamRunId);
+					return { runs } as OperationOutputs[Name];
+				}
 				case "ci.help":
 					return { backends: orchestrator.backendInfo(), pipelines: orchestrator.listPipelines() } as OperationOutputs[Name];
 				case "ci.status":

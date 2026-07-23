@@ -316,3 +316,25 @@ describe("ci.tail", () => {
 		expect(result.text).toBe("no pool here");
 	});
 });
+
+describe("ci.downstream", () => {
+	it("delegates straight to the backend's own CIChainable lookup", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "jenkins", capabilities: Capability.Chain, downstreamRuns: [{ id: "10", name: "downstream", status: "success", startedAt: new Date(0) }] }),
+		);
+		const service = createPipesService(orchestrator);
+
+		const result = await service.execute("ci.downstream", { backend: "jenkins", downstreamJob: "deploy", upstreamJob: "build", upstreamRunId: "5" });
+
+		expect(result.runs).toHaveLength(1);
+	});
+
+	it("rejects a backend that doesn't support chain traversal", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh" }));
+		const service = createPipesService(orchestrator);
+
+		await expect(service.execute("ci.downstream", { backend: "gh", downstreamJob: "deploy", upstreamJob: "build", upstreamRunId: "5" })).rejects.toThrow(/chain traversal/);
+	});
+});

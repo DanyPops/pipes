@@ -17,3 +17,14 @@ export const RUN_POOL_SYNC_INTERVAL_MS = 30_000;
 
 /** Default ci.tail budget — large enough for a genuinely useful excerpt of a CI log, small enough not to dominate an agent's context on every poll. */
 export const DEFAULT_LOG_TAIL_TOKENS = 2000;
+
+/**
+ * Hard ceiling on nodes visited by the chain/artifact crawler, independent of
+ * the caller's depth (including depth=-1/unlimited) -- mirrors web-spider's
+ * crawl.ts maxPages. Every backend's own product team independently
+ * concluded a bound was necessary here: GitHub caps reusable-workflow
+ * nesting at 10 levels and rejects loops outright; GitLab caps a whole
+ * downstream-pipeline hierarchy at 1000. Conty's own chain walker has neither cycle detection nor a node cap and
+ * is not safe prior art to copy as-is.
+ */
+export const CHAIN_CRAWL_MAX_NODES = 200;
