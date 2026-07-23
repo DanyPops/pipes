@@ -27,18 +27,22 @@ export interface GitHubAdapterOptions {
 	owner: string;
 	repo: string;
 	token?: string;
+	/** Resolved fresh before every request; takes precedence over `token` when present so a rotated/refreshed credential is always picked up. */
+	getToken?: () => Promise<string | undefined>;
 	fetchImpl?: FetchLike;
 }
 
 export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore {
 	const { name, owner, repo, token } = options;
 	const doFetch = options.fetchImpl ?? (fetch as unknown as FetchLike);
+	const resolveToken = options.getToken ?? (async () => token);
 
 	async function api<T>(method: string, path: string, body?: unknown): Promise<T | undefined> {
+		const bearer = await resolveToken();
 		const response = await doFetch(`${API_BASE_URL}${path}`, {
 			method,
 			headers: {
-				...(token ? { authorization: `Bearer ${token}` } : {}),
+				...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
 				accept: "application/vnd.github+json",
 				...(body ? { "content-type": "application/json" } : {}),
 			},
@@ -62,8 +66,9 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 	}
 
 	async function fetchRaw(path: string): Promise<Response> {
+		const bearer = await resolveToken();
 		return doFetch(`${API_BASE_URL}${path}`, {
-			headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), accept: "application/vnd.github+json" },
+			headers: { ...(bearer ? { authorization: `Bearer ${bearer}` } : {}), accept: "application/vnd.github+json" },
 		});
 	}
 

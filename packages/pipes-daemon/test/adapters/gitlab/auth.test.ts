@@ -14,6 +14,7 @@ import {
 	generatePkce,
 	isTokenExpired,
 	pollDeviceAccessToken,
+	refreshAccessToken,
 	requestDeviceCode,
 	resolveGitLabToken,
 	resolveStaticToken,
@@ -126,6 +127,35 @@ describe("exchangeAuthorizationCode", () => {
 		});
 		expect(token.accessToken).toBe("glpat-x");
 		expect(token.expiresInS).toBe(7200);
+	});
+});
+
+describe("refreshAccessToken", () => {
+	it("exchanges a refresh token for a new access token via grant_type=refresh_token", async () => {
+		const fetchImpl: FetchLike = async (url, init) => {
+			expect(url).toBe("https://gitlab.example.com/oauth/token");
+			const body = init?.body?.toString() ?? "";
+			expect(body).toContain("grant_type=refresh_token");
+			expect(body).toContain("refresh_token=old-refresh");
+			return jsonResponse({ access_token: "new-access", token_type: "bearer", scope: "api", refresh_token: "new-refresh", expires_in: 7200 });
+		};
+		const token = await refreshAccessToken({ baseUrl: "https://gitlab.example.com", clientId: "c", fetchImpl }, "old-refresh");
+		expect(token.accessToken).toBe("new-access");
+		expect(token.refreshToken).toBe("new-refresh");
+		expect(token.expiresInS).toBe(7200);
+	});
+
+	it("keeps the current refresh token when GitLab's response omits a rotated one", async () => {
+		const fetchImpl: FetchLike = async () => jsonResponse({ access_token: "new-access", token_type: "bearer", scope: "api", expires_in: 7200 });
+		const token = await refreshAccessToken({ baseUrl: "https://gitlab.example.com", clientId: "c", fetchImpl }, "old-refresh");
+		expect(token.refreshToken).toBe("old-refresh");
+	});
+
+	it("throws on a failed refresh rather than returning a malformed credential", async () => {
+		const fetchImpl: FetchLike = async () => new Response("invalid_grant", { status: 400 });
+		await expect(refreshAccessToken({ baseUrl: "https://gitlab.example.com", clientId: "c", fetchImpl }, "expired-refresh")).rejects.toThrow(
+			/token refresh failed/,
+		);
 	});
 });
 

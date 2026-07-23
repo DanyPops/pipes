@@ -140,6 +140,27 @@ export async function exchangeAuthorizationCode(
 	};
 }
 
+/** GitLab issues real refresh tokens (unlike GitHub OAuth Apps' device flow, which never expires and has none) — required for the token provider's proactive refresh. */
+export async function refreshAccessToken(options: GitLabAuthOptions, refreshToken: string): Promise<AccessToken> {
+	const doFetch = options.fetchImpl ?? fetch;
+	const response = await doFetch(`${trimBaseUrl(options.baseUrl)}/oauth/token`, {
+		method: "POST",
+		headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+		body: new URLSearchParams({ client_id: options.clientId, refresh_token: refreshToken, grant_type: "refresh_token" }),
+	});
+	if (!response.ok) throw new Error(`GitLab token refresh failed: HTTP ${response.status}`);
+	const body = (await response.json()) as { access_token: string; token_type: string; scope?: string; refresh_token?: string; expires_in?: number };
+	return {
+		accessToken: body.access_token,
+		tokenType: body.token_type,
+		scope: body.scope ?? "",
+		// GitLab rotates refresh tokens on use; fall back to the current one only if the response omits a new one.
+		refreshToken: body.refresh_token ?? refreshToken,
+		expiresInS: body.expires_in,
+		obtainedAt: Date.now(),
+	};
+}
+
 export interface RunPkceFlowOptions extends GitLabAuthOptions {
 	onPrompt: (authorizationUrl: string) => void;
 }

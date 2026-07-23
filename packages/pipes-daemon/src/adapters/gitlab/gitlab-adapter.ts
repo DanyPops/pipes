@@ -29,6 +29,8 @@ export interface GitLabAdapterOptions {
 	/** Numeric project ID or URL-encoded path (e.g. "group%2Fproject") — GitLab's API accepts either. */
 	projectId: string;
 	token?: string;
+	/** Resolved fresh before every request; takes precedence over `token` when present so a rotated/refreshed credential is always picked up. */
+	getToken?: () => Promise<string | undefined>;
 	fetchImpl?: FetchLike;
 }
 
@@ -36,12 +38,14 @@ export function createGitLabAdapter(options: GitLabAdapterOptions): CIBackend & 
 	const { name, projectId, token } = options;
 	const apiBaseUrl = `${options.baseUrl.replace(/\/$/, "")}/api/v4`;
 	const doFetch = options.fetchImpl ?? (fetch as unknown as FetchLike);
+	const resolveToken = options.getToken ?? (async () => token);
 
 	async function api<T>(method: string, path: string, body?: unknown): Promise<T | undefined> {
+		const bearer = await resolveToken();
 		const response = await doFetch(`${apiBaseUrl}${path}`, {
 			method,
 			headers: {
-				...(token ? { authorization: `Bearer ${token}` } : {}),
+				...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
 				accept: "application/json",
 				...(body ? { "content-type": "application/json" } : {}),
 			},
@@ -60,7 +64,8 @@ export function createGitLabAdapter(options: GitLabAdapterOptions): CIBackend & 
 	}
 
 	async function fetchRaw(path: string): Promise<Response> {
-		return doFetch(`${apiBaseUrl}${path}`, { headers: { ...(token ? { authorization: `Bearer ${token}` } : {}) } });
+		const bearer = await resolveToken();
+		return doFetch(`${apiBaseUrl}${path}`, { headers: { ...(bearer ? { authorization: `Bearer ${bearer}` } : {}) } });
 	}
 
 	function mapStatus(status: string): CIRun["status"] {
