@@ -12,7 +12,7 @@ import { defaultPresetsPath, loadPresets } from "./presets.ts";
 import { createRunPool } from "./run-pool.ts";
 import { createApp, createPipesService } from "./service.ts";
 
-const logger = createLogger("pipes-daemon");
+const logger = createLogger("pipes");
 
 async function buildOrchestrator(credentialPaths: ReturnType<typeof resolvePipesCredentialPaths>): Promise<Orchestrator> {
 	const orchestrator = new Orchestrator();

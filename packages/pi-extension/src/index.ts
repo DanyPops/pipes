@@ -1,6 +1,6 @@
 /**
  * pi-pipes: TUI menu for cross-platform CI (GitHub Actions, GitLab CI,
- * Jenkins, Prow). Thin authenticated client to @danypops/pipes-daemon —
+ * Jenkins, Prow). Thin authenticated client to @danypops/pipes —
  * no network access or credentials of its own.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

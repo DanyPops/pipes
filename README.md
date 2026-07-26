@@ -23,7 +23,7 @@ workflow.
 ## Layout
 
 ```text
-packages/pipes-daemon/    supervised daemon: owns CI credentials, backend
+packages/pipes/           supervised daemon: owns CI credentials, backend
                           adapters, orchestration, and a local run-history
                           pool (status + logs)
 packages/pi-extension/    pi extension: the agent-facing `ci` tool, an

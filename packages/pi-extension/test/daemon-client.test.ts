@@ -12,7 +12,7 @@ import {
 } from "../src/daemon-client.ts";
 
 function tempPaths(): { root: string; paths: PipesPaths } {
-	const root = mkdtempSync(join(tmpdir(), "pi-pipes-daemon-client-"));
+	const root = mkdtempSync(join(tmpdir(), "pi-pipes-client-"));
 	const env = {
 		...(process.env as Record<string, string>),
 		XDG_STATE_HOME: join(root, "state"),

@@ -1,7 +1,7 @@
 # @danypops/pi-pipes
 
 The agent-facing side of pi-pipes: a single `ci` tool over
-`@danypops/pipes-daemon`'s operation registry — trigger, watch, and check
+`@danypops/pipes`'s operation registry — trigger, watch, and check
 results for CI pipelines across GitHub Actions, GitLab CI, and Jenkins
 without hand-rolling each backend's API. No network access or credentials
 of its own; everything routes through the authenticated daemon client.

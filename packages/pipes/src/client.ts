@@ -14,7 +14,7 @@ export type PipesClient = AuthenticatedRpcClient<OperationName, OperationInputs,
 
 export function connectPipesClient(paths = resolvePipesPaths()): PipesClient {
 	const handle = readDaemonHandle(paths.handle);
-	if (!handle) throw new Error("Pipes daemon is not running; run `pipes-daemon serve`.");
+	if (!handle) throw new Error("Pipes daemon is not running; run `pipes serve`.");
 	const token = ensureAuthToken(paths.token, "Pipes");
 	return new AuthenticatedRpcClient(`http://${handle.host}:${handle.port}`, token, { label: "Pipes" });
 }

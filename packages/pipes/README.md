@@ -1,4 +1,4 @@
-# @danypops/pipes-daemon
+# @danypops/pipes
 
 Supervised Bun daemon (built on `@danypops/daemon-kit`) that owns CI
 credentials, real GitHub Actions/GitLab CI/Jenkins adapters, an
@@ -9,7 +9,7 @@ its own schedule regardless of whether any client is connected.
 ## Operations
 
 Exposed over an authenticated loopback HTTP API (`POST /api/v1/ops`), and
-callable via the CLI's generic passthrough (`pipes-daemon call <op> [json]`):
+callable via the CLI's generic passthrough (`pipes call <op> [json]`):
 
 - `ci.help` — configured backends and registered presets
 - `ci.status` / `ci.log` / `ci.search` — live backend reads, with grep/tail

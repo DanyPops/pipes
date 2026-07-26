@@ -1,5 +1,5 @@
 /**
- * The primary agent-facing surface: one tool over pipes-daemon's ci.*
+ * The primary agent-facing surface: one tool over pipes's ci.*
  * operations, mirroring conty's single MCP `ci` tool (one action enum over
  * a shared schema, rather than one tool per operation).
  */

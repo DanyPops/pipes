@@ -16,13 +16,13 @@ function tempXdgEnv(dir: string): Record<string, string> {
 	return { PATH: process.env.PATH ?? "", XDG_STATE_HOME: dir };
 }
 
-describe("pipes-daemon login (real subprocess)", () => {
+describe("pipes login (real subprocess)", () => {
 	it("exits non-zero with usage when no backend is given", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pipes-login-"));
 		try {
 			const { code, stderr } = await runCli(["login"], tempXdgEnv(dir));
 			expect(code).not.toBe(0);
-			expect(stderr).toContain("usage: pipes-daemon login");
+			expect(stderr).toContain("usage: pipes login");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

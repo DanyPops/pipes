@@ -17,7 +17,7 @@ function buildClient(app: ReturnType<typeof buildApp>) {
 	});
 }
 
-describe("pipes-daemon walking skeleton", () => {
+describe("pipes walking skeleton", () => {
 	it("serves health, ready, ops discovery, and ci.help over the authenticated transport", async () => {
 		const client = buildClient(buildApp());
 

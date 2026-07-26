@@ -1,8 +1,8 @@
 /**
  * Authenticated Pipes daemon client, duplicated (not imported) from
- * @danypops/pipes-daemon's paths.ts/client.ts: pi loads extensions through
+ * @danypops/pipes's paths.ts/client.ts: pi loads extensions through
  * module-resolution paths that do not reliably transpile a dependency's
- * raw Bun-targeted TypeScript. This file only needs @danypops/pipes-daemon
+ * raw Bun-targeted TypeScript. This file only needs @danypops/pipes
  * installed as files on disk, to locate and spawn its cli.ts — it never
  * imports that package's code.
  */
@@ -121,10 +121,10 @@ export function connectPipesClient(paths: PipesPaths = resolvePipesPaths()): Pip
 	return new PipesClient(`http://${handle.host}:${handle.port}`, token);
 }
 
-/** Resolves the installed @danypops/pipes-daemon package's cli.ts on disk — no code import, path only. */
+/** Resolves the installed @danypops/pipes package's cli.ts on disk — no code import, path only. */
 function resolveDaemonCliPath(): string {
 	const require = createRequire(import.meta.url);
-	const packageJsonPath = require.resolve("@danypops/pipes-daemon/package.json");
+	const packageJsonPath = require.resolve("@danypops/pipes/package.json");
 	return join(dirname(packageJsonPath), "src", "cli.ts");
 }
 
@@ -158,7 +158,7 @@ export async function connectOrStartPipesClient(
 		cliPath = resolveDaemonCliPath();
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Pipes daemon package not found (${message}); run \`pi install npm:@danypops/pipes-daemon\`.`);
+		throw new Error(`Pipes daemon package not found (${message}); run \`pi install npm:@danypops/pipes\`.`);
 	}
 
 	const child = spawn(cliPath, ["serve"], { detached: true, stdio: "ignore", env: options.env ?? process.env });
@@ -166,7 +166,7 @@ export async function connectOrStartPipesClient(
 
 	const started = await waitForHandle(paths, DAEMON_START_TIMEOUT_MS);
 	if (!started) {
-		throw new Error("Pipes daemon failed to start automatically; run `pipes-daemon serve` manually.");
+		throw new Error("Pipes daemon failed to start automatically; run `pipes serve` manually.");
 	}
 	return connectPipesClient(paths);
 }

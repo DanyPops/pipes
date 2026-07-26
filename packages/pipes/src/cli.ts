@@ -74,7 +74,7 @@ async function loginMain(backend: string | undefined): Promise<void> {
 		return;
 	}
 
-	console.error("usage: pipes-daemon login <github|gitlab|jenkins>");
+	console.error("usage: pipes login <github|gitlab|jenkins>");
 	process.exit(1);
 }
 
@@ -100,7 +100,7 @@ switch (command) {
 	case "call": {
 		const [, , , op, inputJson] = process.argv;
 		if (!op) {
-			console.error("usage: pipes-daemon call <op> [json-input]");
+			console.error("usage: pipes call <op> [json-input]");
 			process.exit(1);
 		}
 		const client = connectPipesClient();
@@ -111,7 +111,7 @@ switch (command) {
 	}
 	default:
 		console.error(
-			"usage: pipes-daemon <serve|login|health|backends|call>\n  login <github|gitlab|jenkins>  authenticate and store credentials for a backend\n  call <op> [json-input]         invoke any ci.* operation, e.g. call ci.pool '{\"backend\":\"gh\",\"jobRef\":\"job\"}'",
+			"usage: pipes <serve|login|health|backends|call>\n  login <github|gitlab|jenkins>  authenticate and store credentials for a backend\n  call <op> [json-input]         invoke any ci.* operation, e.g. call ci.pool '{\"backend\":\"gh\",\"jobRef\":\"job\"}'",
 		);
 		process.exit(1);
 }
