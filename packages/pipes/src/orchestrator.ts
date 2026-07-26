@@ -79,6 +79,20 @@ export class Orchestrator {
 		this.pipelines.set(pipeline.name, pipeline);
 	}
 
+	/** True when a preset by this name existed and was removed; false if it was never registered. */
+	unregisterPipeline(name: string): boolean {
+		return this.pipelines.delete(name);
+	}
+
+	getPipelineDefinition(name: string): Pipeline | undefined {
+		return this.pipelines.get(name);
+	}
+
+	/** Every registered preset's full definition, not just names -- for a management UI to list/edit from. */
+	listPipelineDefinitions(): Pipeline[] {
+		return [...this.pipelines.values()];
+	}
+
 	private adapter(name: string): CIBackend {
 		const backend = this.adapters.get(name);
 		if (!backend) throw new BackendNotFoundError(name);

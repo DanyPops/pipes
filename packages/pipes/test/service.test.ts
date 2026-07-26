@@ -1,7 +1,11 @@
-import { describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "bun:test";
 import { openPipesDb } from "../src/db.ts";
 import { Orchestrator } from "../src/orchestrator.ts";
 import { Capability } from "../src/ports/ci-backend.ts";
+import { loadPresets } from "../src/presets.ts";
 import { createRunPool } from "../src/run-pool.ts";
 import { createPipesService } from "../src/service.ts";
 import { createStubCIBackend } from "./fixtures/stub-ci-backend.ts";
@@ -375,5 +379,87 @@ describe("ci.downstream", () => {
 		const service = createPipesService(orchestrator);
 
 		await expect(service.execute("ci.downstream", { backend: "gh", downstreamJob: "deploy", upstreamJob: "build", upstreamRunId: "5" })).rejects.toThrow(/chain traversal/);
+	});
+});
+
+describe("ci.presets.*: live CRUD, not just a static file read at boot", () => {
+	let dir: string | undefined;
+
+	afterEach(() => {
+		if (dir) rmSync(dir, { recursive: true, force: true });
+		dir = undefined;
+	});
+
+	it("ci.presets.list starts empty when nothing is registered", async () => {
+		const service = createPipesService(new Orchestrator());
+		const result = await service.execute("ci.presets.list", {});
+		expect(result.presets).toEqual([]);
+	});
+
+	it("ci.presets.set registers the preset in-memory immediately -- no restart needed to trigger it", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "build", runId: "1" } }),
+		);
+		dir = mkdtempSync(join(tmpdir(), "pipes-service-presets-"));
+		const presetsPath = join(dir, "pipelines.json");
+		const service = createPipesService(orchestrator, { presetsPath });
+
+		await service.execute("ci.presets.set", { preset: { name: "deploy", backend: "gh", steps: [{ jobName: "build" }] } });
+
+		const run = await orchestrator.triggerPipeline("deploy");
+		expect(run.status).toBe("success");
+	});
+
+	it("ci.presets.set persists to disk so a future daemon restart still sees it", async () => {
+		const orchestrator = new Orchestrator();
+		dir = mkdtempSync(join(tmpdir(), "pipes-service-presets-"));
+		const presetsPath = join(dir, "pipelines.json");
+		const service = createPipesService(orchestrator, { presetsPath });
+
+		await service.execute("ci.presets.set", { preset: { name: "deploy", backend: "gh", steps: [{ jobName: "build" }] } });
+
+		expect(loadPresets(presetsPath)).toEqual([{ name: "deploy", backend: "gh", steps: [{ jobName: "build" }] }]);
+	});
+
+	it("ci.presets.set upserts -- setting an existing name replaces it, in both list and on disk", async () => {
+		const orchestrator = new Orchestrator();
+		dir = mkdtempSync(join(tmpdir(), "pipes-service-presets-"));
+		const presetsPath = join(dir, "pipelines.json");
+		const service = createPipesService(orchestrator, { presetsPath });
+		await service.execute("ci.presets.set", { preset: { name: "deploy", backend: "gh", steps: [{ jobName: "build" }] } });
+
+		await service.execute("ci.presets.set", { preset: { name: "deploy", backend: "gitlab", steps: [{ jobName: "release" }] } });
+
+		const listed = await service.execute("ci.presets.list", {});
+		expect(listed.presets).toEqual([{ name: "deploy", backend: "gitlab", steps: [{ jobName: "release" }] }]);
+		expect(loadPresets(presetsPath)).toEqual([{ name: "deploy", backend: "gitlab", steps: [{ jobName: "release" }] }]);
+	});
+
+	it("ci.presets.remove deletes an existing preset from memory and disk", async () => {
+		const orchestrator = new Orchestrator();
+		dir = mkdtempSync(join(tmpdir(), "pipes-service-presets-"));
+		const presetsPath = join(dir, "pipelines.json");
+		const service = createPipesService(orchestrator, { presetsPath });
+		await service.execute("ci.presets.set", { preset: { name: "deploy", backend: "gh", steps: [{ jobName: "build" }] } });
+
+		const result = await service.execute("ci.presets.remove", { name: "deploy" });
+
+		expect(result.removed).toBe(true);
+		expect((await service.execute("ci.presets.list", {})).presets).toEqual([]);
+		expect(loadPresets(presetsPath)).toEqual([]);
+	});
+
+	it("ci.presets.remove is idempotent -- removing a name that was never registered reports removed:false without touching the file", async () => {
+		const orchestrator = new Orchestrator();
+		dir = mkdtempSync(join(tmpdir(), "pipes-service-presets-"));
+		const presetsPath = join(dir, "pipelines.json");
+		const service = createPipesService(orchestrator, { presetsPath });
+
+		const result = await service.execute("ci.presets.remove", { name: "never-existed" });
+
+		expect(result.removed).toBe(false);
+		// No file was ever written -- loadPresets sees the "doesn't exist yet" default, not a write we never intended.
+		expect(loadPresets(presetsPath)).toEqual([]);
 	});
 });

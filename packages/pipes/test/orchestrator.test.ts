@@ -237,6 +237,47 @@ describe("Orchestrator: trigger records ownership; cancel is ownership-gated", (
 	});
 });
 
+describe("Orchestrator: preset registry CRUD", () => {
+	it("registerPipeline is an upsert -- registering the same name again replaces it", () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.registerPipeline({ name: "deploy", backend: "gh", steps: [{ jobName: "build" }] });
+		orchestrator.registerPipeline({ name: "deploy", backend: "gitlab", steps: [{ jobName: "release" }] });
+
+		expect(orchestrator.getPipelineDefinition("deploy")).toEqual({ name: "deploy", backend: "gitlab", steps: [{ jobName: "release" }] });
+		expect(orchestrator.listPipelineDefinitions()).toHaveLength(1);
+	});
+
+	it("getPipelineDefinition returns undefined for an unregistered name, not a throw", () => {
+		const orchestrator = new Orchestrator();
+		expect(orchestrator.getPipelineDefinition("missing")).toBeUndefined();
+	});
+
+	it("listPipelineDefinitions returns every registered preset's full definition", () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.registerPipeline({ name: "a", backend: "gh", steps: [{ jobName: "x" }] });
+		orchestrator.registerPipeline({ name: "b", backend: "gitlab", steps: [{ jobName: "y" }] });
+
+		expect(orchestrator.listPipelineDefinitions()).toEqual([
+			{ name: "a", backend: "gh", steps: [{ jobName: "x" }] },
+			{ name: "b", backend: "gitlab", steps: [{ jobName: "y" }] },
+		]);
+	});
+
+	it("unregisterPipeline returns true and removes an existing preset", () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.registerPipeline({ name: "deploy", backend: "gh", steps: [{ jobName: "build" }] });
+
+		expect(orchestrator.unregisterPipeline("deploy")).toBe(true);
+		expect(orchestrator.getPipelineDefinition("deploy")).toBeUndefined();
+		expect(orchestrator.listPipelineDefinitions()).toEqual([]);
+	});
+
+	it("unregisterPipeline is idempotent -- returns false for a name that was never registered", () => {
+		const orchestrator = new Orchestrator();
+		expect(orchestrator.unregisterPipeline("never-existed")).toBe(false);
+	});
+});
+
 describe("Orchestrator.ciParamsTruncated", () => {
 	it("truncates values over 500 chars and reports which keys were truncated", async () => {
 		const orchestrator = new Orchestrator();

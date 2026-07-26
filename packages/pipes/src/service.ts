@@ -2,8 +2,9 @@
 import { errorResponse, healthResponse, jsonResponse, readyResponse, requireBearerToken } from "@danypops/daemon-kit/http";
 import { DEFAULT_LOG_TAIL_TOKENS } from "./constants.ts";
 import type { CIRunNode, CIStageNode, LogResult, RunResult } from "./domain/ci-run.ts";
-import type { PipelineRun } from "./domain/pipeline.ts";
+import type { Pipeline, PipelineRun } from "./domain/pipeline.ts";
 import type { TriggerResult, WatchStatus } from "./domain/trigger.ts";
+import { defaultPresetsPath, savePresets } from "./presets.ts";
 import {
 	BackendNotFoundError,
 	CapabilityUnsupportedError,
@@ -33,7 +34,10 @@ export type OperationName =
 	| "ci.subscribe"
 	| "ci.unsubscribe"
 	| "ci.tail"
-	| "ci.downstream";
+	| "ci.downstream"
+	| "ci.presets.list"
+	| "ci.presets.set"
+	| "ci.presets.remove";
 
 export interface OperationInputs {
 	"ci.help": Record<string, never>;
@@ -51,6 +55,10 @@ export interface OperationInputs {
 	"ci.tail": { backend: string; jobRef: string; runId?: string; maxTokens?: number };
 	/** Targeted lookup for backends (Jenkins) where ci.chain's automatic tree crawl can't discover children without already knowing the downstream job name. */
 	"ci.downstream": { backend: string; downstreamJob: string; upstreamJob: string; upstreamRunId: string };
+	"ci.presets.list": Record<string, never>;
+	/** Upsert by name -- setting an existing name's preset replaces it entirely, matching Orchestrator.registerPipeline's Map semantics. */
+	"ci.presets.set": { preset: Pipeline };
+	"ci.presets.remove": { name: string };
 }
 
 export interface OperationOutputs {
@@ -71,6 +79,10 @@ export interface OperationOutputs {
 	"ci.unsubscribe": { unsubscribed: true };
 	"ci.tail": { runId: string; status: string; text: string; truncated: boolean; totalTokens: number; outputTokens: number; url?: string };
 	"ci.downstream": { runs: unknown[] };
+	"ci.presets.list": { presets: Pipeline[] };
+	"ci.presets.set": { preset: Pipeline };
+	/** True when a preset by this name existed and was removed; false if it was never registered -- idempotent, not an error either way. */
+	"ci.presets.remove": { removed: boolean };
 }
 
 export class UnknownOperationError extends Error {
@@ -99,6 +111,9 @@ const OPERATION_NAMES: OperationName[] = [
 	"ci.unsubscribe",
 	"ci.tail",
 	"ci.downstream",
+	"ci.presets.list",
+	"ci.presets.set",
+	"ci.presets.remove",
 ];
 
 export interface CreatePipesServiceOptions {
@@ -106,11 +121,14 @@ export interface CreatePipesServiceOptions {
 	waitPollIntervalMs?: number;
 	/** Optional: when present, trigger seeds the local pool and ci.pool reads from it. Absent in tests that don't exercise pooling. */
 	runPool?: RunPool;
+	/** Overridable for tests; production default is the same human-edited pipelines.json loadPresets reads at startup. */
+	presetsPath?: string;
 }
 
 export function createPipesService(orchestrator: Orchestrator, options: CreatePipesServiceOptions = {}): PipesService {
 	const pollIntervalMs = options.waitPollIntervalMs ?? DEFAULT_WAIT_POLL_MS;
 	const pool = options.runPool;
+	const presetsPath = options.presetsPath ?? defaultPresetsPath();
 
 	async function handleStatus(input: OperationInputs["ci.status"]): Promise<OperationOutputs["ci.status"]> {
 		if (input.pipeline) {
@@ -297,6 +315,20 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 				case "ci.chain": {
 					const chain = input as OperationInputs["ci.chain"];
 					return (await orchestrator.ciChain(chain.backend, chain.jobRef, chain.runId, chain.depth ?? 3, chain.artifacts ?? false)) as OperationOutputs[Name];
+				}
+				case "ci.presets.list":
+					return { presets: orchestrator.listPipelineDefinitions() } as OperationOutputs[Name];
+				case "ci.presets.set": {
+					const { preset } = input as OperationInputs["ci.presets.set"];
+					orchestrator.registerPipeline(preset);
+					savePresets(presetsPath, orchestrator.listPipelineDefinitions());
+					return { preset } as OperationOutputs[Name];
+				}
+				case "ci.presets.remove": {
+					const { name } = input as OperationInputs["ci.presets.remove"];
+					const removed = orchestrator.unregisterPipeline(name);
+					if (removed) savePresets(presetsPath, orchestrator.listPipelineDefinitions());
+					return { removed } as OperationOutputs[Name];
 				}
 				default:
 					throw new UnknownOperationError(op);
