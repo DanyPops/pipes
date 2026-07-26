@@ -315,6 +315,45 @@ describe("ci.tail", () => {
 
 		expect(result.text).toBe("no pool here");
 	});
+
+	it("carries the pooled run's URL through on a cached-terminal hit", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh" }));
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		runPool.upsert({
+			backend: "gh",
+			jobRef: "job",
+			runId: "1",
+			status: "success",
+			result: "SUCCESS",
+			url: "https://ci.example/gh/job/1",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: false,
+		});
+		runPool.upsertLog("gh", "job", "1", "cached log");
+		const service = createPipesService(orchestrator, { runPool });
+
+		const result = await service.execute("ci.tail", { backend: "gh", jobRef: "job", runId: "1" });
+
+		expect(result.url).toBe("https://ci.example/gh/job/1");
+	});
+
+	it("carries the live-fetched run's URL through when there's no cache hit", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				runsById: { latest: { id: "1", name: "job", status: "success", startedAt: new Date(0), url: "https://ci.example/gh/job/1" } },
+				log: "fresh log",
+			}),
+		);
+		const service = createPipesService(orchestrator);
+
+		const result = await service.execute("ci.tail", { backend: "gh", jobRef: "job" });
+
+		expect(result.url).toBe("https://ci.example/gh/job/1");
+	});
 });
 
 describe("ci.downstream", () => {

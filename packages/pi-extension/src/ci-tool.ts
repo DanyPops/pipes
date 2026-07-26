@@ -5,7 +5,9 @@
  */
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { findFirstUrl, openLine, statusGlyph } from "./ci-render.ts";
 import { connectOrStartPipesClient } from "./daemon-client.ts";
 
 const ACTIONS = ["help", "status", "log", "search", "trigger", "wait", "cancel", "stages", "chain", "pool", "subscribe", "unsubscribe", "tail", "downstream"] as const;
@@ -66,7 +68,138 @@ export function registerCiTool(pi: ExtensionAPI): void {
 			const { action, ...rest } = params as { action: (typeof ACTIONS)[number] } & Record<string, unknown>;
 			const client = await connectOrStartPipesClient();
 			const result = await client.call(operationFor(action), rest);
-			return { content: [{ type: "text", text: JSON.stringify(result) }], details: {} };
+			// content is the LLM-facing channel (complete, exact JSON); details carries the same
+			// structured result for renderResult's separate human-facing TUI channel below.
+			return { content: [{ type: "text", text: JSON.stringify(result) }], details: { result } };
+		},
+
+		renderCall(args, theme, _context) {
+			const input = args as { action?: string; backend?: string; jobRef?: string; pipeline?: string; runId?: string };
+			let text = theme.fg("toolTitle", theme.bold("ci ")) + theme.fg("muted", input.action ?? "");
+			if (input.pipeline) {
+				text += " " + theme.fg("accent", input.pipeline);
+			} else {
+				const target = [input.backend, input.jobRef].filter(Boolean).join("/");
+				if (target) text += " " + theme.fg("accent", target);
+			}
+			if (input.runId) text += " " + theme.fg("dim", `#${input.runId}`);
+			return new Text(text, 0, 0);
+		},
+
+		renderResult(result, { expanded, isPartial }, theme, context) {
+			if (isPartial) return new Text(theme.fg("warning", "Running..."), 0, 0);
+
+			if (context.isError) {
+				const message = result.content[0];
+				return new Text(theme.fg("error", `Error: ${message?.type === "text" ? message.text : "unknown error"}`), 0, 0);
+			}
+
+			const details = result.details as { result?: unknown } | undefined;
+			const data = details?.result;
+			if (data === undefined) {
+				const message = result.content[0];
+				return new Text(message?.type === "text" ? message.text : "", 0, 0);
+			}
+
+			const summary = summarize(data, theme);
+			let text = summary;
+			const url = findFirstUrl(data);
+			if (url) text += `\n${openLine(url, theme)}`;
+			if (expanded) text += `\n${theme.fg("dim", JSON.stringify(data, null, 2))}`;
+			return new Text(text, 0, 0);
 		},
 	});
+}
+
+interface ThemeLike {
+	fg(color: string, text: string): string;
+	bold(text: string): string;
+}
+
+/** One compact, action-shaped summary line (or few) -- the human-facing counterpart to the JSON sent to the LLM. */
+export function summarize(data: unknown, theme: ThemeLike): string {
+	if (!data || typeof data !== "object") return String(data);
+	const d = data as Record<string, unknown>;
+
+	// ci.help
+	if (Array.isArray(d.backends)) {
+		const backends = d.backends as Array<{ name: string; capabilities: string }>;
+		const pipelines = Array.isArray(d.pipelines) ? (d.pipelines as string[]) : [];
+		const lines = backends.map((b) => `  ${theme.fg("accent", b.name)} ${theme.fg("dim", b.capabilities)}`);
+		return [theme.fg("muted", `${backends.length} backend(s):`), ...lines, pipelines.length > 0 ? theme.fg("muted", `Pipelines: ${pipelines.join(", ")}`) : undefined]
+			.filter((line): line is string => line !== undefined)
+			.join("\n");
+	}
+
+	// ci.status / ci.trigger (pipeline form)
+	if (d.pipelineRun && typeof d.pipelineRun === "object") {
+		const run = d.pipelineRun as { pipeline: string; status: string; steps: Array<{ jobName: string; status: string }> };
+		const steps = run.steps.map((s) => `  ${statusGlyph(s.status, theme)} ${theme.fg("muted", s.jobName)}`).join("\n");
+		return `${statusGlyph(run.status, theme)} ${theme.fg("accent", run.pipeline)}\n${steps}`;
+	}
+
+	// ci.status (direct backend/jobRef form): CIVerdict
+	if (d.verdict && typeof d.verdict === "object") {
+		const verdict = d.verdict as { check: { backend: string; jobRef: string; runId: string; status: string }; failure?: { classification: string; failedJob?: string } };
+		const { check } = verdict;
+		let text = `${statusGlyph(check.status, theme)} ${theme.fg("accent", `${check.backend}/${check.jobRef}`)} ${theme.fg("dim", `#${check.runId}`)}`;
+		if (verdict.failure) {
+			text += `\n${theme.fg("error", verdict.failure.classification)}`;
+			if (verdict.failure.failedJob) text += theme.fg("muted", ` (${verdict.failure.failedJob})`);
+		}
+		return text;
+	}
+
+	// ci.trigger (direct backend/jobRef form): TriggerResult
+	if (d.result && typeof d.result === "object" && "jobRef" in (d.result as object)) {
+		const trigger = d.result as { backend: string; jobRef: string; buildNumber?: string; queueId?: string };
+		const id = trigger.buildNumber ?? trigger.queueId ?? "(pending)";
+		return `${theme.fg("success", "Triggered")} ${theme.fg("accent", `${trigger.backend}/${trigger.jobRef}`)} ${theme.fg("dim", `#${id}`)}`;
+	}
+
+	// ci.wait: WatchStatus
+	if (typeof d.status === "string" && typeof d.buildNumber === "string" && "progressPercent" in d) {
+		const watch = d as { buildNumber: string; status: string; progressPercent: number; overdue: boolean };
+		let text = `${statusGlyph(watch.status, theme)} ${theme.fg("dim", `#${watch.buildNumber}`)} ${theme.fg("muted", `${Math.round(watch.progressPercent)}%`)}`;
+		if (watch.overdue) text += ` ${theme.fg("warning", "overdue")}`;
+		return text;
+	}
+
+	// ci.wait (opaqueRef resolve form)
+	if (typeof d.buildNumber === "string") return `${theme.fg("muted", "Resolved to")} ${theme.fg("dim", `#${d.buildNumber}`)}`;
+
+	// ci.cancel
+	if (d.status === "cancelled") return `${theme.fg("warning", "✗ Cancelled")} ${theme.fg("dim", `#${d.runId}`)}`;
+
+	// ci.log / ci.tail: line/text-shaped result
+	if (typeof d.totalLines === "number") {
+		const log = d as { totalLines: number; truncated?: boolean; filtered?: boolean };
+		return theme.fg("muted", `${log.totalLines} line(s)${log.truncated ? ", truncated" : ""}${log.filtered ? ", filtered" : ""}`);
+	}
+	if (typeof d.outputTokens === "number" && typeof d.runId === "string") {
+		const tail = d as { runId: string; status: string; truncated: boolean; outputTokens: number };
+		return `${statusGlyph(tail.status, theme)} ${theme.fg("dim", `#${tail.runId}`)} ${theme.fg("muted", `${tail.outputTokens} tok${tail.truncated ? ", truncated" : ""}`)}`;
+	}
+
+	// ci.search / ci.downstream: { builds } / { runs }
+	for (const key of ["builds", "runs"]) {
+		const list = d[key];
+		if (Array.isArray(list)) return theme.fg("muted", `${list.length} run(s)`);
+	}
+
+	// ci.pool: { runs: RunSnapshot[] } already covered above via "runs"; ci.subscribe/unsubscribe
+	if (d.subscribed === true) return theme.fg("success", "✓ Subscribed");
+	if (d.unsubscribed === true) return theme.fg("success", "✓ Unsubscribed");
+
+	// ci.stages
+	if (Array.isArray(d.stages)) return theme.fg("muted", `${d.stages.length} stage(s)`);
+
+	// ci.chain: CIRunNode (has its own status/name at the top level)
+	if (typeof d.status === "string" && typeof d.name === "string") {
+		const node = d as { name: string; status: string; children?: unknown[] };
+		const childCount = node.children?.length ?? 0;
+		return `${statusGlyph(node.status, theme)} ${theme.fg("accent", node.name)}${childCount > 0 ? theme.fg("dim", ` (${childCount} downstream)`) : ""}`;
+	}
+
+	return theme.fg("muted", "Done");
 }

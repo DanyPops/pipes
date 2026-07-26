@@ -8,6 +8,8 @@ export interface CICheck {
 	runId: string;
 	status: RunStatus;
 	checkedAt: Date;
+	/** The backend's own web view of this run, when the adapter reports one -- lets a caller open it directly. */
+	url?: string;
 }
 
 export interface TestSummary {

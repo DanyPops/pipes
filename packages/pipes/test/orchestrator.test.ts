@@ -112,6 +112,19 @@ describe("Orchestrator.getVerdict: the compact real-time result", () => {
 		expect(verdict.failure?.failedJob).toBe("deploy");
 	});
 
+	it("carries the backend's web URL through onto the check, for both the latest and an explicit runId", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", run: { id: "9", name: "run", status: "success", startedAt: new Date(0), url: "https://ci.example/gh/job/9" } }),
+		);
+
+		const latest = await orchestrator.getVerdict("gh", "job", undefined, {});
+		expect(latest.check.url).toBe("https://ci.example/gh/job/9");
+
+		const explicit = await orchestrator.getVerdict("gh", "job", "9", {});
+		expect(explicit.check.url).toBe("https://ci.example/gh/job/9");
+	});
+
 	it("honors an explicit runId rather than silently checking latest", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(
@@ -150,6 +163,15 @@ describe("Orchestrator.ciWatch: real-time progress", () => {
 		const watch = await orchestrator.ciWatch("gh", "job", "1");
 		expect(watch.overdue).toBe(true);
 	});
+
+	it("carries the backend's web URL through onto the watch status", async () => {
+		const orchestrator = new Orchestrator();
+		const run: CIRun = { id: "1", name: "run", status: "running", startedAt: new Date(0), url: "https://ci.example/gh/job/1" };
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, run }));
+
+		const watch = await orchestrator.ciWatch("gh", "job", "1");
+		expect(watch.url).toBe("https://ci.example/gh/job/1");
+	});
 });
 
 describe("Orchestrator: trigger records ownership; cancel is ownership-gated", () => {
@@ -173,6 +195,39 @@ describe("Orchestrator: trigger records ownership; cancel is ownership-gated", (
 		expect(result.buildNumber).toBe("42");
 		expect(orchestrator.ownsRun("gh", "42")).toBe(true);
 		await expect(orchestrator.ciCancel("gh", "job", "42")).resolves.toBeUndefined();
+	});
+
+	it("fetches and attaches the backend's web URL once trigger resolves a runId", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "42" },
+				run: { id: "42", name: "run", status: "running", startedAt: new Date(0), url: "https://ci.example/gh/job/42" },
+			}),
+		);
+
+		const result = await orchestrator.ciTrigger("gh", "job", {});
+		expect(result.url).toBe("https://ci.example/gh/job/42");
+	});
+
+	it("leaves url undefined, without throwing, when the just-triggered run isn't queryable yet", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({
+			name: "gh",
+			capabilities: Capability.Trigger,
+			triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "43" },
+		});
+		// Trigger itself must still succeed -- only the follow-up getRun (fetching the URL) fails here.
+		backend.getRun = async () => {
+			throw new Error("not found yet");
+		};
+		orchestrator.addAdapter(backend);
+
+		const result = await orchestrator.ciTrigger("gh", "job", {});
+		expect(result.buildNumber).toBe("43");
+		expect(result.url).toBeUndefined();
 	});
 
 	it("throws CapabilityUnsupportedError when triggering an unsupported backend", async () => {

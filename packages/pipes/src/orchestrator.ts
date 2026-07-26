@@ -206,7 +206,7 @@ export class Orchestrator {
 	async checkLatest(backendName: string, jobRef: string): Promise<CICheck> {
 		const backend = this.adapter(backendName);
 		const run = await backend.getRun(jobRef, "latest");
-		return { jobRef, backend: backendName, runId: run.id, status: run.status, checkedAt: new Date() };
+		return { jobRef, backend: backendName, runId: run.id, status: run.status, checkedAt: new Date(), url: run.url };
 	}
 
 	async getVerdict(backendName: string, jobRef: string, runId: string | undefined, filter: LogFilter): Promise<CIVerdict> {
@@ -216,7 +216,7 @@ export class Orchestrator {
 				: await (async (): Promise<CICheck> => {
 						const backend = this.adapter(backendName);
 						const run = await backend.getRun(jobRef, runId);
-						return { jobRef, backend: backendName, runId: run.id, status: run.status, checkedAt: new Date() };
+						return { jobRef, backend: backendName, runId: run.id, status: run.status, checkedAt: new Date(), url: run.url };
 					})();
 
 		if (check.status === "success") {
@@ -273,6 +273,7 @@ export class Orchestrator {
 			elapsedMs,
 			estimatedMs,
 			overdue: false,
+			url: run.url,
 		};
 		if (estimatedMs > 0) {
 			watch.progressPercent = (elapsedMs / estimatedMs) * 100;
@@ -297,6 +298,12 @@ export class Orchestrator {
 		if (receipt.runId) {
 			result.buildNumber = receipt.runId;
 			this.recordOwnership(backendName, jobRef, receipt.runId, receipt.opaqueRef);
+			try {
+				result.url = (await backend.getRun(jobRef, receipt.runId)).url;
+			} catch {
+				// A run that was just triggered may not be queryable yet on some backends -- the caller
+				// still has buildNumber and can fetch the URL later via status/pool.
+			}
 		}
 
 		const estimatedMs = await triggerable.estimateDuration(jobRef);

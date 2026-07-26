@@ -24,6 +24,8 @@ export interface TriggerResult {
 	backend: string;
 	estimatedDurationMs?: number;
 	pollIntervalMs?: number;
+	/** The backend's own web view of this run, populated once buildNumber resolves. */
+	url?: string;
 }
 
 /** Real-time progress: percent complete against EstimateDuration, plus an overdue flag past 1.5x estimate. */
@@ -36,6 +38,8 @@ export interface WatchStatus {
 	elapsedMs: number;
 	estimatedMs: number;
 	overdue: boolean;
+	/** The backend's own web view of this run, when the adapter reports one. */
+	url?: string;
 }
 
 /** Session-scoped: CICancel refuses to act on a run this session didn't trigger. */

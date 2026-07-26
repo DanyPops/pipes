@@ -69,7 +69,7 @@ export interface OperationOutputs {
 	"ci.subscribe": { subscribed: true; run?: RunSnapshot };
 	/** Idempotent: no error if the job wasn't subscribed. */
 	"ci.unsubscribe": { unsubscribed: true };
-	"ci.tail": { runId: string; status: string; text: string; truncated: boolean; totalTokens: number; outputTokens: number };
+	"ci.tail": { runId: string; status: string; text: string; truncated: boolean; totalTokens: number; outputTokens: number; url?: string };
 	"ci.downstream": { runs: unknown[] };
 }
 
@@ -190,7 +190,7 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 			if (cached && isTerminalStatus(cached.status)) {
 				const log = pool.getLog(input.backend, input.jobRef, input.runId) ?? "";
 				const tail = tailByTokenBudget(log, maxTokens);
-				return { runId: input.runId, status: cached.status, ...tail };
+				return { runId: input.runId, status: cached.status, url: cached.url || undefined, ...tail };
 			}
 		}
 
@@ -214,7 +214,7 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 			pool.upsertLog(input.backend, input.jobRef, run.id, log);
 		}
 		const tail = tailByTokenBudget(log, maxTokens);
-		return { runId: run.id, status: run.status, ...tail };
+		return { runId: run.id, status: run.status, url: run.url, ...tail };
 	}
 
 	/** Genuinely blocking: polls ciWatch on an interval until a terminal status or timeout, exactly like conty's wait action. */
