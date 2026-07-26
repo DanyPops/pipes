@@ -78,6 +78,34 @@ describe("summarize: ci.wait", () => {
 		expect(text).toContain("Resolved to");
 		expect(text).toContain("#5");
 	});
+
+	it("appends a streamed tail preview's last lines when present", () => {
+		const data = {
+			buildNumber: "1",
+			status: "running",
+			progressPercent: 50,
+			overdue: false,
+			tail: { text: "line1\nline2\nline3\nline4\nline5\nline6\nline7", truncated: false },
+		};
+		const text = summarize(data, theme);
+		expect(text).toContain("line7");
+		expect(text).toContain("line3"); // within the last 5 lines
+		expect(text).not.toContain("line1"); // older than the preview window
+		expect(text).toContain("..."); // more lines exist than fit the preview
+	});
+
+	it("renders a short tail preview without a truncation marker when everything fits", () => {
+		const data = { buildNumber: "1", status: "success", progressPercent: 100, overdue: false, tail: { text: "only one line", truncated: false } };
+		const text = summarize(data, theme);
+		expect(text).toContain("only one line");
+		expect(text).not.toContain("...");
+	});
+
+	it("renders no tail section at all when tail is absent, matching the pre-streaming shape", () => {
+		const data = { buildNumber: "1", status: "success", progressPercent: 100, overdue: false };
+		const text = summarize(data, theme);
+		expect(text).not.toContain("undefined");
+	});
 });
 
 describe("summarize: ci.cancel", () => {

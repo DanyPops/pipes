@@ -8,6 +8,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { findFirstUrl, openLine, statusGlyph } from "./ci-render.ts";
+import { waitAndStreamTail } from "./ci-wait-stream.ts";
 import { connectOrStartPipesClient } from "./daemon-client.ts";
 
 const ACTIONS = ["help", "status", "log", "search", "trigger", "wait", "cancel", "stages", "chain", "pool", "subscribe", "unsubscribe", "tail", "downstream"] as const;
@@ -33,7 +34,7 @@ const PARAMETERS = Type.Object({
 	includeFailedLog: Type.Optional(Type.Boolean({ description: "For stages: attach each failed step's log (requires steps=true)." })),
 	depth: Type.Optional(Type.Integer({ description: "Max recursion depth for chain (default 3, -1 = unlimited)." })),
 	artifacts: Type.Optional(Type.Boolean({ description: "For chain: attach each node's artifact list." })),
-	maxTokens: Type.Optional(Type.Integer({ description: "For tail: token budget for the returned log excerpt (default 2000). The full log is always cached server-side regardless of this." })),
+	maxTokens: Type.Optional(Type.Integer({ description: "For tail, and for wait's streamed log preview: token budget for the returned log excerpt (default 2000). The full log is always cached server-side regardless of this." })),
 	downstreamJob: Type.Optional(Type.String({ description: "For downstream: the specific downstream job name to check (required for Jenkins; ignored by GitLab, whose bridges are scoped to the pipeline already given by upstreamRunId)." })),
 	upstreamJob: Type.Optional(Type.String({ description: "For downstream: the upstream job name that triggered it." })),
 	upstreamRunId: Type.Optional(Type.String({ description: "For downstream: the specific upstream run ID to match against." })),
@@ -52,7 +53,8 @@ export function registerCiTool(pi: ExtensionAPI): void {
 			"Call ci(action=help) first — lists configured backends and named presets. " +
 			"Typical flow: trigger -> wait -> status. status(grep=error) gives a verdict plus filtered failure log in one call. " +
 			"runId is optional for status/log — omit it to use the latest run. wait is blocking: it polls until the run finishes " +
-			"or timeoutS elapses, so you don't need to re-poll manually.",
+			"or timeoutS elapses, so you don't need to re-poll manually. When jobRef+runId are given (watching an existing run, " +
+			"not resolving an opaqueRef), wait streams a live log tail preview as it polls, instead of going silent until done.",
 		promptSnippet: "Trigger, watch, and check results for CI pipelines across GitHub/GitLab/Jenkins/Prow",
 		promptGuidelines: [
 			"Use ci(action=help) before assuming which backends or presets are configured.",
@@ -64,9 +66,24 @@ export function registerCiTool(pi: ExtensionAPI): void {
 			"Use ci(action=chain) for a run's downstream tree automatically where the backend supports it (GitLab). For Jenkins, ci(action=chain) alone will not find children -- use ci(action=downstream, downstreamJob=..., upstreamJob=..., upstreamRunId=...) with the specific downstream job name you're checking.",
 		],
 		parameters: PARAMETERS,
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, signal, onUpdate) {
 			const { action, ...rest } = params as { action: (typeof ACTIONS)[number] } & Record<string, unknown>;
 			const client = await connectOrStartPipesClient();
+
+			// wait streams a live tail preview only for the "watch an existing run" form (jobRef+runId).
+			// The opaqueRef-resolve form has no run to tail yet, and a jobRef with no runId is an invalid
+			// combination the daemon itself rejects -- both fall through to the plain single-call path
+			// below so the daemon's own validation error surfaces unchanged.
+			if (action === "wait" && !rest.opaqueRef && typeof rest.backend === "string" && typeof rest.jobRef === "string" && typeof rest.runId === "string") {
+				const result = await waitAndStreamTail(
+					client,
+					{ backend: rest.backend, jobRef: rest.jobRef, runId: rest.runId, timeoutS: rest.timeoutS as number | undefined, maxTokens: rest.maxTokens as number | undefined },
+					onUpdate,
+					signal,
+				);
+				return { content: [{ type: "text", text: JSON.stringify(result) }], details: { result } };
+			}
+
 			const result = await client.call(operationFor(action), rest);
 			// content is the LLM-facing channel (complete, exact JSON); details carries the same
 			// structured result for renderResult's separate human-facing TUI channel below.
@@ -116,6 +133,8 @@ interface ThemeLike {
 	bold(text: string): string;
 }
 
+const TAIL_PREVIEW_LINES = 5;
+
 /** One compact, action-shaped summary line (or few) -- the human-facing counterpart to the JSON sent to the LLM. */
 export function summarize(data: unknown, theme: ThemeLike): string {
 	if (!data || typeof data !== "object") return String(data);
@@ -157,11 +176,17 @@ export function summarize(data: unknown, theme: ThemeLike): string {
 		return `${theme.fg("success", "Triggered")} ${theme.fg("accent", `${trigger.backend}/${trigger.jobRef}`)} ${theme.fg("dim", `#${id}`)}`;
 	}
 
-	// ci.wait: WatchStatus
+	// ci.wait: WatchStatus, optionally with a streamed tail preview attached
 	if (typeof d.status === "string" && typeof d.buildNumber === "string" && "progressPercent" in d) {
-		const watch = d as { buildNumber: string; status: string; progressPercent: number; overdue: boolean };
+		const watch = d as { buildNumber: string; status: string; progressPercent: number; overdue: boolean; tail?: { text: string; truncated: boolean } };
 		let text = `${statusGlyph(watch.status, theme)} ${theme.fg("dim", `#${watch.buildNumber}`)} ${theme.fg("muted", `${Math.round(watch.progressPercent)}%`)}`;
 		if (watch.overdue) text += ` ${theme.fg("warning", "overdue")}`;
+		if (watch.tail?.text) {
+			const lines = watch.tail.text.split("\n");
+			const preview = lines.slice(-TAIL_PREVIEW_LINES).join("\n");
+			text += `\n${theme.fg("dim", preview)}`;
+			if (watch.tail.truncated || lines.length > TAIL_PREVIEW_LINES) text += `\n${theme.fg("dim", "...")}`;
+		}
 		return text;
 	}
 
