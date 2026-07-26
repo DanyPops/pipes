@@ -1,0 +1,53 @@
+name: Publish @danypops/pipes
+
+# Trusted publishing (OIDC): no long-lived npm tokens. npm CLI detects the
+# OIDC environment automatically (requires npm >= 11.5.1). Configure the
+# trusted publisher on npmjs.com: org=DanyPops repo=pipes workflow=publish-pipes.yml
+#
+# Tag prefix is "pipes-v*", not a bare "v*": this is a monorepo, and
+# packages/pi-extension (@danypops/pi-pipes) will need its own independent
+# version/tag scheme if it's ever published too -- a bare "v*" tag would be
+# ambiguous about which package it refers to.
+
+on:
+  push:
+    tags:
+      - "pipes-v*"
+
+permissions:
+  id-token: write # Required for OIDC
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/pipes
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install
+        working-directory: .
+
+      - run: bun test
+      - run: bun x tsc --noEmit
+
+      # npm CLI only for the publish step (trusted publishing needs >= 11.5.1).
+      # NO registry-url here: it makes setup-node write an .npmrc with an empty
+      # NODE_AUTH_TOKEN line, which shadows OIDC auto-detection and breaks
+      # trusted publishing with a 404.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      # Trusted publishing needs npm >= 11.5.1; Node's bundled npm can be older.
+      - run: npm install -g npm@latest && npm --version
+
+      # --provenance is documented as automatic under trusted publishing, but is
+      # confirmed (npm/cli#8730) to be needed explicitly in practice for the OIDC
+      # exchange to actually trigger -- without it npm CLI falls back to ENEEDAUTH.
+      - run: npm publish --access public --provenance
