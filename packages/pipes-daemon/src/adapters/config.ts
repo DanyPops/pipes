@@ -9,6 +9,7 @@
 import type { BackendInfo } from "../domain/backend.ts";
 import type { CIBackend } from "../ports/ci-backend.ts";
 import type { PipesCredentialPaths } from "../paths.ts";
+import { tryEnigmaCredential } from "./enigma-source.ts";
 import { createFileTokenStore as createGitHubTokenStore, resolveStaticToken as resolveStaticGitHubToken } from "./github/auth.ts";
 import { createGitHubAdapter } from "./github/github-adapter.ts";
 import { createFileTokenStore as createGitLabTokenStore, refreshAccessToken as refreshGitLabToken, resolveStaticToken as resolveStaticGitLabToken } from "./gitlab/auth.ts";
@@ -22,10 +23,11 @@ export interface ConfiguredBackends {
 	unconfigured: BackendInfo[];
 }
 
-export function buildConfiguredAdapters(
+export async function buildConfiguredAdapters(
 	credentialPaths: PipesCredentialPaths,
 	env: Record<string, string | undefined> = process.env,
-): ConfiguredBackends {
+	tryEnigma: typeof tryEnigmaCredential = tryEnigmaCredential,
+): Promise<ConfiguredBackends> {
 	const adapters: CIBackend[] = [];
 	const unconfigured: BackendInfo[] = [];
 
@@ -39,6 +41,7 @@ export function buildConfiguredAdapters(
 		const getToken = createTokenProvider({
 			store: createGitHubTokenStore(credentialPaths.githubToken),
 			staticFallback: () => resolveStaticGitHubToken(env),
+			enigmaSource: () => tryEnigma("github", { env }),
 		});
 		adapters.push(createGitHubAdapter({ name: "github", owner: env.GITHUB_OWNER, repo: env.GITHUB_REPO, getToken }));
 	} else {
@@ -54,13 +57,14 @@ export function buildConfiguredAdapters(
 			// setups) there is nothing to refresh against — omit rather than fail every call.
 			refresh: clientId ? (current) => refreshGitLabToken({ baseUrl, clientId }, current.refreshToken as string) : undefined,
 			staticFallback: () => resolveStaticGitLabToken(env),
+			enigmaSource: () => tryEnigma("gitlab", { env }),
 		});
 		adapters.push(createGitLabAdapter({ name: "gitlab", baseUrl, projectId: env.GITLAB_PROJECT_ID, getToken }));
 	} else {
 		unconfigured.push({ name: "gitlab", type: "gitlab" });
 	}
 
-	const jenkinsCredentials = resolveJenkinsCredentials(createFileCredentialStore(credentialPaths.jenkinsCredentials), env);
+	const jenkinsCredentials = await resolveJenkinsCredentials(createFileCredentialStore(credentialPaths.jenkinsCredentials), env);
 	if (jenkinsCredentials) {
 		adapters.push(createJenkinsAdapter({ name: "jenkins", credentials: jenkinsCredentials }));
 	} else {

@@ -36,6 +36,15 @@ export interface TokenProviderOptions<T extends RefreshableAccessToken> {
 	staticFallback: () => string | undefined;
 	/** Refresh this far ahead of actual expiry so a request never races a token's last moment of validity. */
 	refreshSkewMs?: number;
+	/**
+	 * Optional, additive: a running Enigma vault (github.com/DanyPops/enigma), checked first on
+	 * every call if configured. Never a hard dependency -- resolves undefined immediately, never
+	 * throws, if Enigma isn't running or doesn't have this backend. Because getToken() already
+	 * runs fresh before every request (see the module doc above), this gets live, per-request
+	 * freshness for free -- a credential Enigma rotates is picked up on the very next call, no
+	 * daemon restart needed, unlike a snapshot resolved once at startup.
+	 */
+	enigmaSource?: () => Promise<string | undefined>;
 }
 
 const DEFAULT_REFRESH_SKEW_MS = 60_000;
@@ -52,6 +61,16 @@ export function createTokenProvider<T extends RefreshableAccessToken>(
 	let inFlight: Promise<T | undefined> | undefined;
 
 	return async function getToken(): Promise<string | undefined> {
+		if (options.enigmaSource) {
+			// Deliberately defensive here even though the real tryEnigmaCredential never throws
+			// (every one of its own failure paths already resolves undefined): enigmaSource is a
+			// caller-supplied function, and this integration's whole premise is that it must never
+			// be capable of breaking a request, matching how `refresh`'s own failures are contained
+			// just below rather than propagated.
+			const fromEnigma = await options.enigmaSource().catch(() => undefined);
+			if (fromEnigma) return fromEnigma;
+		}
+
 		const stored = options.store.load();
 		if (!stored) return options.staticFallback();
 		if (!isRefreshableTokenExpired(stored, options.refreshSkewMs)) return stored.accessToken;

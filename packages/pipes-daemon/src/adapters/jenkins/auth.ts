@@ -12,6 +12,8 @@
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import type { TryEnigmaVaultCredential } from "../enigma-source.ts";
+import { tryEnigmaVaultCredential } from "../enigma-source.ts";
 import type { FetchLike } from "../github/auth.ts";
 
 export interface JenkinsCredentials {
@@ -108,8 +110,25 @@ export function createFileCredentialStore(path: string): CredentialStore {
 	};
 }
 
-/** Resolves credentials from the environment first, then a stored file — there is no third, delegated option for Jenkins. */
-export function resolveJenkinsCredentials(store: CredentialStore, env: Record<string, string | undefined> = process.env): JenkinsCredentials | undefined {
+/**
+ * Resolves credentials: a running Enigma vault first (optional, additive --
+ * see ../enigma-source.ts), then the environment, then a stored file. There
+ * is no delegated OAuth option for Jenkins itself, but Enigma's own Jenkins
+ * login (a static username+API-token pair, the same real primary path this
+ * file documents) can still be the source of truth when configured -- url
+ * and username live in the stored credential's `extra` field, matching
+ * enigma's own mapCredentialToEnv shape for Jenkins.
+ */
+export async function resolveJenkinsCredentials(
+	store: CredentialStore,
+	env: Record<string, string | undefined> = process.env,
+	tryEnigma: TryEnigmaVaultCredential = tryEnigmaVaultCredential,
+): Promise<JenkinsCredentials | undefined> {
+	const fromEnigma = await tryEnigma("jenkins", { env });
+	if (fromEnigma?.extra?.url && fromEnigma.extra?.username) {
+		return { baseUrl: fromEnigma.extra.url, username: fromEnigma.extra.username, apiToken: fromEnigma.accessToken };
+	}
+
 	if (env.JENKINS_URL && env.JENKINS_USER && env.JENKINS_API_TOKEN) {
 		return { baseUrl: env.JENKINS_URL, username: env.JENKINS_USER, apiToken: env.JENKINS_API_TOKEN };
 	}

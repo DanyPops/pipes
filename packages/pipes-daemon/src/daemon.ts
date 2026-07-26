@@ -14,9 +14,9 @@ import { createApp, createPipesService } from "./service.ts";
 
 const logger = createLogger("pipes-daemon");
 
-function buildOrchestrator(credentialPaths: ReturnType<typeof resolvePipesCredentialPaths>): Orchestrator {
+async function buildOrchestrator(credentialPaths: ReturnType<typeof resolvePipesCredentialPaths>): Promise<Orchestrator> {
 	const orchestrator = new Orchestrator();
-	const { adapters, unconfigured } = buildConfiguredAdapters(credentialPaths);
+	const { adapters, unconfigured } = await buildConfiguredAdapters(credentialPaths);
 	for (const adapter of adapters) orchestrator.addAdapter(adapter);
 	orchestrator.registerUnconfigured(unconfigured);
 	for (const pipeline of loadPresets(defaultPresetsPath())) {
@@ -25,11 +25,11 @@ function buildOrchestrator(credentialPaths: ReturnType<typeof resolvePipesCreden
 	return orchestrator;
 }
 
-export function serveMain(): void {
+export async function serveMain(): Promise<void> {
 	const paths = resolvePipesPaths();
 	const token = ensureAuthToken(paths.token, "Pipes");
 	const credentialPaths = resolvePipesCredentialPaths(paths);
-	const orchestrator = buildOrchestrator(credentialPaths);
+	const orchestrator = await buildOrchestrator(credentialPaths);
 	const db = openPipesDb(paths.database);
 	const runPool = createRunPool(db);
 	const service = createPipesService(orchestrator, { runPool });

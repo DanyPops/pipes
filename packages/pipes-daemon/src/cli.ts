@@ -80,7 +80,7 @@ async function loginMain(backend: string | undefined): Promise<void> {
 
 switch (command) {
 	case "serve":
-		serveMain();
+		await serveMain();
 		break;
 	case "login":
 		await loginMain(process.argv[3]);

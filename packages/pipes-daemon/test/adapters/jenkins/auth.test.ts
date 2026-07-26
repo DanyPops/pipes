@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FetchLike } from "../../../src/adapters/github/auth.ts";
+import type { TryEnigmaVaultCredential } from "../../../src/adapters/enigma-source.ts";
 import {
 	basicAuthHeader,
 	createCrumbCache,
@@ -13,6 +14,15 @@ import {
 } from "../../../src/adapters/jenkins/auth.ts";
 
 const CREDENTIALS = { baseUrl: "https://jenkins.example.com", username: "alice", apiToken: "tok123" };
+
+/**
+ * Never the real tryEnigmaVaultCredential in a test: it does a real filesystem
+ * check against $XDG_RUNTIME_DIR, and a real Enigma daemon may genuinely be
+ * running on the machine executing this suite -- tests must never depend on
+ * ambient host state. `noEnigma` is the isolated default for every test not
+ * specifically exercising Enigma-first behavior.
+ */
+const noEnigma: TryEnigmaVaultCredential = async () => undefined;
 
 describe("basicAuthHeader", () => {
 	it("base64-encodes username:apiToken", () => {
@@ -76,19 +86,38 @@ describe("createFileCredentialStore", () => {
 });
 
 describe("resolveJenkinsCredentials", () => {
-	it("prefers environment variables over a stored file", () => {
+	it("prefers environment variables over a stored file", async () => {
 		const store = { load: () => CREDENTIALS, save: () => {}, clear: () => {} };
-		const resolved = resolveJenkinsCredentials(store, { JENKINS_URL: "https://env.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" });
+		const resolved = await resolveJenkinsCredentials(store, { JENKINS_URL: "https://env.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" }, noEnigma);
 		expect(resolved).toEqual({ baseUrl: "https://env.example.com", username: "bob", apiToken: "envtok" });
 	});
 
-	it("falls back to the stored file when environment variables are incomplete", () => {
+	it("falls back to the stored file when environment variables are incomplete", async () => {
 		const store = { load: () => CREDENTIALS, save: () => {}, clear: () => {} };
-		expect(resolveJenkinsCredentials(store, { JENKINS_URL: "https://env.example.com" })).toEqual(CREDENTIALS);
+		expect(await resolveJenkinsCredentials(store, { JENKINS_URL: "https://env.example.com" }, noEnigma)).toEqual(CREDENTIALS);
 	});
 
-	it("returns undefined when neither source has credentials", () => {
+	it("returns undefined when neither source has credentials", async () => {
 		const store = { load: () => undefined, save: () => {}, clear: () => {} };
-		expect(resolveJenkinsCredentials(store, {})).toBeUndefined();
+		expect(await resolveJenkinsCredentials(store, {}, noEnigma)).toBeUndefined();
+	});
+
+	it("prefers a running Enigma vault's credential over both environment variables and a stored file", async () => {
+		const store = { load: () => CREDENTIALS, save: () => {}, clear: () => {} };
+		const calls: string[] = [];
+		const fromEnigma: TryEnigmaVaultCredential = async (backend) => {
+			calls.push(backend);
+			return { accessToken: "enigma-jenkins-token", extra: { url: "https://enigma.jenkins.example.com", username: "enigma-bot" } };
+		};
+		const resolved = await resolveJenkinsCredentials(store, { JENKINS_URL: "https://env.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" }, fromEnigma);
+		expect(calls).toEqual(["jenkins"]);
+		expect(resolved).toEqual({ baseUrl: "https://enigma.jenkins.example.com", username: "enigma-bot", apiToken: "enigma-jenkins-token" });
+	});
+
+	it("falls through to env-then-store unchanged when Enigma's credential is missing the url/username extra fields it needs", async () => {
+		const store = { load: () => CREDENTIALS, save: () => {}, clear: () => {} };
+		const incompleteEnigma: TryEnigmaVaultCredential = async () => ({ accessToken: "enigma-token-missing-extra" });
+		const resolved = await resolveJenkinsCredentials(store, { JENKINS_URL: "https://env.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" }, incompleteEnigma);
+		expect(resolved).toEqual({ baseUrl: "https://env.example.com", username: "bob", apiToken: "envtok" });
 	});
 });

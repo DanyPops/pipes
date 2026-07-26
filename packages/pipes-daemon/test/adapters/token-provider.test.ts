@@ -103,4 +103,48 @@ describe("createTokenProvider", () => {
 		await getToken();
 		expect(refreshCalls).toBe(2);
 	});
+
+	describe("enigmaSource: an optional, additive credential source checked first on every call", () => {
+		it("prefers Enigma's token over a fresh stored token, never even touching the store", async () => {
+			const store = fakeStore({ accessToken: "fresh-stored", obtainedAt: Date.now(), expiresInS: 3600 });
+			const calls: string[] = [];
+			const getToken = createTokenProvider({
+				store,
+				staticFallback: () => undefined,
+				enigmaSource: async () => {
+					calls.push("enigma");
+					return "enigma-supplied-token";
+				},
+			});
+			expect(await getToken()).toBe("enigma-supplied-token");
+			expect(calls).toEqual(["enigma"]);
+		});
+
+		it("falls through to the existing store-then-static-PAT behavior unchanged when Enigma has nothing for this backend", async () => {
+			const store = fakeStore({ accessToken: "fresh-stored", obtainedAt: Date.now(), expiresInS: 3600 });
+			const getToken = createTokenProvider({ store, staticFallback: () => undefined, enigmaSource: async () => undefined });
+			expect(await getToken()).toBe("fresh-stored");
+		});
+
+		it("is checked fresh on every call -- Enigma rotating a credential is picked up on the very next getToken(), no restart needed", async () => {
+			let enigmaToken = "enigma-token-v1";
+			const store = fakeStore(undefined);
+			const getToken = createTokenProvider({ store, staticFallback: () => undefined, enigmaSource: async () => enigmaToken });
+			expect(await getToken()).toBe("enigma-token-v1");
+			enigmaToken = "enigma-token-v2-rotated";
+			expect(await getToken()).toBe("enigma-token-v2-rotated");
+		});
+
+		it("never fails a request just because Enigma's own lookup rejects -- defensively contained even though the real tryEnigmaCredential never throws", async () => {
+			const store = fakeStore({ accessToken: "fresh-stored", obtainedAt: Date.now(), expiresInS: 3600 });
+			const getToken = createTokenProvider({
+				store,
+				staticFallback: () => "static-pat",
+				enigmaSource: async () => {
+					throw new Error("unexpected -- should never happen in production, but must not crash the request");
+				},
+			});
+			expect(await getToken()).toBe("fresh-stored"); // falls through to the store, exactly as if enigmaSource were absent
+		});
+	});
 });
