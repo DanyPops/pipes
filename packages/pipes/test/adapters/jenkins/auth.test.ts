@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FetchLike } from "../../../src/adapters/github/auth.ts";
-import type { TryEnigmaVaultCredential } from "../../../src/adapters/enigma-source.ts";
+import type { TryEnigmaCredential } from "@danypops/enigma-client";
 import {
 	basicAuthHeader,
 	createCrumbCache,
@@ -16,13 +16,13 @@ import {
 const CREDENTIALS = { baseUrl: "https://jenkins.example.com", username: "alice", apiToken: "tok123" };
 
 /**
- * Never the real tryEnigmaVaultCredential in a test: it does a real filesystem
+ * Never the real tryEnigmaCredential in a test: it does a real filesystem
  * check against $XDG_RUNTIME_DIR, and a real Enigma daemon may genuinely be
  * running on the machine executing this suite -- tests must never depend on
  * ambient host state. `noEnigma` is the isolated default for every test not
  * specifically exercising Enigma-first behavior.
  */
-const noEnigma: TryEnigmaVaultCredential = async () => undefined;
+const noEnigma: TryEnigmaCredential = async () => undefined;
 
 describe("basicAuthHeader", () => {
 	it("base64-encodes username:apiToken", () => {
@@ -105,7 +105,7 @@ describe("resolveJenkinsCredentials", () => {
 	it("prefers a running Enigma vault's credential over both environment variables and a stored file", async () => {
 		const store = { load: () => CREDENTIALS, save: () => {}, clear: () => {} };
 		const calls: string[] = [];
-		const fromEnigma: TryEnigmaVaultCredential = async (backend) => {
+		const fromEnigma: TryEnigmaCredential = async (backend) => {
 			calls.push(backend);
 			return { accessToken: "enigma-jenkins-token", extra: { url: "https://enigma.jenkins.example.com", username: "enigma-bot" } };
 		};
@@ -116,7 +116,7 @@ describe("resolveJenkinsCredentials", () => {
 
 	it("falls through to env-then-store unchanged when Enigma's credential is missing the url/username extra fields it needs", async () => {
 		const store = { load: () => CREDENTIALS, save: () => {}, clear: () => {} };
-		const incompleteEnigma: TryEnigmaVaultCredential = async () => ({ accessToken: "enigma-token-missing-extra" });
+		const incompleteEnigma: TryEnigmaCredential = async () => ({ accessToken: "enigma-token-missing-extra" });
 		const resolved = await resolveJenkinsCredentials(store, { JENKINS_URL: "https://env.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" }, incompleteEnigma);
 		expect(resolved).toEqual({ baseUrl: "https://env.example.com", username: "bob", apiToken: "envtok" });
 	});

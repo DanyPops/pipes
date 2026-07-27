@@ -10,7 +10,7 @@ import type { BackendInfo } from "../domain/backend.ts";
 import type { CIBackend } from "../ports/ci-backend.ts";
 import type { PipesCredentialPaths } from "../paths.ts";
 import type { GitLabRepoTarget, RepoConfigFile } from "../repo-config.ts";
-import { tryEnigmaCredential } from "./enigma-source.ts";
+import { tryEnigmaAccessToken } from "@danypops/enigma-client";
 import { createFileTokenStore as createGitHubTokenStore, resolveStaticToken as resolveStaticGitHubToken } from "./github/auth.ts";
 import { createGitHubAdapter } from "./github/github-adapter.ts";
 import { createFileTokenStore as createGitLabTokenStore, refreshAccessToken as refreshGitLabToken, resolveStaticToken as resolveStaticGitLabToken } from "./gitlab/auth.ts";
@@ -29,7 +29,7 @@ const NO_REPO_TARGETS: RepoConfigFile = { github: [], gitlab: [] };
 export async function buildConfiguredAdapters(
 	credentialPaths: PipesCredentialPaths,
 	env: Record<string, string | undefined> = process.env,
-	tryEnigma: typeof tryEnigmaCredential = tryEnigmaCredential,
+	tryEnigma: typeof tryEnigmaAccessToken = tryEnigmaAccessToken,
 	repoConfig: RepoConfigFile = NO_REPO_TARGETS,
 ): Promise<ConfiguredBackends> {
 	const adapters: CIBackend[] = [];

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildConfiguredAdapters } from "../../src/adapters/config.ts";
-import type { TryEnigmaCredential } from "../../src/adapters/enigma-source.ts";
+import type { TryEnigmaAccessToken } from "@danypops/enigma-client";
 
 function credentialPaths(dir: string) {
 	return {
@@ -14,13 +14,13 @@ function credentialPaths(dir: string) {
 }
 
 /**
- * Never the real tryEnigmaCredential in a test: it does a real filesystem
+ * Never the real tryEnigmaAccessToken in a test: it does a real filesystem
  * check against $XDG_RUNTIME_DIR, and a real Enigma daemon may genuinely be
  * running on the machine executing this suite -- tests must never depend on
  * ambient host state. `noEnigma` is the isolated default for every test not
  * specifically exercising Enigma-first behavior.
  */
-const noEnigma: TryEnigmaCredential = async () => undefined;
+const noEnigma: TryEnigmaAccessToken = async () => undefined;
 
 describe("buildConfiguredAdapters", () => {
 	it("configures zero adapters and reports all three as unconfigured when no env is set", async () => {
@@ -212,7 +212,7 @@ describe("buildConfiguredAdapters > Enigma as an optional, additive credential s
 		const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
 		try {
 			const calls: string[] = [];
-			const fromEnigma: TryEnigmaCredential = async (backend) => {
+			const fromEnigma: TryEnigmaAccessToken = async (backend) => {
 				calls.push(backend);
 				return backend === "github" ? "enigma-supplied-github-token" : undefined;
 			};
