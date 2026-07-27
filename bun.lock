@@ -36,7 +36,7 @@
       },
       "dependencies": {
         "@danypops/daemon-kit": "^0.3.0",
-        "@danypops/enigma-client": "^0.2.0",
+        "@danypops/enigma-client": "^0.3.0",
       },
       "devDependencies": {
         "@types/node": "^22.19.19",
@@ -100,7 +100,7 @@
 
     "@danypops/daemon-kit": ["@danypops/daemon-kit@0.3.2", "", { "dependencies": { "pino": "^10.3.1" }, "peerDependencies": { "typescript": "^5" } }, "sha512-M9/XJ/rzxpaYcf8RwSURpRifezx4CLBYW4wmmJgEL7Bigu8RRw+SQ9gmW8HvL+7hch43AVIFmMpV5FlBaMMOsQ=="],
 
-    "@danypops/enigma-client": ["@danypops/enigma-client@0.2.0", "", { "dependencies": { "@danypops/daemon-kit": "^0.13.0" } }, "sha512-G+UDz9Aptv9FY25fESBn0KyTv1DPoQ6mUZqqg/u+PO94OYZhVtfTDBpq3aQME1AcMUcIG+I6n2fIVuROTxBZrw=="],
+    "@danypops/enigma-client": ["@danypops/enigma-client@0.3.0", "", { "dependencies": { "@danypops/daemon-kit": "^0.13.0" } }, "sha512-EexbeI8tKV8YsvrkaKqt2HwvNYp86m56Qd1P2l8ANWSx8zCwjkWJfM+ZLyNJzswQe/lwS3vaabrH4hzFxFDk9A=="],
 
     "@danypops/pi-pipes": ["@danypops/pi-pipes@workspace:packages/pi-pipes"],
 
