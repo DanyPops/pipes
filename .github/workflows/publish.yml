@@ -1,19 +1,22 @@
-name: Publish @danypops/pipes
+name: Publish
 
 # Trusted publishing (OIDC): no long-lived npm tokens. npm CLI detects the
-# OIDC environment automatically (requires npm >= 11.5.1). Configure the
-# trusted publisher on npmjs.com: org=DanyPops repo=pipes workflow=publish.yml
+# OIDC environment automatically (requires npm >= 11.5.1). One shared
+# workflow publishes every package in this monorepo -- each npm package
+# needs its own Trusted Publisher entry on npmjs.com, but all of them name
+# this same file: org=DanyPops repo=pipes workflow=publish.yml
+#   - @danypops/pipes
+#   - @danypops/pi-pipes
 #
-# Tag prefix is "pipes-v*", not a bare "v*": this is a monorepo, and
-# packages/pi-pipes (@danypops/pi-pipes) will need its own independent
-# version/tag scheme and its own differently-named workflow file if it's
-# ever published too -- a bare "v*" tag, or two workflows both named
-# publish.yml, would be ambiguous about which package they refer to.
+# Tag prefix selects which package to publish -- a bare "v*" tag would be
+# ambiguous about which package it refers to in a monorepo publishing more
+# than one.
 
 on:
   push:
     tags:
       - "pipes-v*"
+      - "pi-pipes-v*"
 
 permissions:
   id-token: write # Required for OIDC
@@ -22,19 +25,30 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/pipes
     steps:
       - uses: actions/checkout@v6
+
+      - name: Resolve package directory from tag prefix
+        id: package
+        run: |
+          ref="${GITHUB_REF#refs/tags/}"
+          if [[ "$ref" == pi-pipes-v* ]]; then
+            echo "dir=packages/pi-pipes" >> "$GITHUB_OUTPUT"
+          elif [[ "$ref" == pipes-v* ]]; then
+            echo "dir=packages/pipes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::tag '$ref' matches neither pipes-v* nor pi-pipes-v*"
+            exit 1
+          fi
 
       - uses: oven-sh/setup-bun@v2
 
       - run: bun install
-        working-directory: .
 
       - run: bun test
+        working-directory: ${{ steps.package.outputs.dir }}
       - run: bun x tsc --noEmit
+        working-directory: ${{ steps.package.outputs.dir }}
 
       # npm CLI only for the publish step (trusted publishing needs >= 11.5.1).
       # NO registry-url here: it makes setup-node write an .npmrc with an empty
@@ -52,3 +66,4 @@ jobs:
       # confirmed (npm/cli#8730) to be needed explicitly in practice for the OIDC
       # exchange to actually trigger -- without it npm CLI falls back to ENEEDAUTH.
       - run: npm publish --access public --provenance
+        working-directory: ${{ steps.package.outputs.dir }}
