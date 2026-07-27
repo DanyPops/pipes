@@ -1,5 +1,5 @@
 /**
- * Typed daemon client for in-process/CLI use. The pi-extension package
+ * Typed daemon client for in-process/CLI use. The pi-pipes package
  * intentionally does not import this: it duplicates the path/token/client
  * subset instead, because pi loads extensions through module-resolution
  * paths that do not reliably transpile a dependency's raw Bun-targeted

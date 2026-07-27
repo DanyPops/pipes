@@ -10,7 +10,7 @@
 		"check": "npm run check --workspaces --if-present"
 	},
 	"pi": {
-		"extensions": ["packages/pi-extension/src/index.ts"]
+		"extensions": ["packages/pi-pipes/src/index.ts"]
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",

@@ -5,7 +5,7 @@ name: Publish @danypops/pipes
 # trusted publisher on npmjs.com: org=DanyPops repo=pipes workflow=publish.yml
 #
 # Tag prefix is "pipes-v*", not a bare "v*": this is a monorepo, and
-# packages/pi-extension (@danypops/pi-pipes) will need its own independent
+# packages/pi-pipes (@danypops/pi-pipes) will need its own independent
 # version/tag scheme and its own differently-named workflow file if it's
 # ever published too -- a bare "v*" tag, or two workflows both named
 # publish.yml, would be ambiguous about which package they refer to.

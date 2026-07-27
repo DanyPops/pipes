@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/pi-extension
+        working-directory: packages/pi-pipes
     steps:
       - uses: actions/checkout@v6
 

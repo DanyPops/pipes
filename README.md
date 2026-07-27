@@ -26,7 +26,7 @@ workflow.
 packages/pipes/           supervised daemon: owns CI credentials, backend
                           adapters, orchestration, and a local run-history
                           pool (status + logs)
-packages/pi-extension/    pi extension: the agent-facing `ci` tool, an
+packages/pi-pipes/        pi extension: the agent-facing `ci` tool, an
                           authenticated daemon client, no direct
                           network/credential access
 ```

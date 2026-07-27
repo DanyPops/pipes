@@ -31,6 +31,6 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/DanyPops/pipes.git",
-		"directory": "packages/pi-extension"
+		"directory": "packages/pi-pipes"
 	}
 }
