@@ -9,6 +9,7 @@ import { Orchestrator } from "./orchestrator.ts";
 import { resolvePipesCredentialPaths, resolvePipesPaths } from "./paths.ts";
 import { syncRunPool } from "./pool-sync.ts";
 import { defaultPresetsPath, loadPresets } from "./presets.ts";
+import { defaultRepoConfigPath, loadRepoConfig } from "./repo-config.ts";
 import { createRunPool } from "./run-pool.ts";
 import { createApp, createPipesService } from "./service.ts";
 
@@ -16,7 +17,8 @@ const logger = createLogger("pipes");
 
 async function buildOrchestrator(credentialPaths: ReturnType<typeof resolvePipesCredentialPaths>): Promise<Orchestrator> {
 	const orchestrator = new Orchestrator();
-	const { adapters, unconfigured } = await buildConfiguredAdapters(credentialPaths);
+	const repoConfig = loadRepoConfig(defaultRepoConfigPath());
+	const { adapters, unconfigured } = await buildConfiguredAdapters(credentialPaths, process.env, undefined, repoConfig);
 	for (const adapter of adapters) orchestrator.addAdapter(adapter);
 	orchestrator.registerUnconfigured(unconfigured);
 	for (const pipeline of loadPresets(defaultPresetsPath())) {

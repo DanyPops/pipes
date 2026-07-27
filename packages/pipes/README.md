@@ -30,3 +30,28 @@ Authorization Grant, GitLab OAuth2 Device Flow (or Authorization Code+PKCE
 via a local loopback listener on older instances). Jenkins has no delegated
 auth API, so it uses a stored username+API-token pair — the one documented
 exception, not a default.
+
+## Multiple repos/projects per backend
+
+`GITHUB_OWNER`/`GITHUB_REPO` (and `GITLAB_URL`/`GITLAB_PROJECT_ID`) configure
+one default GitHub/GitLab backend, both named after the backend type. To
+address more than one repo or project through the same daemon, add a
+`~/.config/pipes/repos.json` (or `$XDG_CONFIG_HOME/pipes/repos.json`)
+naming each target explicitly — once this file has entries for a backend
+type, it replaces that type's env-var default rather than adding to it:
+
+```json
+{
+	"github": [
+		{ "name": "github-lector", "owner": "DanyPops", "repo": "lector" },
+		{ "name": "github-packed", "owner": "DanyPops", "repo": "pi-packed" }
+	],
+	"gitlab": [{ "name": "gitlab-infra", "projectId": "42" }]
+}
+```
+
+Every GitHub target shares the one logged-in GitHub credential (a device-flow
+token authenticates any repo the granting user can access); every GitLab
+target shares one credential too, so all configured GitLab targets must be
+on the same GitLab host. `ci(action=help)` lists each configured target by
+its own name — pass that name as `backend` to address it.
