@@ -14,7 +14,7 @@
 	},
 	"dependencies": {
 		"@danypops/daemon-kit": "^0.3.0",
-		"@danypops/enigma-client": "^0.1.0"
+		"@danypops/enigma-client": "^0.2.0"
 	},
 	"devDependencies": {
 		"@types/node": "^22.19.19",

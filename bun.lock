@@ -36,7 +36,7 @@
       },
       "dependencies": {
         "@danypops/daemon-kit": "^0.3.0",
-        "@danypops/enigma-client": "^0.1.0",
+        "@danypops/enigma-client": "^0.2.0",
       },
       "devDependencies": {
         "@types/node": "^22.19.19",
@@ -100,7 +100,7 @@
 
     "@danypops/daemon-kit": ["@danypops/daemon-kit@0.3.2", "", { "dependencies": { "pino": "^10.3.1" }, "peerDependencies": { "typescript": "^5" } }, "sha512-M9/XJ/rzxpaYcf8RwSURpRifezx4CLBYW4wmmJgEL7Bigu8RRw+SQ9gmW8HvL+7hch43AVIFmMpV5FlBaMMOsQ=="],
 
-    "@danypops/enigma-client": ["@danypops/enigma-client@0.1.0", "", { "dependencies": { "@danypops/daemon-kit": "^0.12.0" } }, "sha512-6ST1tyt0WE9kewahVM3HztW+IJxufRCY7gJyGg1fDdeCMOCS0AUSm4huXWpbsilj8fMaBXSSsudu/9Du8fsizg=="],
+    "@danypops/enigma-client": ["@danypops/enigma-client@0.2.0", "", { "dependencies": { "@danypops/daemon-kit": "^0.13.0" } }, "sha512-G+UDz9Aptv9FY25fESBn0KyTv1DPoQ6mUZqqg/u+PO94OYZhVtfTDBpq3aQME1AcMUcIG+I6n2fIVuROTxBZrw=="],
 
     "@danypops/pi-pipes": ["@danypops/pi-pipes@workspace:packages/pi-pipes"],
 
@@ -354,7 +354,7 @@
 
     "@aws-sdk/nested-clients/@smithy/node-http-handler": ["@smithy/node-http-handler@4.9.11", "", { "dependencies": { "@smithy/core": "^3.30.0", "@smithy/types": "^4.16.1", "tslib": "^2.6.2" } }, "sha512-slbzbz8taEOzoXv/9y34YNBoE+ZHmddLykCgjDAjvMAsu2nM5s2Gzwa5OGF721tD8s+CKeFUBds5lSj9lcbuDg=="],
 
-    "@danypops/enigma-client/@danypops/daemon-kit": ["@danypops/daemon-kit@0.12.0", "", { "dependencies": { "pino": "^10.3.1" }, "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "typescript": "^5" }, "optionalPeers": ["@earendil-works/pi-coding-agent"] }, "sha512-nx9SDdgdMdCIDfa/IIkf6Klk+F/pyhX7JrhDiCoyxEN5w7mzPe1dJ1okcU3JkjXhBztvf/sMxwVMwTNdYxdEsw=="],
+    "@danypops/enigma-client/@danypops/daemon-kit": ["@danypops/daemon-kit@0.13.0", "", { "dependencies": { "pino": "^10.3.1" }, "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "typescript": "^5" }, "optionalPeers": ["@earendil-works/pi-coding-agent"] }, "sha512-mg6wgTnfijyzvGi78Ev4UTnYva3UcYjvsOXJguN3Jgf6tQ7ndFXEUtDlb6+IEvZaNbDS+jv+K3h4XWPI61m+zA=="],
 
     "p-retry/retry": ["retry@0.13.1", "", {}, "sha512-XQBQ3I8W1Cge0Seh+6gjj03LbmRFWuoszgK9ooCpwYIrhhoO80pfq4cUkU5DkknwfOfFteRwlZ56PYOGYyFWdg=="],
 
