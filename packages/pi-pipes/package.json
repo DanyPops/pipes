@@ -10,7 +10,7 @@
 		"extensions": ["./src/index.ts"]
 	},
 	"dependencies": {
-		"@danypops/pipes": "^0.3.0"
+		"@danypops/pipes": "^0.4.0"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",
