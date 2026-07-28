@@ -151,3 +151,14 @@ two Jenkins servers never collide without needing an explicit `profile`.
 
 `ci(action=help)` lists each configured target by its own name — pass that
 name as `backend` to address it.
+
+## Discovering what's under an account-scoped backend
+
+An account-scoped GitHub backend hides which repos are actually valid --
+`ci(action=discover, backend=...)` lists every repo the credential can see
+under that backend's owner (bounded to the first 100), and
+`ci(action=discover, backend=..., repo=...)` lists that repo's workflow
+files by their real file names -- the exact strings valid as `jobRef`'s
+second half. Not implemented for GitLab/Jenkins yet; `ci(action=discover)`
+against either fails with a clear "capability not supported" error rather
+than a crash.

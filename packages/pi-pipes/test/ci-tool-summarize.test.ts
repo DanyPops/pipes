@@ -174,6 +174,32 @@ describe("summarize: ci.search / ci.downstream / ci.pool", () => {
 	});
 });
 
+describe("summarize: ci.discover", () => {
+	it("renders each repo, flagging private ones", () => {
+		const text = summarize({ repos: [{ name: "pipes", fullName: "DanyPops/pipes", private: false }, { name: "secrets-repo", fullName: "DanyPops/secrets-repo", private: true }] }, theme);
+		expect(text).toContain("2 repo(s):");
+		expect(text).toContain("pipes");
+		expect(text).toContain("secrets-repo");
+		expect(text).toContain("(private)");
+	});
+
+	it("renders 'No repos found.' for an empty repos array, not a bare '0 repo(s):' header", () => {
+		expect(summarize({ repos: [] }, theme)).toContain("No repos found.");
+	});
+
+	it("renders each workflow's file name and display name/state", () => {
+		const text = summarize({ workflows: [{ name: "Publish", fileName: "publish.yml", state: "active" }] }, theme);
+		expect(text).toContain("1 workflow(s):");
+		expect(text).toContain("publish.yml");
+		expect(text).toContain("Publish");
+		expect(text).toContain("active");
+	});
+
+	it("renders 'No workflows found.' for an empty workflows array", () => {
+		expect(summarize({ workflows: [] }, theme)).toContain("No workflows found.");
+	});
+});
+
 describe("summarize: ci.subscribe / ci.unsubscribe", () => {
 	it("renders a subscribe confirmation", () => {
 		expect(summarize({ subscribed: true }, theme)).toContain("Subscribed");

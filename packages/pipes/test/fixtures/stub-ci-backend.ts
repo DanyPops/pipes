@@ -1,5 +1,6 @@
 /** Configurable fake CIBackend for tests, mirroring conty's driventest.StubCIAdapter. */
 import type { CIArtifact, CIJob, CIRun, CIStageNode } from "../../src/domain/ci-run.ts";
+import type { RepoInfo, WorkflowInfo } from "../../src/domain/discovery.ts";
 import type { TriggerReceipt } from "../../src/domain/trigger.ts";
 import {
 	Capability,
@@ -7,6 +8,7 @@ import {
 	type CIArtifactStore,
 	type CIBackend,
 	type CIChainable,
+	type CIDiscoverable,
 	type CIHistorical,
 	type CIPipeliner,
 	type CITriggerable,
@@ -27,6 +29,8 @@ export interface StubCIBackendOptions {
 	runParams?: Record<string, string>;
 	listRunsResult?: CIRun[];
 	downstreamRuns?: CIRun[];
+	repos?: RepoInfo[];
+	workflows?: WorkflowInfo[];
 	triggerReceipt?: TriggerReceipt;
 	resolvedReceipt?: TriggerReceipt;
 	estimatedDurationMs?: number;
@@ -34,7 +38,7 @@ export interface StubCIBackendOptions {
 }
 
 export type StubCIBackend = CIBackend &
-	Partial<CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIChainable> & {
+	Partial<CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIChainable & CIDiscoverable> & {
 		calls: { getRun: Array<{ jobRef: string; runId: string }>; trigger: Array<{ jobRef: string; params: Record<string, string> }> };
 	};
 
@@ -103,6 +107,13 @@ export function createStubCIBackend(options: StubCIBackendOptions = {}): StubCIB
 		Object.assign(stub, {
 			getDownstreamRuns: async () => options.downstreamRuns ?? [],
 		} satisfies CIChainable);
+	}
+
+	if ((capabilities & Capability.Discover) === Capability.Discover) {
+		Object.assign(stub, {
+			listRepos: async () => options.repos ?? [],
+			listWorkflows: async () => options.workflows ?? [],
+		} satisfies CIDiscoverable);
 	}
 
 	return stub;

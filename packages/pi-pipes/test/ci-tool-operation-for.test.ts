@@ -6,6 +6,7 @@ describe("operationFor", () => {
 		expect(operationFor("status")).toBe("ci.status");
 		expect(operationFor("trigger")).toBe("ci.trigger");
 		expect(operationFor("downstream")).toBe("ci.downstream");
+		expect(operationFor("discover")).toBe("ci.discover");
 	});
 
 	it("maps help onto ci.help explicitly", () => {

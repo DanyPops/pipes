@@ -3,8 +3,18 @@
  * connectivity is only ever exercised by the first real operation call.
  */
 import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode } from "../../domain/ci-run.ts";
+import type { RepoInfo, WorkflowInfo } from "../../domain/discovery.ts";
 import type { TriggerReceipt } from "../../domain/trigger.ts";
-import { Capability, type CapabilitySet, type CIArtifactStore, type CIBackend, type CIHistorical, type CIPipeliner, type CITriggerable } from "../../ports/ci-backend.ts";
+import {
+	Capability,
+	type CapabilitySet,
+	type CIArtifactStore,
+	type CIBackend,
+	type CIDiscoverable,
+	type CIHistorical,
+	type CIPipeliner,
+	type CITriggerable,
+} from "../../ports/ci-backend.ts";
 import { parseRateLimitHeaders, parseRetryAfterMs, RateLimitError } from "../http-rate-limit.ts";
 import type { FetchLike } from "./auth.ts";
 
@@ -41,7 +51,7 @@ export interface GitHubAdapterOptions {
 	fetchImpl?: FetchLike;
 }
 
-export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore {
+export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIDiscoverable {
 	const { name, owner, repo: fixedRepo, token } = options;
 	const doFetch = options.fetchImpl ?? (fetch as unknown as FetchLike);
 	const resolveToken = options.getToken ?? (async () => token);
@@ -141,7 +151,7 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 	return {
 		name: () => name,
 		type: () => "github",
-		capabilities: (): CapabilitySet => Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts,
+		capabilities: (): CapabilitySet => Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Discover,
 
 		/** "latest" is an explicit sentinel routed to a dedicated query; any other runId always fetches that exact run, never a substitute. */
 		async getRun(jobRef: string, runId: string): Promise<CIRun> {
@@ -268,6 +278,24 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 			if (!response.ok) throw new GitHubApiError("GET", `artifact ${path}`, response.status, await response.text());
 			return new Uint8Array(await response.arrayBuffer());
 		},
+
+		/**
+		 * /user/repos (not /users/{owner}/repos, which only ever returns public
+		 * repos) so a private repo the token can see is still discoverable --
+		 * covers both owner being the token's own login and an org it belongs
+		 * to. Bounded to one page (100) -- an owner with more than that sees
+		 * only the first 100, not a silent unbounded fetch.
+		 */
+		async listRepos(): Promise<RepoInfo[]> {
+			const repos = await api<GhRepo[]>("GET", "/user/repos?per_page=100&affiliation=owner,collaborator,organization_member");
+			return (repos ?? []).filter((r) => r.owner.login === owner).map((r) => ({ name: r.name, fullName: r.full_name, private: r.private }));
+		},
+
+		/** repo is always the caller-given value, never resolveJobRef'd -- this takes a bare repo name, not a jobRef. */
+		async listWorkflows(repoArg: string): Promise<WorkflowInfo[]> {
+			const page = await api<{ workflows: GhWorkflow[] }>("GET", `/repos/${owner}/${repoArg}/actions/workflows?per_page=100`);
+			return (page?.workflows ?? []).map((w) => ({ name: w.name, fileName: w.path.split("/").pop() ?? w.path, state: w.state }));
+		},
 	};
 }
 
@@ -292,4 +320,17 @@ interface GhArtifact {
 	id: number;
 	name: string;
 	size_in_bytes: number;
+}
+
+interface GhRepo {
+	name: string;
+	full_name: string;
+	private: boolean;
+	owner: { login: string };
+}
+
+interface GhWorkflow {
+	name: string;
+	path: string;
+	state: string;
 }

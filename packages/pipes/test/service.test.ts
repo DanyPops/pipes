@@ -141,6 +141,36 @@ describe("ci.search", () => {
 	});
 });
 
+describe("ci.discover", () => {
+	it("lists repos when no repo is given", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Discover, repos: [{ name: "pipes", fullName: "DanyPops/pipes", private: false }] }));
+		const service = createPipesService(orchestrator);
+
+		const result = await service.execute("ci.discover", { backend: "gh" });
+		expect(result.repos).toEqual([{ name: "pipes", fullName: "DanyPops/pipes", private: false }]);
+		expect(result.workflows).toBeUndefined();
+	});
+
+	it("lists workflows for that repo when repo is given", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Discover, workflows: [{ name: "CI", fileName: "ci.yml", state: "active" }] }));
+		const service = createPipesService(orchestrator);
+
+		const result = await service.execute("ci.discover", { backend: "gh", repo: "pipes" });
+		expect(result.workflows).toEqual([{ name: "CI", fileName: "ci.yml", state: "active" }]);
+		expect(result.repos).toBeUndefined();
+	});
+
+	it("rejects with a 400-mappable CapabilityUnsupportedError against a backend without Discover", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gitlab" }));
+		const service = createPipesService(orchestrator);
+
+		await expect(service.execute("ci.discover", { backend: "gitlab" })).rejects.toThrow(/discover/);
+	});
+});
+
 describe("ci.help", () => {
 	it("lists configured backends and registered pipelines", async () => {
 		const orchestrator = new Orchestrator();

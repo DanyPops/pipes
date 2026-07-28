@@ -1,4 +1,5 @@
 import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, LogFilter } from "../domain/ci-run.ts";
+import type { RepoInfo, WorkflowInfo } from "../domain/discovery.ts";
 import type { TriggerReceipt } from "../domain/trigger.ts";
 
 export enum Capability {
@@ -7,6 +8,7 @@ export enum Capability {
 	Stages = 1 << 2,
 	Artifacts = 1 << 3,
 	Chain = 1 << 4,
+	Discover = 1 << 5,
 }
 
 export type CapabilitySet = number;
@@ -21,6 +23,7 @@ const CAPABILITY_NAMES: [Capability, string][] = [
 	[Capability.Stages, "stages"],
 	[Capability.Artifacts, "artifacts"],
 	[Capability.Chain, "chain"],
+	[Capability.Discover, "discover"],
 ];
 
 export function describeCapabilities(set: CapabilitySet): string {
@@ -72,6 +75,12 @@ export interface CIChainable {
 	getDownstreamRuns(downstreamJob: string, upstreamJob: string, upstreamRunId: string): Promise<CIRun[]>;
 }
 
+/** Lets a caller explore what's actually addressable through a backend instead of already knowing the exact repo/workflow name -- most relevant for an account-scoped backend covering many repos under one owner. */
+export interface CIDiscoverable {
+	listRepos(): Promise<RepoInfo[]>;
+	listWorkflows(repo: string): Promise<WorkflowInfo[]>;
+}
+
 /** Implemented by decorator adapters (e.g. a future cache layer) to expose the wrapped backend. */
 export interface Unwrappable {
 	unwrap(): CIBackend;
@@ -117,4 +126,8 @@ export function asArtifactStore(backend: CIBackend): (CIBackend & CIArtifactStor
 
 export function asChainable(backend: CIBackend): (CIBackend & CIChainable) | undefined {
 	return asCapability<CIBackend & CIChainable>(backend, "getDownstreamRuns");
+}
+
+export function asDiscoverable(backend: CIBackend): (CIBackend & CIDiscoverable) | undefined {
+	return asCapability<CIBackend & CIDiscoverable>(backend, "listRepos");
 }

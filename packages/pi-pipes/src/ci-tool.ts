@@ -16,6 +16,7 @@ const ACTIONS = [
 	"status",
 	"log",
 	"search",
+	"discover",
 	"trigger",
 	"wait",
 	"cancel",
@@ -37,7 +38,7 @@ const PARAMETERS = Type.Object({
 	jobRef: Type.Optional(
 		Type.String({
 			description:
-				"Job path. GitLab: a job name. Jenkins: a folder-nested job path (e.g. \"folder/job-name\"). GitHub: a workflow file name (e.g. \"publish.yml\") for a repo-pinned backend, or \"repo/workflow.yml\" for an account-scoped backend covering every repo under one owner -- check ci(action=help)'s backend list, or a repo-pinned GitHub call with a bare workflow name fails loudly rather than guessing.",
+				"Job path. GitLab: a job name. Jenkins: a folder-nested job path (e.g. \"folder/job-name\"). GitHub: a workflow file name (e.g. \"publish.yml\") for a repo-pinned backend, or \"repo/workflow.yml\" for an account-scoped backend covering every repo under one owner. Unsure which repos/workflows exist under an account-scoped GitHub backend? Use ci(action=discover) first instead of guessing -- a repo-pinned GitHub call with a bare workflow name fails loudly rather than guessing which repo was meant.",
 		}),
 	),
 	runId: Type.Optional(Type.String({ description: "Build/run number. Optional for status/log — omit to use the latest run." })),
@@ -58,6 +59,7 @@ const PARAMETERS = Type.Object({
 	depth: Type.Optional(Type.Integer({ description: "Max recursion depth for chain (default 3, -1 = unlimited)." })),
 	artifacts: Type.Optional(Type.Boolean({ description: "For chain: attach each node's artifact list." })),
 	maxTokens: Type.Optional(Type.Integer({ description: "For tail, and for wait's streamed log preview: token budget for the returned log excerpt (default 2000). The full log is always cached server-side regardless of this." })),
+	repo: Type.Optional(Type.String({ description: "For discover against an account-scoped GitHub backend: a repo name to list its workflow files. Omit to list every repo under that backend's owner instead." })),
 	downstreamJob: Type.Optional(Type.String({ description: "For downstream: the specific downstream job name to check (required for Jenkins; ignored by GitLab, whose bridges are scoped to the pipeline already given by upstreamRunId)." })),
 	upstreamJob: Type.Optional(Type.String({ description: "For downstream: the upstream job name that triggered it." })),
 	upstreamRunId: Type.Optional(Type.String({ description: "For downstream: the specific upstream run ID to match against." })),
@@ -113,6 +115,7 @@ export function registerCiTool(pi: ExtensionAPI): void {
 			"Use ci(action=presets) to see every bookmarked job template before assuming one exists or guessing its exact name.",
 			"Use ci(action=bookmark) once you've worked out a raw backend/jobRef/params combination worth reusing, instead of re-deriving it from scratch on every future call -- a saved preset survives across sessions.",
 			"Use ci(action=trigger, pipeline=..., params={...}) to override a bookmarked preset's baked-in params for one run (e.g. a release image or version that changes every deploy) without re-bookmarking it.",
+			"Use ci(action=discover, backend=...) to list every repo an account-scoped GitHub backend can see, then ci(action=discover, backend=..., repo=...) to list that repo's workflow files -- builds the exact \"repo/workflow.yml\" jobRef instead of guessing it. Fails with a clear error against a backend that doesn't support discovery (GitLab/Jenkins today).",
 		],
 		parameters: PARAMETERS,
 		async execute(_toolCallId, params, signal, onUpdate) {
@@ -289,6 +292,20 @@ export function summarize(data: unknown, theme: ThemeLike): string {
 	if (typeof d.outputTokens === "number" && typeof d.runId === "string") {
 		const tail = d as { runId: string; status: string; truncated: boolean; outputTokens: number };
 		return `${statusGlyph(tail.status, theme)} ${theme.fg("dim", `#${tail.runId}`)} ${theme.fg("muted", `${tail.outputTokens} tok${tail.truncated ? ", truncated" : ""}`)}`;
+	}
+
+	// ci.discover: { repos } / { workflows }
+	if (Array.isArray(d.repos)) {
+		const repos = d.repos as Array<{ name: string; private: boolean }>;
+		if (repos.length === 0) return theme.fg("muted", "No repos found.");
+		const lines = repos.map((r) => `  ${theme.fg("accent", r.name)}${r.private ? theme.fg("dim", " (private)") : ""}`);
+		return [theme.fg("muted", `${repos.length} repo(s):`), ...lines].join("\n");
+	}
+	if (Array.isArray(d.workflows)) {
+		const workflows = d.workflows as Array<{ name: string; fileName: string; state: string }>;
+		if (workflows.length === 0) return theme.fg("muted", "No workflows found.");
+		const lines = workflows.map((w) => `  ${theme.fg("accent", w.fileName)} ${theme.fg("dim", `(${w.name}, ${w.state})`)}`);
+		return [theme.fg("muted", `${workflows.length} workflow(s):`), ...lines].join("\n");
 	}
 
 	// ci.search / ci.downstream: { builds } / { runs }

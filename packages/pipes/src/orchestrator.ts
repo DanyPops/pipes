@@ -16,12 +16,14 @@ import type {
 	LogFilter,
 	LogResult,
 } from "./domain/ci-run.ts";
+import type { RepoInfo, WorkflowInfo } from "./domain/discovery.ts";
 import type { CICheck, CIVerdict, FailureContext } from "./domain/monitor.ts";
 import type { Pipeline, PipelineRun, StepResult } from "./domain/pipeline.ts";
 import type { OwnedRun, TriggerReceipt, TriggerResult, WatchStatus } from "./domain/trigger.ts";
 import {
 	asArtifactStore,
 	asChainable,
+	asDiscoverable,
 	asHistorical,
 	asPipeliner,
 	asTriggerable,
@@ -494,6 +496,20 @@ export class Orchestrator {
 		if (!chainable) throw new CapabilityUnsupportedError(backendName, "chain traversal");
 		return chainable.getDownstreamRuns(downstreamJob, upstreamJob, upstreamRunId);
 	}
+
+	async ciListRepos(backendName: string): Promise<RepoInfo[]> {
+		const backend = this.adapter(backendName);
+		const discoverable = asDiscoverable(backend);
+		if (!discoverable) throw new CapabilityUnsupportedError(backendName, "repo discovery");
+		return discoverable.listRepos();
+	}
+
+	async ciListWorkflows(backendName: string, repo: string): Promise<WorkflowInfo[]> {
+		const backend = this.adapter(backendName);
+		const discoverable = asDiscoverable(backend);
+		if (!discoverable) throw new CapabilityUnsupportedError(backendName, "workflow discovery");
+		return discoverable.listWorkflows(repo);
+	}
 }
 
 function describeBackendCapabilities(backend: CIBackend): string {
@@ -503,6 +519,7 @@ function describeBackendCapabilities(backend: CIBackend): string {
 	if (asPipeliner(backend)) parts.push("stages");
 	if (asArtifactStore(backend)) parts.push("artifacts");
 	if (asChainable(backend)) parts.push("chain");
+	if (asDiscoverable(backend)) parts.push("discover");
 	return parts.length > 0 ? parts.join(" ") : "none";
 }
 

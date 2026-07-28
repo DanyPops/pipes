@@ -199,6 +199,33 @@ describe("Orchestrator.getVerdict: the compact real-time result", () => {
 	});
 });
 
+describe("Orchestrator.ciListRepos / ciListWorkflows: discovery capability gating", () => {
+	it("delegates to the backend's listRepos when the Discover capability is present", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Discover, repos: [{ name: "pipes", fullName: "DanyPops/pipes", private: false }] }));
+		expect(await orchestrator.ciListRepos("gh")).toEqual([{ name: "pipes", fullName: "DanyPops/pipes", private: false }]);
+	});
+
+	it("delegates to the backend's listWorkflows when the Discover capability is present", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Discover, workflows: [{ name: "CI", fileName: "ci.yml", state: "active" }] }));
+		expect(await orchestrator.ciListWorkflows("gh", "pipes")).toEqual([{ name: "CI", fileName: "ci.yml", state: "active" }]);
+	});
+
+	it("throws CapabilityUnsupportedError for both, on a backend without Discover", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gitlab" })); // no Discover capability
+		await expect(orchestrator.ciListRepos("gitlab")).rejects.toThrow(CapabilityUnsupportedError);
+		await expect(orchestrator.ciListWorkflows("gitlab", "x")).rejects.toThrow(CapabilityUnsupportedError);
+	});
+
+	it("reports 'discover' in backendInfo's capabilities string when present", () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Discover }));
+		expect(orchestrator.backendInfo()).toContainEqual({ name: "gh", type: "stub", capabilities: "discover" });
+	});
+});
+
 describe("Orchestrator.ciWatch: real-time progress", () => {
 	it("computes progress percent and overdue against the estimated duration", async () => {
 		const orchestrator = new Orchestrator();

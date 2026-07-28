@@ -220,3 +220,65 @@ describe("createGitHubAdapter: account-scoped (no repo given) -- repo comes from
 		expect(requestedUrl).toContain("/repos/o/r/actions/runs/1");
 	});
 });
+
+describe("createGitHubAdapter: discovery", () => {
+	it("listRepos() filters /user/repos down to this adapter's own owner, mapping to the domain shape", async () => {
+		const fetchImpl: FetchLike = async () =>
+			jsonResponse([
+				{ name: "pipes", full_name: "DanyPops/pipes", private: false, owner: { login: "DanyPops" } },
+				{ name: "secrets-repo", full_name: "DanyPops/secrets-repo", private: true, owner: { login: "DanyPops" } },
+				{ name: "other-owner-repo", full_name: "someone-else/other-owner-repo", private: false, owner: { login: "someone-else" } },
+			]);
+		const adapter = createGitHubAdapter({ name: "account-scoped", owner: "DanyPops", fetchImpl });
+
+		const repos = await adapter.listRepos();
+		expect(repos).toEqual([
+			{ name: "pipes", fullName: "DanyPops/pipes", private: false },
+			{ name: "secrets-repo", fullName: "DanyPops/secrets-repo", private: true },
+		]);
+	});
+
+	it("listRepos() requests one bounded page (100), never an unbounded fetch", async () => {
+		let requestedUrl = "";
+		const fetchImpl: FetchLike = async (url) => {
+			requestedUrl = url;
+			return jsonResponse([]);
+		};
+		const adapter = createGitHubAdapter({ name: "account-scoped", owner: "DanyPops", fetchImpl });
+		await adapter.listRepos();
+		expect(requestedUrl).toContain("/user/repos?per_page=100");
+	});
+
+	it("listWorkflows(repo) maps each workflow's path to just its file name -- the exact jobRef-valid string", async () => {
+		const fetchImpl: FetchLike = async () =>
+			jsonResponse({
+				workflows: [
+					{ name: "Publish", path: ".github/workflows/publish.yml", state: "active" },
+					{ name: "CI", path: ".github/workflows/ci.yml", state: "active" },
+				],
+			});
+		const adapter = createGitHubAdapter({ name: "account-scoped", owner: "o", fetchImpl });
+
+		const workflows = await adapter.listWorkflows("pipes");
+		expect(workflows).toEqual([
+			{ name: "Publish", fileName: "publish.yml", state: "active" },
+			{ name: "CI", fileName: "ci.yml", state: "active" },
+		]);
+	});
+
+	it("listWorkflows(repo) uses the given repo directly against the right upstream URL", async () => {
+		let requestedUrl = "";
+		const fetchImpl: FetchLike = async (url) => {
+			requestedUrl = url;
+			return jsonResponse({ workflows: [] });
+		};
+		const adapter = createGitHubAdapter({ name: "account-scoped", owner: "o", fetchImpl });
+		await adapter.listWorkflows("beta");
+		expect(requestedUrl).toContain("/repos/o/beta/actions/workflows");
+	});
+
+	it("is advertised as a capability -- asDiscoverable resolves, and the capability set includes Discover", () => {
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r" });
+		expect(hasCapability(adapter.capabilities(), Capability.Discover)).toBe(true);
+	});
+});

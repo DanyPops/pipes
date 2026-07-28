@@ -2,6 +2,7 @@
 import { errorResponse, healthResponse, jsonResponse, readyResponse, requireBearerToken } from "@danypops/daemon-kit/http";
 import { DEFAULT_LOG_TAIL_TOKENS } from "./constants.ts";
 import type { CIRunNode, CIStageNode, LogResult, RunResult } from "./domain/ci-run.ts";
+import type { RepoInfo, WorkflowInfo } from "./domain/discovery.ts";
 import type { Pipeline, PipelineRun } from "./domain/pipeline.ts";
 import type { TriggerResult, WatchStatus } from "./domain/trigger.ts";
 import { defaultPresetsPath, savePresets } from "./presets.ts";
@@ -25,6 +26,7 @@ export type OperationName =
 	| "ci.status"
 	| "ci.log"
 	| "ci.search"
+	| "ci.discover"
 	| "ci.trigger"
 	| "ci.wait"
 	| "ci.cancel"
@@ -44,6 +46,8 @@ export interface OperationInputs {
 	"ci.status": { backend?: string; jobRef?: string; runId?: string; pipeline?: string; tail?: number; grep?: string; includeParams?: boolean };
 	"ci.log": { backend?: string; jobRef?: string; runId?: string; pipeline?: string; step?: number; tail?: number; grep?: string };
 	"ci.search": { backend: string; jobRef: string; result?: RunResult; runner?: string; since?: string; limit?: number; params?: Record<string, string> };
+	/** repo given lists workflows in it; omitted lists every repo the backend's credential can see under its owner. */
+	"ci.discover": { backend: string; repo?: string };
 	"ci.trigger": { backend?: string; jobRef?: string; pipeline?: string; params?: Record<string, string> };
 	"ci.wait": { backend: string; jobRef?: string; runId?: string; opaqueRef?: string; timeoutS?: number };
 	"ci.cancel": { backend: string; jobRef: string; runId: string };
@@ -66,6 +70,8 @@ export interface OperationOutputs {
 	"ci.status": { pipelineRun?: PipelineRun; verdict?: unknown; params?: Record<string, string>; truncatedParamKeys?: string[] };
 	"ci.log": LogResult;
 	"ci.search": { builds: unknown[] };
+	/** Exactly one of repos/workflows is present, matching which input.repo case was requested. */
+	"ci.discover": { repos?: RepoInfo[]; workflows?: WorkflowInfo[] };
 	"ci.trigger": { pipelineRun?: PipelineRun; result?: TriggerResult };
 	"ci.wait": WatchStatus | { buildNumber: string };
 	"ci.cancel": { status: "cancelled"; runId: string };
@@ -101,6 +107,7 @@ const OPERATION_NAMES: OperationName[] = [
 	"ci.status",
 	"ci.log",
 	"ci.search",
+	"ci.discover",
 	"ci.trigger",
 	"ci.wait",
 	"ci.cancel",
@@ -303,6 +310,11 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 						params: search.params,
 					});
 					return { builds } as OperationOutputs[Name];
+				}
+				case "ci.discover": {
+					const discover = input as OperationInputs["ci.discover"];
+					if (discover.repo) return { workflows: await orchestrator.ciListWorkflows(discover.backend, discover.repo) } as OperationOutputs[Name];
+					return { repos: await orchestrator.ciListRepos(discover.backend) } as OperationOutputs[Name];
 				}
 				case "ci.trigger":
 					return (await handleTrigger(input as OperationInputs["ci.trigger"])) as OperationOutputs[Name];
