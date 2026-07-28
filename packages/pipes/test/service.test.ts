@@ -51,6 +51,23 @@ describe("ci.trigger", () => {
 		const result = await service.execute("ci.trigger", { backend: "gh", jobRef: "job", params: {} });
 		expect(result.result?.buildNumber).toBe("7");
 	});
+
+	it("forwards params as a per-invocation override onto a pipeline's own baked-in step params", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({
+			name: "gh",
+			capabilities: Capability.Trigger,
+			triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "1" },
+			run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+		});
+		orchestrator.addAdapter(backend);
+		orchestrator.registerPipeline({ name: "deploy", backend: "gh", steps: [{ jobName: "build", params: { ENV: "stage" } }] });
+		const service = createPipesService(orchestrator);
+
+		await service.execute("ci.trigger", { pipeline: "deploy", params: { ENV: "prod" } });
+
+		expect(backend.calls.trigger).toEqual([{ jobRef: "build", params: { ENV: "prod" } }]);
+	});
 });
 
 describe("ci.wait", () => {

@@ -196,9 +196,15 @@ async function manageRunFlow(ctx: ExtensionCommandContext, client: PipesClient, 
 }
 
 async function runPresetFlow(ctx: ExtensionCommandContext, client: PipesClient, preset: PresetInfo, show: ShowScreen): Promise<void> {
-	const confirmed = await ctx.ui.confirm(`Trigger preset "${preset.name}"?`, describePreset(preset));
+	// Optional per-invocation override, merged onto every step's own baked-in params server-side --
+	// lets a preset whose values legitimately change between runs (a release image, a branch) stay
+	// usable without needing to be re-bookmarked just to update one value each time.
+	const overridesText = await ctx.ui.input("Override params for this run (optional, key=value,key2=value2)");
+	const params = overridesText ? parseParams(overridesText) : undefined;
+
+	const confirmed = await ctx.ui.confirm(`Trigger preset "${preset.name}"?`, params ? `${describePreset(preset)}\nOverrides: ${JSON.stringify(params)}` : describePreset(preset));
 	if (!confirmed) return;
-	await runOperation(ctx, client, `Trigger ${preset.name}`, "ci.trigger", { pipeline: preset.name }, show);
+	await runOperation(ctx, client, `Trigger ${preset.name}`, "ci.trigger", params ? { pipeline: preset.name, params } : { pipeline: preset.name }, show);
 }
 
 /** One "jobName" or "jobName param=value,other=value" line at a time, until the human leaves the job name blank. */

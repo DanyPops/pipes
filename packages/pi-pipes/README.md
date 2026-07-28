@@ -19,6 +19,11 @@ The agent can manage these directly:
 - `ci(action=bookmark, pipeline=<name>, backend=<name>, presetSteps=[{jobName, params?}, ...])`
   — save (or overwrite) one.
 - `ci(action=unbookmark, pipeline=<name>)` — remove one.
+- `ci(action=trigger, pipeline=<name>, params={...})` — trigger a bookmark with a
+  per-invocation override, merged onto every step's own baked-in params (the
+  override wins on key collision). Use this for a preset whose values
+  legitimately change between runs (a release image, a branch) instead of
+  re-bookmarking it just to update one value.
 
 ## `/pipes` command
 

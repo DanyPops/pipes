@@ -39,7 +39,7 @@ const PARAMETERS = Type.Object({
 	opaqueRef: Type.Optional(Type.String({ description: "Opaque trigger reference returned by trigger. Pass to wait to resolve to a run ID without watching." })),
 	pipeline: Type.Optional(Type.String({ description: "Named preset (a bookmarked job template). Use instead of backend+jobRef for trigger/status/log. Also the preset name to save/remove for bookmark/unbookmark." })),
 	step: Type.Optional(Type.Integer({ description: "Step index for pipeline log (0-based). Use with pipeline." })),
-	params: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Build parameters for trigger, or an exact-match parameter filter for search." })),
+	params: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Build parameters for trigger, or an exact-match parameter filter for search. For trigger with pipeline set, merges onto every step's own baked-in params (this wins on key collision) -- overrides a value that legitimately changes between runs (a release image, a branch) without needing to re-bookmark the preset." })),
 	result: Type.Optional(Type.String({ description: "Filter by result for search: SUCCESS, FAILURE, ABORTED." })),
 	runner: Type.Optional(Type.String({ description: "Filter by triggering user for search." })),
 	since: Type.Optional(Type.String({ description: "RFC3339 lower bound on run start time for search." })),
@@ -107,6 +107,7 @@ export function registerCiTool(pi: ExtensionAPI): void {
 			"Use ci(action=chain) for a run's downstream tree automatically where the backend supports it (GitLab). For Jenkins, ci(action=chain) alone will not find children -- use ci(action=downstream, downstreamJob=..., upstreamJob=..., upstreamRunId=...) with the specific downstream job name you're checking.",
 			"Use ci(action=presets) to see every bookmarked job template before assuming one exists or guessing its exact name.",
 			"Use ci(action=bookmark) once you've worked out a raw backend/jobRef/params combination worth reusing, instead of re-deriving it from scratch on every future call -- a saved preset survives across sessions.",
+			"Use ci(action=trigger, pipeline=..., params={...}) to override a bookmarked preset's baked-in params for one run (e.g. a release image or version that changes every deploy) without re-bookmarking it.",
 		],
 		parameters: PARAMETERS,
 		async execute(_toolCallId, params, signal, onUpdate) {

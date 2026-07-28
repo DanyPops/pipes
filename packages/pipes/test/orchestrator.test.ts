@@ -81,6 +81,61 @@ describe("Orchestrator.triggerPipeline: named presets", () => {
 		const run = await orchestrator.triggerPipeline("deploy");
 		expect(run.status).toBe("failure");
 	});
+
+	it("merges per-invocation overrideParams onto every step's own baked-in params, override winning on key collision", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({
+			name: "gh",
+			capabilities: Capability.Trigger,
+			triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "1" },
+			run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+		});
+		orchestrator.addAdapter(backend);
+		orchestrator.registerPipeline({
+			name: "deploy-with-params",
+			backend: "gh",
+			steps: [{ jobName: "build", params: { ENV: "stage", REGION: "us-east" } }],
+		});
+
+		await orchestrator.triggerPipeline("deploy-with-params", { ENV: "prod" });
+
+		expect(backend.calls.trigger).toEqual([{ jobRef: "build", params: { ENV: "prod", REGION: "us-east" } }]);
+	});
+
+	it("applies overrideParams to every step of a multi-step pipeline, not just the first", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({
+			name: "gh",
+			capabilities: Capability.Trigger,
+			triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "1" },
+			run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+		});
+		orchestrator.addAdapter(backend);
+		orchestrator.registerPipeline(pipeline); // two steps: build, test -- neither has baked-in params
+
+		await orchestrator.triggerPipeline("deploy", { VERSION: "4.20" });
+
+		expect(backend.calls.trigger).toEqual([
+			{ jobRef: "build", params: { VERSION: "4.20" } },
+			{ jobRef: "test", params: { VERSION: "4.20" } },
+		]);
+	});
+
+	it("behaves exactly as before when overrideParams is omitted -- backward compatible, not a breaking change", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({
+			name: "gh",
+			capabilities: Capability.Trigger,
+			triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "1" },
+			run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+		});
+		orchestrator.addAdapter(backend);
+		orchestrator.registerPipeline({ name: "deploy-with-params", backend: "gh", steps: [{ jobName: "build", params: { ENV: "stage" } }] });
+
+		await orchestrator.triggerPipeline("deploy-with-params");
+
+		expect(backend.calls.trigger).toEqual([{ jobRef: "build", params: { ENV: "stage" } }]);
+	});
 });
 
 describe("Orchestrator.getVerdict: the compact real-time result", () => {

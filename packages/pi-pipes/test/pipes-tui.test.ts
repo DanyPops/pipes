@@ -280,6 +280,24 @@ describe("runPipesCommand: presets", () => {
 		expect(calls[0]?.title).toBe("Trigger deploy");
 	});
 
+	it("forwards an override params prompt as a per-invocation override onto the preset's own baked-in params", async () => {
+		const { ctx } = fakeCtx({ inputs: ["ENV=prod,VERSION=4.20"], confirms: [true] });
+		const { show, calls } = recordingShow();
+		const preset = { name: "deploy", backend: "github", steps: [{ jobName: "build", params: { ENV: "stage" } }] };
+		const client = fakeClient({
+			"ci.help": () => ({ backends: BACKENDS, pipelines: ["deploy"] }),
+			"ci.presets.list": () => ({ presets: [preset] }),
+			"ci.trigger": () => ({ result: { backend: "github", jobRef: "build", buildNumber: "1" } }),
+		});
+		const pick = scriptedPick("run-preset:deploy");
+
+		await runPipesCommand(ctx, async () => client, pick, show);
+
+		const triggerCall = client.calls.find((c) => c.op === "ci.trigger");
+		expect(triggerCall?.input).toEqual({ pipeline: "deploy", params: { ENV: "prod", VERSION: "4.20" } });
+		expect(calls[0]?.title).toBe("Trigger deploy");
+	});
+
 	it("adds a new preset with one step and persists it via ci.presets.set", async () => {
 		const { ctx } = fakeCtx({ inputs: ["deploy", "build", undefined], confirms: [true] });
 		const { show, calls } = recordingShow();

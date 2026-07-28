@@ -107,8 +107,14 @@ export class Orchestrator {
 
 	// ── Presets ──────────────────────────────────────────────────────────────
 
-	/** Runs a named preset's steps sequentially against its backend, stopping at the first failure. */
-	async triggerPipeline(name: string): Promise<PipelineRun> {
+	/**
+	 * Runs a named preset's steps sequentially against its backend, stopping at the first failure.
+	 * `overrideParams`, when given, is merged on top of every step's own baked-in params (override
+	 * wins on key collision) -- the per-invocation escape hatch for a preset whose parameters
+	 * legitimately change between runs (a release version, a branch name) without needing to
+	 * re-bookmark the preset just to update one value.
+	 */
+	async triggerPipeline(name: string, overrideParams: Record<string, string> = {}): Promise<PipelineRun> {
 		const pipeline = this.pipeline(name);
 		const backend = this.adapter(pipeline.backend);
 
@@ -133,7 +139,7 @@ export class Orchestrator {
 
 			let receipt: TriggerReceipt;
 			try {
-				receipt = await triggerable.trigger(step.jobName, step.params ?? {});
+				receipt = await triggerable.trigger(step.jobName, { ...step.params, ...overrideParams });
 				while (receipt.needsResolve) {
 					await sleep(TRIGGER_RESOLVE_POLL_MS);
 					receipt = await triggerable.resolveReceipt(receipt);

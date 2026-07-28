@@ -154,7 +154,10 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 
 	async function handleTrigger(input: OperationInputs["ci.trigger"]): Promise<OperationOutputs["ci.trigger"]> {
 		if (input.pipeline) {
-			const pipelineRun = await orchestrator.triggerPipeline(input.pipeline);
+			// Per-invocation override, merged onto every step's own baked-in params -- lets a preset
+			// whose values legitimately change between runs (a release image, a branch) stay usable
+			// without needing to be re-bookmarked just to update one value each time.
+			const pipelineRun = await orchestrator.triggerPipeline(input.pipeline, input.params ?? {});
 			if (pool) seedPoolFromPipelineRun(pool, orchestrator.pipelineBackendName(input.pipeline), pipelineRun);
 			return { pipelineRun };
 		}
