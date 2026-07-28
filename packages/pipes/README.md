@@ -31,6 +31,28 @@ via a local loopback listener on older instances). Jenkins has no delegated
 auth API, so it uses a stored username+API-token pair — the one documented
 exception, not a default.
 
+### Optional: credentials via Enigma
+
+If a [Enigma](https://github.com/DanyPops/enigma) vault is running, pipes
+checks it first on every request, ahead of its own stored token and any
+static `*_TOKEN` env var — a credential Enigma rotates is picked up on the
+very next call, no daemon restart needed. Purely additive: pipes works
+identically with no Enigma running at all.
+
+Register pipes as a scoped Enigma client (once), then pass the printed
+token to the daemon via `ENIGMA_CLIENT_TOKEN`:
+
+```bash
+enigma client add pipes --backends github,gitlab,jenkins
+# -> prints a token once; export it wherever the pipes daemon is started
+export ENIGMA_CLIENT_TOKEN=<printed token>
+```
+
+Without `ENIGMA_CLIENT_TOKEN`, pipes falls back to Enigma's shared
+admin-token file if one exists at `$XDG_STATE_HOME/enigma/token` — fine for
+a single-user machine where every local daemon is equally trusted, but a
+scoped client token is the least-privilege default.
+
 ## Multiple repos/projects per backend
 
 `GITHUB_OWNER`/`GITHUB_REPO` (and `GITLAB_URL`/`GITLAB_PROJECT_ID`) configure

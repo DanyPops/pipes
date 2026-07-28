@@ -124,7 +124,10 @@ export async function resolveJenkinsCredentials(
 	env: Record<string, string | undefined> = process.env,
 	tryEnigma: TryEnigmaCredential = tryEnigmaCredential,
 ): Promise<JenkinsCredentials | undefined> {
-	const fromEnigma = await tryEnigma("jenkins", { env });
+	// ENIGMA_CLIENT_TOKEN is this daemon's own registered-client token (`enigma client
+	// add pipes --backends ...`), scoped to exactly the backends pipes needs -- preferred
+	// over Enigma's shared admin-token file, which grants every vaulted backend.
+	const fromEnigma = await tryEnigma("jenkins", { env, token: env.ENIGMA_CLIENT_TOKEN });
 	if (fromEnigma?.extra?.url && fromEnigma.extra?.username) {
 		return { baseUrl: fromEnigma.extra.url, username: fromEnigma.extra.username, apiToken: fromEnigma.accessToken };
 	}

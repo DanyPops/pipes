@@ -58,7 +58,10 @@ export async function buildConfiguredAdapters(
 		const getToken = createTokenProvider({
 			store: createGitHubTokenStore(credentialPaths.githubToken),
 			staticFallback: () => resolveStaticGitHubToken(env),
-			enigmaSource: () => tryEnigma("github", { env }),
+			// ENIGMA_CLIENT_TOKEN is this daemon's own registered-client token (`enigma client
+			// add pipes --backends ...`), scoped to exactly the backends pipes needs -- preferred
+			// over Enigma's shared admin-token file, which grants every vaulted backend.
+			enigmaSource: () => tryEnigma("github", { env, token: env.ENIGMA_CLIENT_TOKEN }),
 		});
 		for (const target of githubTargets) {
 			adapters.push(createGitHubAdapter({ name: target.name, owner: target.owner, repo: target.repo, getToken }));
@@ -89,7 +92,7 @@ export async function buildConfiguredAdapters(
 				// setups) there is nothing to refresh against — omit rather than fail every call.
 				refresh: clientId ? (current) => refreshGitLabToken({ baseUrl, clientId }, current.refreshToken as string) : undefined,
 				staticFallback: () => resolveStaticGitLabToken(env),
-				enigmaSource: () => tryEnigma("gitlab", { env }),
+				enigmaSource: () => tryEnigma("gitlab", { env, token: env.ENIGMA_CLIENT_TOKEN }),
 			});
 			adapters.push(createGitLabAdapter({ name: target.name, baseUrl, projectId: target.projectId, getToken }));
 		}

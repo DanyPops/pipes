@@ -120,4 +120,15 @@ describe("resolveJenkinsCredentials", () => {
 		const resolved = await resolveJenkinsCredentials(store, { JENKINS_URL: "https://env.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" }, incompleteEnigma);
 		expect(resolved).toEqual({ baseUrl: "https://env.example.com", username: "bob", apiToken: "envtok" });
 	});
+
+	it("forwards ENIGMA_CLIENT_TOKEN as the registered-client token, instead of relying on Enigma's shared admin-token file", async () => {
+		const store = { load: () => undefined, save: () => {}, clear: () => {} };
+		const seenTokens: (string | undefined)[] = [];
+		const fromEnigma: TryEnigmaCredential = async (_backend, opts) => {
+			seenTokens.push(opts?.token);
+			return undefined;
+		};
+		await resolveJenkinsCredentials(store, { ENIGMA_CLIENT_TOKEN: "pipes-scoped-token" }, fromEnigma);
+		expect(seenTokens).toEqual(["pipes-scoped-token"]);
+	});
 });

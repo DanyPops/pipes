@@ -253,4 +253,37 @@ describe("buildConfiguredAdapters > Enigma as an optional, additive credential s
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
+
+	it("forwards ENIGMA_CLIENT_TOKEN as the registered-client token for both github and gitlab, instead of relying on Enigma's shared admin-token file", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = (async (_url: string) => new Response(JSON.stringify({ workflow_runs: [] }), { status: 200 })) as typeof fetch;
+		try {
+			const seenTokens: Record<string, string | undefined> = {};
+			const fromEnigma: TryEnigmaAccessToken = async (backend, opts) => {
+				seenTokens[backend] = opts?.token;
+				return undefined;
+			};
+			const { adapters } = await buildConfiguredAdapters(
+				credentialPaths(dir),
+				{
+					GITHUB_OWNER: "openshift",
+					GITHUB_REPO: "pipes",
+					GITLAB_URL: "https://gitlab.example.com",
+					GITLAB_PROJECT_ID: "42",
+					ENIGMA_CLIENT_TOKEN: "pipes-scoped-token",
+				},
+				fromEnigma,
+			);
+			const github = adapters.find((a) => a.name() === "github");
+			const gitlab = adapters.find((a) => a.name() === "gitlab");
+			await github?.getRun("workflow.yml", "latest").catch(() => undefined);
+			await gitlab?.getRun("", "latest").catch(() => undefined);
+
+			expect(seenTokens).toEqual({ github: "pipes-scoped-token", gitlab: "pipes-scoped-token" });
+		} finally {
+			globalThis.fetch = originalFetch;
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });
