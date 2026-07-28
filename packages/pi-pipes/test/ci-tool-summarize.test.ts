@@ -21,6 +21,39 @@ describe("summarize: ci.help", () => {
 	});
 });
 
+describe("summarize: ci.presets (bookmarked job templates)", () => {
+	it("lists each preset's name, backend, and step job names", () => {
+		const data = { presets: [{ name: "deploy-prod", backend: "jenkins-ci", steps: [{ jobName: "build" }, { jobName: "deploy", params: { env: "prod" } }] }] };
+		const text = summarize(data, theme);
+		expect(text).toContain("1 preset(s)");
+		expect(text).toContain("deploy-prod");
+		expect(text).toContain("jenkins-ci");
+		expect(text).toContain("build, deploy");
+	});
+
+	it("reports no presets plainly rather than an empty count line", () => {
+		expect(summarize({ presets: [] }, theme)).toContain("No bookmarked presets yet.");
+	});
+
+	it("renders ci.presets.set's echoed-back preset as a bookmark confirmation", () => {
+		const data = { preset: { name: "deploy-prod", backend: "jenkins-ci", steps: [{ jobName: "build" }] } };
+		const text = summarize(data, theme);
+		expect(text).toContain("Bookmarked");
+		expect(text).toContain("deploy-prod");
+		expect(text).toContain("jenkins-ci");
+	});
+
+	it("renders ci.presets.remove's removed:true as a confirmation", () => {
+		expect(summarize({ removed: true }, theme)).toContain("Removed");
+	});
+
+	it("renders ci.presets.remove's removed:false distinctly from a successful removal", () => {
+		const text = summarize({ removed: false }, theme);
+		expect(text).toContain("No such preset");
+		expect(text).not.toContain("Removed");
+	});
+});
+
 describe("summarize: ci.status", () => {
 	it("renders a pipelineRun with per-step status glyphs", () => {
 		const data = { pipelineRun: { pipeline: "deploy", status: "success", steps: [{ jobName: "build", status: "success" }, { jobName: "test", status: "running" }] } };

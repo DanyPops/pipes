@@ -11,7 +11,25 @@ import { findFirstUrl, openLine, statusGlyph } from "./ci-render.ts";
 import { waitAndStreamTail } from "./ci-wait-stream.ts";
 import { connectOrStartPipesClient } from "./daemon-client.ts";
 
-const ACTIONS = ["help", "status", "log", "search", "trigger", "wait", "cancel", "stages", "chain", "pool", "subscribe", "unsubscribe", "tail", "downstream"] as const;
+const ACTIONS = [
+	"help",
+	"status",
+	"log",
+	"search",
+	"trigger",
+	"wait",
+	"cancel",
+	"stages",
+	"chain",
+	"pool",
+	"subscribe",
+	"unsubscribe",
+	"tail",
+	"downstream",
+	"presets",
+	"bookmark",
+	"unbookmark",
+] as const;
 
 const PARAMETERS = Type.Object({
 	action: StringEnum(ACTIONS, { description: "Action to perform. Call help first to see configured backends and presets." }),
@@ -19,7 +37,7 @@ const PARAMETERS = Type.Object({
 	jobRef: Type.Optional(Type.String({ description: "Job path, e.g. a GitHub workflow file, a GitLab job name, or a Jenkins folder path." })),
 	runId: Type.Optional(Type.String({ description: "Build/run number. Optional for status/log — omit to use the latest run." })),
 	opaqueRef: Type.Optional(Type.String({ description: "Opaque trigger reference returned by trigger. Pass to wait to resolve to a run ID without watching." })),
-	pipeline: Type.Optional(Type.String({ description: "Named preset. Use instead of backend+jobRef for trigger/status/log." })),
+	pipeline: Type.Optional(Type.String({ description: "Named preset (a bookmarked job template). Use instead of backend+jobRef for trigger/status/log. Also the preset name to save/remove for bookmark/unbookmark." })),
 	step: Type.Optional(Type.Integer({ description: "Step index for pipeline log (0-based). Use with pipeline." })),
 	params: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Build parameters for trigger, or an exact-match parameter filter for search." })),
 	result: Type.Optional(Type.String({ description: "Filter by result for search: SUCCESS, FAILURE, ABORTED." })),
@@ -38,10 +56,29 @@ const PARAMETERS = Type.Object({
 	downstreamJob: Type.Optional(Type.String({ description: "For downstream: the specific downstream job name to check (required for Jenkins; ignored by GitLab, whose bridges are scoped to the pipeline already given by upstreamRunId)." })),
 	upstreamJob: Type.Optional(Type.String({ description: "For downstream: the upstream job name that triggered it." })),
 	upstreamRunId: Type.Optional(Type.String({ description: "For downstream: the specific upstream run ID to match against." })),
+	// Named presetSteps, not steps -- "steps" is already the boolean flag for the stages action's own step-level-expand option.
+	presetSteps: Type.Optional(
+		Type.Array(
+			Type.Object({ jobName: Type.String(), params: Type.Optional(Type.Record(Type.String(), Type.String())) }),
+			{ description: "For bookmark: the preset's ordered steps, e.g. [{jobName: \"build\"}, {jobName: \"deploy\", params: {env: \"prod\"}}]. At least one step required." },
+		),
+	),
 });
 
-function operationFor(action: (typeof ACTIONS)[number]): string {
-	return action === "help" ? "ci.help" : `ci.${action}`;
+/** Exported for direct testing -- most actions map 1:1 onto `ci.<action>`, but presets/bookmark/unbookmark rename to the daemon's own ci.presets.* operations. */
+export function operationFor(action: (typeof ACTIONS)[number]): string {
+	switch (action) {
+		case "help":
+			return "ci.help";
+		case "presets":
+			return "ci.presets.list";
+		case "bookmark":
+			return "ci.presets.set";
+		case "unbookmark":
+			return "ci.presets.remove";
+		default:
+			return `ci.${action}`;
+	}
 }
 
 export function registerCiTool(pi: ExtensionAPI): void {
@@ -54,7 +91,11 @@ export function registerCiTool(pi: ExtensionAPI): void {
 			"Typical flow: trigger -> wait -> status. status(grep=error) gives a verdict plus filtered failure log in one call. " +
 			"runId is optional for status/log — omit it to use the latest run. wait is blocking: it polls until the run finishes " +
 			"or timeoutS elapses, so you don't need to re-poll manually. When jobRef+runId are given (watching an existing run, " +
-			"not resolving an opaqueRef), wait streams a live log tail preview as it polls, instead of going silent until done.",
+			"not resolving an opaqueRef), wait streams a live log tail preview as it polls, instead of going silent until done. " +
+			"presets are bookmarked job templates (a name -> backend + ordered steps), the same shape conty's own pipelines.yaml " +
+			"uses: ci(action=presets) lists full definitions, ci(action=bookmark, pipeline=..., backend=..., presetSteps=[...]) saves " +
+			"or overwrites one, ci(action=unbookmark, pipeline=...) removes one. A saved preset then triggers/status/logs by " +
+			"name alone via the pipeline parameter, without needing to remember its raw backend/jobRef details again.",
 		promptSnippet: "Trigger, watch, and check results for CI pipelines across GitHub/GitLab/Jenkins/Prow",
 		promptGuidelines: [
 			"Use ci(action=help) before assuming which backends or presets are configured.",
@@ -64,6 +105,8 @@ export function registerCiTool(pi: ExtensionAPI): void {
 			"Use ci(action=subscribe, backend=..., jobRef=...) to have the daemon keep following a job's latest run in the background — it auto-refocuses onto a new run if one supersedes the last, and auto-unsubscribes once that latest run finishes, so no cleanup call is needed. trigger already subscribes automatically.",
 			"Use ci(action=tail, backend=..., jobRef=...) to check a subscribed job's most recent log output — it returns a token-budgeted excerpt of the full cached log, not the whole thing, so repeated polling doesn't flood context.",
 			"Use ci(action=chain) for a run's downstream tree automatically where the backend supports it (GitLab). For Jenkins, ci(action=chain) alone will not find children -- use ci(action=downstream, downstreamJob=..., upstreamJob=..., upstreamRunId=...) with the specific downstream job name you're checking.",
+			"Use ci(action=presets) to see every bookmarked job template before assuming one exists or guessing its exact name.",
+			"Use ci(action=bookmark) once you've worked out a raw backend/jobRef/params combination worth reusing, instead of re-deriving it from scratch on every future call -- a saved preset survives across sessions.",
 		],
 		parameters: PARAMETERS,
 		async execute(_toolCallId, params, signal, onUpdate) {
@@ -81,6 +124,23 @@ export function registerCiTool(pi: ExtensionAPI): void {
 					onUpdate,
 					signal,
 				);
+				return { content: [{ type: "text", text: JSON.stringify(result) }], details: { result } };
+			}
+
+			// ci.presets.set/remove take a differently-shaped input ({preset: Pipeline} / {name}) than every
+			// other operation's flat pass-through of the tool's own params -- reshaped here rather than
+			// asking the daemon to understand this tool's own pipeline/presetSteps naming.
+			if (action === "bookmark") {
+				if (typeof rest.pipeline !== "string" || typeof rest.backend !== "string" || !Array.isArray(rest.presetSteps) || rest.presetSteps.length === 0) {
+					throw new Error("bookmark requires pipeline (name), backend, and at least one presetSteps entry");
+				}
+				const preset = { name: rest.pipeline, backend: rest.backend, steps: rest.presetSteps };
+				const result = await client.call(operationFor(action), { preset });
+				return { content: [{ type: "text", text: JSON.stringify(result) }], details: { result } };
+			}
+			if (action === "unbookmark") {
+				if (typeof rest.pipeline !== "string") throw new Error("unbookmark requires pipeline (the preset name to remove)");
+				const result = await client.call(operationFor(action), { name: rest.pipeline });
 				return { content: [{ type: "text", text: JSON.stringify(result) }], details: { result } };
 			}
 
@@ -148,6 +208,25 @@ export function summarize(data: unknown, theme: ThemeLike): string {
 		return [theme.fg("muted", `${backends.length} backend(s):`), ...lines, pipelines.length > 0 ? theme.fg("muted", `Pipelines: ${pipelines.join(", ")}`) : undefined]
 			.filter((line): line is string => line !== undefined)
 			.join("\n");
+	}
+
+	// ci.presets.list: full bookmark definitions, not just names (unlike ci.help's bare pipelines[])
+	if (Array.isArray(d.presets)) {
+		const presets = d.presets as Array<{ name: string; backend: string; steps: Array<{ jobName: string }> }>;
+		if (presets.length === 0) return theme.fg("muted", "No bookmarked presets yet.");
+		const lines = presets.map((p) => `  ${theme.fg("accent", p.name)} ${theme.fg("dim", `(${p.backend}: ${p.steps.map((s) => s.jobName).join(", ")})`)}`);
+		return [theme.fg("muted", `${presets.length} preset(s):`), ...lines].join("\n");
+	}
+
+	// ci.presets.set: the saved/overwritten preset echoed back
+	if (d.preset && typeof d.preset === "object" && "steps" in (d.preset as object)) {
+		const preset = d.preset as { name: string; backend: string; steps: Array<{ jobName: string }> };
+		return `${theme.fg("success", "\u2713 Bookmarked")} ${theme.fg("accent", preset.name)} ${theme.fg("dim", `(${preset.backend}: ${preset.steps.map((s) => s.jobName).join(", ")})`)}`;
+	}
+
+	// ci.presets.remove
+	if (typeof d.removed === "boolean") {
+		return d.removed ? theme.fg("success", "\u2713 Removed") : theme.fg("muted", "No such preset -- nothing removed");
 	}
 
 	// ci.status / ci.trigger (pipeline form)
