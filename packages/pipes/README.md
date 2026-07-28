@@ -119,7 +119,7 @@ type, it replaces that type's env-var default rather than adding to it:
 {
 	"github": [
 		{ "name": "github-a", "owner": "octocat", "repo": "repo-a" },
-		{ "name": "github-b", "owner": "octocat", "repo": "repo-b", "profile": "work" }
+		{ "name": "acme-github", "owner": "acme-corp", "profile": "work" }
 	],
 	"gitlab": [{ "name": "gitlab-a", "projectId": "42" }],
 	"jenkins": [
@@ -128,6 +128,15 @@ type, it replaces that type's env-var default rather than adding to it:
 	]
 }
 ```
+
+A GitHub target's `repo` field is optional. Given (`github-a` above), the
+backend is pinned to that one repo and `jobRef` stays a bare workflow file
+name (`"publish.yml"`), unchanged from a single-repo setup. Omitted
+(`acme-github` above), the backend is account-scoped: it covers every repo
+under `owner`, and `jobRef` must instead be `"repo/workflow.yml"` (e.g.
+`"widgets/ci.yml"`) — the repo is resolved fresh on every call, not fixed
+at startup. A bare workflow name against an account-scoped backend fails
+loudly rather than guessing which repo you meant.
 
 Every GitHub target shares one logged-in GitHub credential by default (a
 device-flow token authenticates any repo the granting user can access);

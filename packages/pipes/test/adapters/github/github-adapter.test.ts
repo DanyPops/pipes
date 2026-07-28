@@ -162,3 +162,61 @@ describe("createGitHubAdapter.listArtifacts", () => {
 		expect(artifacts).toEqual([{ name: "report.xml", path: "42", sizeBytes: 1024 }]);
 	});
 });
+
+describe("createGitHubAdapter: account-scoped (no repo given) -- repo comes from jobRef, per call", () => {
+	it("two different repos through the same adapter instance route to two different, correctly distinct repos, never the same one twice", async () => {
+		const requestedUrls: string[] = [];
+		const fetchImpl: FetchLike = async (url) => {
+			requestedUrls.push(url);
+			if (url.includes("/repos/o/alpha/actions/runs/1")) return jsonResponse(ghRun(1, { conclusion: "success" }));
+			if (url.includes("/repos/o/beta/actions/runs/2")) return jsonResponse(ghRun(2, { conclusion: "failure" }));
+			throw new Error(`unexpected url: ${url}`);
+		};
+		const adapter = createGitHubAdapter({ name: "account-scoped", owner: "o", fetchImpl });
+
+		const runAlpha = await adapter.getRun("alpha/ci.yml", "1");
+		const runBeta = await adapter.getRun("beta/ci.yml", "2");
+
+		expect(runAlpha.id).toBe("1");
+		expect(runAlpha.status).toBe("success");
+		expect(runBeta.id).toBe("2");
+		expect(runBeta.status).toBe("failure");
+		expect(requestedUrls[0]).toContain("/repos/o/alpha/");
+		expect(requestedUrls[1]).toContain("/repos/o/beta/");
+	});
+
+	it("trigger() dispatches to the repo named in jobRef, and the resulting receipt's own jobRef lets resolveReceipt route back to that same repo", async () => {
+		const calls: string[] = [];
+		const dispatchedAt = new Date();
+		const fetchImpl: FetchLike = async (url, init) => {
+			calls.push(`${init?.method ?? "GET"} ${url}`);
+			if (url.includes("/repos/o/beta/actions/workflows/deploy.yml/dispatches")) return new Response("", { status: 204 });
+			if (url.includes("/repos/o/beta/actions/runs?event=workflow_dispatch")) {
+				return jsonResponse({ workflow_runs: [ghRun(777, { created_at: new Date(dispatchedAt.getTime() + 1000).toISOString() })] });
+			}
+			throw new Error(`unexpected url: ${url}`);
+		};
+		const adapter = createGitHubAdapter({ name: "account-scoped", owner: "o", fetchImpl });
+
+		const receipt = await adapter.trigger("beta/deploy.yml", {});
+		expect(receipt.jobRef).toBe("beta/deploy.yml");
+		const resolved = await adapter.resolveReceipt(receipt);
+		expect(resolved.runId).toBe("777");
+	});
+
+	it("a bare workflow name (no repo qualifier) fails loudly, never silently misrouting to some assumed repo", async () => {
+		const adapter = createGitHubAdapter({ name: "account-scoped", owner: "o", fetchImpl: async () => new Response("") });
+		await expect(adapter.getRun("ci.yml", "1")).rejects.toThrow('GitHub backend "account-scoped" is account-scoped -- jobRef must be "repo/workflow.yml"');
+	});
+
+	it("a repo-pinned adapter (repo given) still treats the whole jobRef as the workflow name, unchanged from before this became optional", async () => {
+		let requestedUrl = "";
+		const fetchImpl: FetchLike = async (url) => {
+			requestedUrl = url;
+			return jsonResponse(ghRun(1));
+		};
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl });
+		await adapter.getRun("nested/looking/workflow.yml", "1");
+		expect(requestedUrl).toContain("/repos/o/r/actions/runs/1");
+	});
+});

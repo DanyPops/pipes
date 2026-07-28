@@ -25,7 +25,16 @@ export class GitHubApiError extends Error {
 export interface GitHubAdapterOptions {
 	name: string;
 	owner: string;
-	repo: string;
+	/**
+	 * When given, this adapter is permanently bound to one repo -- jobRef stays
+	 * a bare workflow file name ("publish.yml"), same as before this option
+	 * became optional. When omitted, the adapter is account-scoped: every
+	 * jobRef must be "repo/workflow.yml" instead, and repo is resolved fresh
+	 * per call. Never both silently guessed at once -- an account-scoped
+	 * adapter given a bare jobRef fails loudly (see resolveJobRef) rather than
+	 * misrouting to some assumed repo.
+	 */
+	repo?: string;
 	token?: string;
 	/** Resolved fresh before every request; takes precedence over `token` when present so a rotated/refreshed credential is always picked up. */
 	getToken?: () => Promise<string | undefined>;
@@ -33,9 +42,25 @@ export interface GitHubAdapterOptions {
 }
 
 export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore {
-	const { name, owner, repo, token } = options;
+	const { name, owner, repo: fixedRepo, token } = options;
 	const doFetch = options.fetchImpl ?? (fetch as unknown as FetchLike);
 	const resolveToken = options.getToken ?? (async () => token);
+
+	/**
+	 * Resolves {repo, workflow} for one call. A repo-pinned adapter (fixedRepo
+	 * set) treats the whole jobRef as the workflow name, unchanged from before
+	 * this became configurable. An account-scoped adapter requires
+	 * "repo/workflow.yml" and fails loudly on anything else -- a bare
+	 * workflow name would otherwise have no repo to route to at all.
+	 */
+	function resolveJobRef(jobRef: string): { repo: string; workflow: string } {
+		if (fixedRepo !== undefined) return { repo: fixedRepo, workflow: jobRef };
+		const slash = jobRef.indexOf("/");
+		if (slash <= 0 || slash === jobRef.length - 1) {
+			throw new Error(`GitHub backend "${name}" is account-scoped -- jobRef must be "repo/workflow.yml", got: "${jobRef}"`);
+		}
+		return { repo: jobRef.slice(0, slash), workflow: jobRef.slice(slash + 1) };
+	}
 
 	async function api<T>(method: string, path: string, body?: unknown): Promise<T | undefined> {
 		const bearer = await resolveToken();
@@ -119,7 +144,8 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 		capabilities: (): CapabilitySet => Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts,
 
 		/** "latest" is an explicit sentinel routed to a dedicated query; any other runId always fetches that exact run, never a substitute. */
-		async getRun(_jobRef: string, runId: string): Promise<CIRun> {
+		async getRun(jobRef: string, runId: string): Promise<CIRun> {
+			const { repo } = resolveJobRef(jobRef);
 			if (runId === "latest") {
 				const page = await api<{ workflow_runs: GhWorkflowRun[] }>("GET", `/repos/${owner}/${repo}/actions/runs?per_page=1`);
 				const run = page?.workflow_runs[0];
@@ -131,7 +157,8 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 			return toCIRun(run);
 		},
 
-		async searchRuns(_jobRef: string, filter: BuildFilter): Promise<CIRun[]> {
+		async searchRuns(jobRef: string, filter: BuildFilter): Promise<CIRun[]> {
+			const { repo } = resolveJobRef(jobRef);
 			const limit = filter.limit && filter.limit > 0 ? filter.limit : 20;
 			const params = new URLSearchParams({ per_page: String(Math.max(limit * 3, 50)) });
 			if (filter.result) params.set("status", filter.result.toLowerCase());
@@ -149,7 +176,8 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 		 * concatenates each job's plain-text log (the per-job endpoint redirects
 		 * to a temporary blob URL, which fetch follows transparently).
 		 */
-		async getLog(_jobRef: string, runId: string): Promise<string> {
+		async getLog(jobRef: string, runId: string): Promise<string> {
+			const { repo } = resolveJobRef(jobRef);
 			const jobsPage = await api<{ jobs: GhWorkflowJob[] }>("GET", `/repos/${owner}/${repo}/actions/runs/${runId}/jobs`);
 			const jobs = jobsPage?.jobs ?? [];
 			const sections = await Promise.all(
@@ -162,24 +190,27 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 			return sections.join("\n\n");
 		},
 
-		async cancelRun(_jobRef: string, runId: string): Promise<void> {
+		async cancelRun(jobRef: string, runId: string): Promise<void> {
+			const { repo } = resolveJobRef(jobRef);
 			await api("POST", `/repos/${owner}/${repo}/actions/runs/${runId}/cancel`);
 		},
 
 		async trigger(jobRef: string, params: Record<string, string>): Promise<TriggerReceipt> {
+			const { repo, workflow } = resolveJobRef(jobRef);
 			const body: { ref: string; inputs?: Record<string, string> } = { ref: params.ref ?? "main" };
 			const inputs = { ...params };
 			delete inputs.ref;
 			if (Object.keys(inputs).length > 0) body.inputs = inputs;
 
 			const dispatchedAt = new Date().toISOString();
-			await api("POST", `/repos/${owner}/${repo}/actions/workflows/${jobRef}/dispatches`, body);
+			await api("POST", `/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, body);
 			return { backend: name, jobRef, needsResolve: true, opaqueRef: dispatchedAt };
 		},
 
-		/** GitHub's workflow_dispatch has no run ID at trigger time; correlate by created_at against runs dispatched after the trigger timestamp. */
+		/** GitHub's workflow_dispatch has no run ID at trigger time; correlate by created_at against runs dispatched after the trigger timestamp. jobRef comes from the receipt trigger() itself produced, so it always carries the correct repo even for an account-scoped adapter. */
 		async resolveReceipt(receipt: TriggerReceipt): Promise<TriggerReceipt> {
 			if (!receipt.opaqueRef) return receipt;
+			const { repo } = resolveJobRef(receipt.jobRef);
 			const since = new Date(receipt.opaqueRef);
 			const page = await api<{ workflow_runs: GhWorkflowRun[] }>(
 				"GET",
@@ -194,7 +225,8 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 			return 0; // GitHub Actions does not expose an estimated duration
 		},
 
-		async listRuns(_jobRef: string, limit: number): Promise<CIRun[]> {
+		async listRuns(jobRef: string, limit: number): Promise<CIRun[]> {
+			const { repo } = resolveJobRef(jobRef);
 			const page = await api<{ workflow_runs: GhWorkflowRun[] }>("GET", `/repos/${owner}/${repo}/actions/runs?per_page=${limit}`);
 			return (page?.workflow_runs ?? []).map(toCIRun);
 		},
@@ -203,7 +235,8 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 			throw new Error("GitHub Actions workflow inputs are not retrievable after dispatch");
 		},
 
-		async listStages(_jobRef: string, runId: string): Promise<CIJob[]> {
+		async listStages(jobRef: string, runId: string): Promise<CIJob[]> {
+			const { repo } = resolveJobRef(jobRef);
 			const page = await api<{ jobs: GhWorkflowJob[] }>("GET", `/repos/${owner}/${repo}/actions/runs/${runId}/jobs`);
 			return (page?.jobs ?? []).map((job) => ({
 				id: String(job.id),
@@ -222,12 +255,14 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 			throw new Error("GitHub Actions does not expose step-level pipeline detail through this adapter yet");
 		},
 
-		async listArtifacts(_jobRef: string, runId: string): Promise<CIArtifact[]> {
+		async listArtifacts(jobRef: string, runId: string): Promise<CIArtifact[]> {
+			const { repo } = resolveJobRef(jobRef);
 			const page = await api<{ artifacts: GhArtifact[] }>("GET", `/repos/${owner}/${repo}/actions/runs/${runId}/artifacts`);
 			return (page?.artifacts ?? []).map((artifact) => ({ name: artifact.name, path: String(artifact.id), sizeBytes: artifact.size_in_bytes }));
 		},
 
-		async getArtifact(_jobRef: string, _runId: string, path: string): Promise<Uint8Array> {
+		async getArtifact(jobRef: string, _runId: string, path: string): Promise<Uint8Array> {
+			const { repo } = resolveJobRef(jobRef);
 			const response = await fetchRaw(`/repos/${owner}/${repo}/actions/artifacts/${path}/zip`);
 			if (response.status === 404) throw new GitHubNotFoundError(`artifact ${path}`);
 			if (!response.ok) throw new GitHubApiError("GET", `artifact ${path}`, response.status, await response.text());

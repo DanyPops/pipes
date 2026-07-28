@@ -157,6 +157,37 @@ describe("buildConfiguredAdapters > multi-repo config (repos.json)", () => {
 		}
 	});
 
+	it("a target with no repo given is account-scoped -- one backend covers every repo under that owner, routed per-call via jobRef", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
+		const originalFetch = globalThis.fetch;
+		const requestedUrls: string[] = [];
+		globalThis.fetch = (async (url: string) => {
+			requestedUrls.push(String(url));
+			const run = { id: 1, name: "run", status: "completed", conclusion: "success", html_url: "https://example.com", created_at: new Date().toISOString() };
+			return new Response(JSON.stringify({ workflow_runs: [run] }), { status: 200 });
+		}) as typeof fetch;
+		try {
+			const { adapters, unconfigured } = await buildConfiguredAdapters(credentialPaths(dir), { GITHUB_TOKEN: "gh-token" }, noEnigma, {
+				github: [{ name: "danypops-github", owner: "DanyPops" }],
+				gitlab: [],
+				jenkins: [],
+			});
+			expect(adapters.map((a) => a.name())).toEqual(["danypops-github"]);
+			expect(unconfigured.map((b) => b.name).sort()).toEqual(["gitlab", "jenkins"]);
+
+			const backend = adapters[0]!;
+			await backend.getRun("pipes/publish.yml", "latest");
+			await backend.getRun("other-repo/ci.yml", "latest");
+			expect(requestedUrls[0]).toContain("/repos/DanyPops/pipes/actions/runs");
+			expect(requestedUrls[1]).toContain("/repos/DanyPops/other-repo/actions/runs");
+
+			await expect(backend.getRun("publish.yml", "latest")).rejects.toThrow("is account-scoped");
+		} finally {
+			globalThis.fetch = originalFetch;
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("registers one distinct GitLab backend per configured project target", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
 		try {

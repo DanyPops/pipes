@@ -19,7 +19,16 @@ import { dirname, join } from "node:path";
 export interface GitHubRepoTarget {
 	name: string;
 	owner: string;
-	repo: string;
+	/**
+	 * When given, this target is pinned to one repo -- ci(jobRef=...) stays a
+	 * bare workflow file name, same as before this became optional. When
+	 * omitted, the target is account-scoped: one backend covers every repo
+	 * under `owner`, and jobRef must instead be "repo/workflow.yml" (see
+	 * github-adapter.ts's resolveJobRef). Not a silent behavior switch --
+	 * an account-scoped target given a bare jobRef fails loudly rather than
+	 * guessing a repo.
+	 */
+	repo?: string;
 	/** Selects a named local credential profile (see paths.ts's profiledBackend()); omitted uses the plain "github" credential file. */
 	profile?: string;
 }

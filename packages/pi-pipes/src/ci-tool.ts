@@ -34,7 +34,12 @@ const ACTIONS = [
 const PARAMETERS = Type.Object({
 	action: StringEnum(ACTIONS, { description: "Action to perform. Call help first to see configured backends and presets." }),
 	backend: Type.Optional(Type.String({ description: "Backend name, as listed by help. Omit when pipeline is set." })),
-	jobRef: Type.Optional(Type.String({ description: "Job path, e.g. a GitHub workflow file, a GitLab job name, or a Jenkins folder path." })),
+	jobRef: Type.Optional(
+		Type.String({
+			description:
+				"Job path. GitLab: a job name. Jenkins: a folder-nested job path (e.g. \"folder/job-name\"). GitHub: a workflow file name (e.g. \"publish.yml\") for a repo-pinned backend, or \"repo/workflow.yml\" for an account-scoped backend covering every repo under one owner -- check ci(action=help)'s backend list, or a repo-pinned GitHub call with a bare workflow name fails loudly rather than guessing.",
+		}),
+	),
 	runId: Type.Optional(Type.String({ description: "Build/run number. Optional for status/log — omit to use the latest run." })),
 	opaqueRef: Type.Optional(Type.String({ description: "Opaque trigger reference returned by trigger. Pass to wait to resolve to a run ID without watching." })),
 	pipeline: Type.Optional(Type.String({ description: "Named preset (a bookmarked job template). Use instead of backend+jobRef for trigger/status/log. Also the preset name to save/remove for bookmark/unbookmark." })),
