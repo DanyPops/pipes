@@ -6,11 +6,7 @@ import { buildConfiguredAdapters } from "../../src/adapters/config.ts";
 import type { TryEnigmaAccessToken } from "@danypops/enigma-client";
 
 function credentialPaths(dir: string) {
-	return {
-		githubToken: join(dir, "github-token.json"),
-		gitlabToken: join(dir, "gitlab-token.json"),
-		jenkinsCredentials: join(dir, "jenkins-credentials.json"),
-	};
+	return { credentialsDir: dir };
 }
 
 /**
@@ -115,13 +111,14 @@ describe("buildConfiguredAdapters > multi-repo config (repos.json)", () => {
 				noEnigma,
 				{
 					github: [
-						{ name: "github-lector", owner: "DanyPops", repo: "lector" },
-						{ name: "github-packed", owner: "DanyPops", repo: "pi-packed" },
+						{ name: "github-a", owner: "octocat", repo: "repo-a" },
+						{ name: "github-b", owner: "octocat", repo: "repo-b" },
 					],
 					gitlab: [],
+					jenkins: [],
 				},
 			);
-			expect(adapters.map((a) => a.name()).sort()).toEqual(["github-lector", "github-packed"]);
+			expect(adapters.map((a) => a.name()).sort()).toEqual(["github-a", "github-b"]);
 			expect(adapters.every((a) => a.type() === "github")).toBe(true);
 			expect(unconfigured.map((b) => b.name).sort()).toEqual(["gitlab", "jenkins"]);
 		} finally {
@@ -141,18 +138,19 @@ describe("buildConfiguredAdapters > multi-repo config (repos.json)", () => {
 		try {
 			const { adapters } = await buildConfiguredAdapters(credentialPaths(dir), { GITHUB_TOKEN: "gh-token" }, noEnigma, {
 				github: [
-					{ name: "github-lector", owner: "DanyPops", repo: "lector" },
-					{ name: "github-packed", owner: "DanyPops", repo: "pi-packed" },
+					{ name: "github-a", owner: "octocat", repo: "repo-a" },
+					{ name: "github-b", owner: "octocat", repo: "repo-b" },
 				],
 				gitlab: [],
+				jenkins: [],
 			});
-			const lector = adapters.find((a) => a.name() === "github-lector");
-			const packed = adapters.find((a) => a.name() === "github-packed");
-			await lector?.getRun("workflow.yml", "latest");
-			await packed?.getRun("workflow.yml", "latest");
+			const first = adapters.find((a) => a.name() === "github-a");
+			const second = adapters.find((a) => a.name() === "github-b");
+			await first?.getRun("workflow.yml", "latest");
+			await second?.getRun("workflow.yml", "latest");
 
-			expect(requestedUrls[0]).toContain("/repos/DanyPops/lector/actions/runs");
-			expect(requestedUrls[1]).toContain("/repos/DanyPops/pi-packed/actions/runs");
+			expect(requestedUrls[0]).toContain("/repos/octocat/repo-a/actions/runs");
+			expect(requestedUrls[1]).toContain("/repos/octocat/repo-b/actions/runs");
 		} finally {
 			globalThis.fetch = originalFetch;
 			rmSync(dir, { recursive: true, force: true });
@@ -166,9 +164,9 @@ describe("buildConfiguredAdapters > multi-repo config (repos.json)", () => {
 				credentialPaths(dir),
 				{ GITLAB_URL: "https://gitlab.example.com", GITLAB_TOKEN: "gl-token" },
 				noEnigma,
-				{ github: [], gitlab: [{ name: "gitlab-infra", projectId: "42" }, { name: "gitlab-app", projectId: "99" }] },
+				{ github: [], gitlab: [{ name: "gitlab-a", projectId: "42" }, { name: "gitlab-b", projectId: "99" }], jenkins: [] },
 			);
-			expect(adapters.map((a) => a.name()).sort()).toEqual(["gitlab-app", "gitlab-infra"]);
+			expect(adapters.map((a) => a.name()).sort()).toEqual(["gitlab-a", "gitlab-b"]);
 			expect(adapters.every((a) => a.type() === "gitlab")).toBe(true);
 			expect(unconfigured.map((b) => b.name).sort()).toEqual(["github", "jenkins"]);
 		} finally {
@@ -183,9 +181,9 @@ describe("buildConfiguredAdapters > multi-repo config (repos.json)", () => {
 				credentialPaths(dir),
 				{ GITHUB_OWNER: "legacy-owner", GITHUB_REPO: "legacy-repo", GITHUB_TOKEN: "gh-token" },
 				noEnigma,
-				{ github: [{ name: "github-lector", owner: "DanyPops", repo: "lector" }], gitlab: [] },
+				{ github: [{ name: "github-a", owner: "octocat", repo: "repo-a" }], gitlab: [], jenkins: [] },
 			);
-			expect(adapters.map((a) => a.name())).toEqual(["github-lector"]);
+			expect(adapters.map((a) => a.name())).toEqual(["github-a"]);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -198,9 +196,86 @@ describe("buildConfiguredAdapters > multi-repo config (repos.json)", () => {
 				credentialPaths(dir),
 				{ GITHUB_OWNER: "openshift", GITHUB_REPO: "pipes", GITHUB_TOKEN: "gh-token" },
 				noEnigma,
-				{ github: [], gitlab: [] },
+				{ github: [], gitlab: [], jenkins: [] },
 			);
 			expect(adapters.map((a) => a.name())).toEqual(["github"]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("registers one distinct Jenkins backend per configured server target", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
+		try {
+			const { createFileCredentialStore } = await import("../../src/adapters/jenkins/auth.ts");
+			createFileCredentialStore(dir, "jenkins-a").save({ baseUrl: "https://jenkins-a.example.com", username: "bot", apiToken: "a-token" });
+			createFileCredentialStore(dir, "jenkins-b").save({ baseUrl: "https://jenkins-b.example.com", username: "bot", apiToken: "b-token" });
+
+			const { adapters, unconfigured } = await buildConfiguredAdapters(credentialPaths(dir), {}, noEnigma, {
+				github: [],
+				gitlab: [],
+				jenkins: [
+					{ name: "jenkins-a", baseUrl: "https://jenkins-a.example.com" },
+					{ name: "jenkins-b", baseUrl: "https://jenkins-b.example.com" },
+				],
+			});
+			expect(adapters.map((a) => a.name()).sort()).toEqual(["jenkins-a", "jenkins-b"]);
+			expect(adapters.every((a) => a.type() === "jenkins")).toBe(true);
+			expect(unconfigured.map((b) => b.name).sort()).toEqual(["github", "gitlab"]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("defaults each Jenkins target's storage profile to its own name, so two servers never collide on one credential file", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
+		try {
+			const { createFileCredentialStore } = await import("../../src/adapters/jenkins/auth.ts");
+			// Saved under profile-qualified names matching each target's own `name` (no explicit `profile` given).
+			createFileCredentialStore(dir, "jenkins-a").save({ baseUrl: "https://jenkins-a.example.com", username: "a-bot", apiToken: "a-token" });
+			createFileCredentialStore(dir, "jenkins-b").save({ baseUrl: "https://jenkins-b.example.com", username: "b-bot", apiToken: "b-token" });
+
+			const { adapters } = await buildConfiguredAdapters(credentialPaths(dir), {}, noEnigma, {
+				github: [],
+				gitlab: [],
+				jenkins: [
+					{ name: "jenkins-a", baseUrl: "https://jenkins-a.example.com" },
+					{ name: "jenkins-b", baseUrl: "https://jenkins-b.example.com" },
+				],
+			});
+			expect(adapters).toHaveLength(2);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("reports a Jenkins target as unconfigured (not a crash) when no credentials exist for its baseUrl", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
+		try {
+			const { adapters, unconfigured } = await buildConfiguredAdapters(credentialPaths(dir), {}, noEnigma, {
+				github: [],
+				gitlab: [],
+				jenkins: [{ name: "jenkins-a", baseUrl: "https://jenkins-a.example.com" }],
+			});
+			expect(adapters).toHaveLength(0);
+			expect(unconfigured.map((b) => b.name).sort()).toEqual(["github", "gitlab", "jenkins-a"]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("ignores JENKINS_URL/JENKINS_USER/JENKINS_API_TOKEN once repos.json declares explicit jenkins targets -- replaces, doesn't merge", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
+		try {
+			const { adapters, unconfigured } = await buildConfiguredAdapters(
+				credentialPaths(dir),
+				{ JENKINS_URL: "https://jenkins-a.example.com", JENKINS_USER: "bot", JENKINS_API_TOKEN: "should-be-ignored" },
+				noEnigma,
+				{ github: [], gitlab: [], jenkins: [{ name: "jenkins-a", baseUrl: "https://jenkins-a.example.com" }] },
+			);
+			// The legacy env triple is never consulted for a named target -- only Enigma (baseUrl-matched) and the stored file are.
+			expect(adapters).toHaveLength(0);
+			expect(unconfigured.map((b) => b.name).sort()).toEqual(["github", "gitlab", "jenkins-a"]);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

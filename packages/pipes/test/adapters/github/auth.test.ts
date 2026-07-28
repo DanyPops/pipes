@@ -3,14 +3,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-	createFileTokenStore,
+	createGitHubTokenStore,
 	DeviceFlowDeniedError,
 	DeviceFlowExpiredError,
 	type FetchLike,
-	isTokenExpired,
 	pollDeviceAccessToken,
 	requestDeviceCode,
-	resolveGitHubToken,
 	resolveStaticToken,
 	runDeviceFlow,
 } from "../../../src/adapters/github/auth.ts";
@@ -35,11 +33,20 @@ describe("requestDeviceCode", () => {
 });
 
 describe("pollDeviceAccessToken", () => {
-	it("returns a token on success", async () => {
+	it("returns a token on success, with no expiresAt for a non-expiring GitHub OAuth App token", async () => {
 		const fetchImpl = (async () => jsonResponse({ access_token: "gho_abc", token_type: "bearer", scope: "repo" })) as FetchLike;
 		const token = await pollDeviceAccessToken({ clientId: "client-1", fetchImpl }, "dc");
 		expect(token.accessToken).toBe("gho_abc");
-		expect(token.expiresInS).toBeUndefined();
+		expect(token.expiresAt).toBeUndefined();
+	});
+
+	it("computes an ISO expiresAt from expires_in when the app has token expiry enabled", async () => {
+		const fetchImpl = (async () => jsonResponse({ access_token: "gho_abc", token_type: "bearer", scope: "repo", expires_in: 3600 })) as FetchLike;
+		const before = Date.now();
+		const token = await pollDeviceAccessToken({ clientId: "client-1", fetchImpl }, "dc");
+		expect(token.expiresAt).toBeDefined();
+		const expiresAtMs = new Date(token.expiresAt as string).getTime();
+		expect(expiresAtMs).toBeGreaterThanOrEqual(before + 3600 * 1000);
 	});
 
 	it("throws DeviceFlowDeniedError for access_denied", async () => {
@@ -92,57 +99,34 @@ describe("runDeviceFlow", () => {
 	});
 });
 
-describe("isTokenExpired", () => {
-	it("treats a token with no expiresInS as non-expiring", () => {
-		expect(isTokenExpired({ accessToken: "t", tokenType: "bearer", scope: "", obtainedAt: 0 })).toBe(false);
-	});
-
-	it("expires once obtainedAt + expiresInS has passed", () => {
-		const token = { accessToken: "t", tokenType: "bearer", scope: "", obtainedAt: Date.now() - 10_000, expiresInS: 5 };
-		expect(isTokenExpired(token)).toBe(true);
-	});
-
-	it("is not expired while still within its window", () => {
-		const token = { accessToken: "t", tokenType: "bearer", scope: "", obtainedAt: Date.now(), expiresInS: 3600 };
-		expect(isTokenExpired(token)).toBe(false);
-	});
-});
-
-describe("createFileTokenStore", () => {
-	it("round-trips a token through save/load", () => {
+describe("createGitHubTokenStore", () => {
+	it("round-trips a token through save/load, one file per profile-qualified backend name", () => {
 		const dir = mkdtempSync(join(tmpdir(), "pipes-github-auth-"));
-		const path = join(dir, "token.json");
 		try {
-			const store = createFileTokenStore(path);
+			const store = createGitHubTokenStore(dir, "github-work");
 			expect(store.load()).toBeUndefined();
-			store.save({ accessToken: "gho_x", tokenType: "bearer", scope: "repo", obtainedAt: 123 });
+			store.save({ accessToken: "gho_x", scope: "repo" });
 			expect(store.load()?.accessToken).toBe("gho_x");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps two profile-qualified backends in separate files, not colliding", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pipes-github-auth-"));
+		try {
+			createGitHubTokenStore(dir, "github").save({ accessToken: "personal-token" });
+			createGitHubTokenStore(dir, "github-work").save({ accessToken: "work-token" });
+			expect(createGitHubTokenStore(dir, "github").load()?.accessToken).toBe("personal-token");
+			expect(createGitHubTokenStore(dir, "github-work").load()?.accessToken).toBe("work-token");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });
 
-describe("resolveGitHubToken / resolveStaticToken", () => {
-	it("prefers a fresh stored device-flow token over the static PAT fallback", () => {
-		const store = {
-			load: () => ({ accessToken: "device-token", tokenType: "bearer", scope: "", obtainedAt: Date.now(), expiresInS: 3600 }),
-			save: () => {},
-			clear: () => {},
-		};
-		expect(resolveGitHubToken(store, { GITHUB_TOKEN: "pat-token" })).toBe("device-token");
-	});
-
-	it("falls back to the static PAT once the stored token is expired", () => {
-		const store = {
-			load: () => ({ accessToken: "device-token", tokenType: "bearer", scope: "", obtainedAt: Date.now() - 10_000, expiresInS: 5 }),
-			save: () => {},
-			clear: () => {},
-		};
-		expect(resolveGitHubToken(store, { GITHUB_TOKEN: "pat-token" })).toBe("pat-token");
-	});
-
-	it("resolveStaticToken checks GITHUB_TOKEN then GH_TOKEN", () => {
+describe("resolveStaticToken", () => {
+	it("checks GITHUB_TOKEN then GH_TOKEN", () => {
 		expect(resolveStaticToken({ GITHUB_TOKEN: "a" })).toBe("a");
 		expect(resolveStaticToken({ GH_TOKEN: "b" })).toBe("b");
 		expect(resolveStaticToken({})).toBeUndefined();

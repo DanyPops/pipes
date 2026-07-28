@@ -8,14 +8,14 @@
  */
 import type { BackendInfo } from "../domain/backend.ts";
 import type { CIBackend } from "../ports/ci-backend.ts";
-import type { PipesCredentialPaths } from "../paths.ts";
+import { profiledBackend, type PipesCredentialPaths } from "../paths.ts";
 import type { GitLabRepoTarget, RepoConfigFile } from "../repo-config.ts";
 import { tryEnigmaAccessToken } from "@danypops/enigma-client";
-import { createFileTokenStore as createGitHubTokenStore, resolveStaticToken as resolveStaticGitHubToken } from "./github/auth.ts";
+import { createGitHubTokenStore, resolveStaticToken as resolveStaticGitHubToken } from "./github/auth.ts";
 import { createGitHubAdapter } from "./github/github-adapter.ts";
-import { createFileTokenStore as createGitLabTokenStore, refreshAccessToken as refreshGitLabToken, resolveStaticToken as resolveStaticGitLabToken } from "./gitlab/auth.ts";
+import { createGitLabTokenStore, refreshAccessToken as refreshGitLabToken, resolveStaticToken as resolveStaticGitLabToken } from "./gitlab/auth.ts";
 import { createGitLabAdapter } from "./gitlab/gitlab-adapter.ts";
-import { createFileCredentialStore, resolveJenkinsCredentials } from "./jenkins/auth.ts";
+import { createFileCredentialStore, resolveJenkinsCredentials, resolveJenkinsCredentialsForBaseUrl } from "./jenkins/auth.ts";
 import { createJenkinsAdapter } from "./jenkins/jenkins-adapter.ts";
 import { createTokenProvider } from "./token-provider.ts";
 
@@ -24,7 +24,7 @@ export interface ConfiguredBackends {
 	unconfigured: BackendInfo[];
 }
 
-const NO_REPO_TARGETS: RepoConfigFile = { github: [], gitlab: [] };
+const NO_REPO_TARGETS: RepoConfigFile = { github: [], gitlab: [], jenkins: [] };
 
 export async function buildConfiguredAdapters(
 	credentialPaths: PipesCredentialPaths,
@@ -34,6 +34,7 @@ export async function buildConfiguredAdapters(
 ): Promise<ConfiguredBackends> {
 	const adapters: CIBackend[] = [];
 	const unconfigured: BackendInfo[] = [];
+	const dir = credentialPaths.credentialsDir;
 
 	// Login (device flow / PKCE) writes to these same store files; a token provider
 	// re-reads on every call, so a freshly logged-in or refreshed credential is picked
@@ -50,20 +51,21 @@ export async function buildConfiguredAdapters(
 				: [];
 
 	if (githubTargets.length > 0) {
-		// GitHub OAuth Apps' device flow never issues a refresh token (confirmed against
-		// GitHub's own docs: the device-flow token response has no refresh_token field,
-		// and refresh is a GitHub-App-only feature) — no refresh function to pass. One
-		// token authenticates every repo the granting user can access, so every target
-		// below shares this same provider rather than each needing its own login.
-		const getToken = createTokenProvider({
-			store: createGitHubTokenStore(credentialPaths.githubToken),
-			staticFallback: () => resolveStaticGitHubToken(env),
-			// ENIGMA_CLIENT_TOKEN is this daemon's own registered-client token (`enigma client
-			// add pipes --backends ...`), scoped to exactly the backends pipes needs -- preferred
-			// over Enigma's shared admin-token file, which grants every vaulted backend.
-			enigmaSource: () => tryEnigma("github", { env, token: env.ENIGMA_CLIENT_TOKEN }),
-		});
 		for (const target of githubTargets) {
+			// GitHub OAuth Apps' device flow never issues a refresh token (confirmed against
+			// GitHub's own docs: the device-flow token response has no refresh_token field,
+			// and refresh is a GitHub-App-only feature) — no refresh function to pass. Targets
+			// that share a profile (or all omit one) share the same underlying file: one token
+			// authenticates every repo the granting user can access, so there's no need for
+			// separate logins unless a target explicitly opts into its own profile.
+			const getToken = createTokenProvider({
+				store: createGitHubTokenStore(dir, profiledBackend("github", target.profile)),
+				staticFallback: () => resolveStaticGitHubToken(env),
+				// ENIGMA_CLIENT_TOKEN is this daemon's own registered-client token (`enigma client
+				// add pipes --backends ...`), scoped to exactly the backends pipes needs -- preferred
+				// over Enigma's shared admin-token file, which grants every vaulted backend.
+				enigmaSource: () => tryEnigma("github", { env, token: env.ENIGMA_CLIENT_TOKEN }),
+			});
 			adapters.push(createGitHubAdapter({ name: target.name, owner: target.owner, repo: target.repo, getToken }));
 		}
 	} else {
@@ -79,15 +81,15 @@ export async function buildConfiguredAdapters(
 
 	if (gitlabTargets.length > 0) {
 		// A GitLab token authenticates every project on the host it was issued for (not just
-		// one project), so targets sharing a host share one token provider; a target naming a
-		// different host still resolves against the one configured credential store/env,
-		// which is only correct when every configured target is on the same GitLab instance —
-		// multi-host GitLab is not yet supported.
+		// one project), so targets sharing a host and profile share one token provider; a
+		// target naming a different host still resolves against the one configured
+		// credential store/env, which is only correct when every configured target is on the
+		// same GitLab instance — multi-host GitLab is not yet supported.
 		for (const target of gitlabTargets) {
 			const baseUrl = target.baseUrl;
 			const clientId = target.clientId ?? env.GITLAB_CLIENT_ID;
 			const getToken = createTokenProvider({
-				store: createGitLabTokenStore(credentialPaths.gitlabToken),
+				store: createGitLabTokenStore(dir, profiledBackend("gitlab", target.profile)),
 				// Without a client ID (never logged in via the delegated flow yet, static-PAT-only
 				// setups) there is nothing to refresh against — omit rather than fail every call.
 				refresh: clientId ? (current) => refreshGitLabToken({ baseUrl, clientId }, current.refreshToken as string) : undefined,
@@ -100,11 +102,30 @@ export async function buildConfiguredAdapters(
 		unconfigured.push({ name: "gitlab", type: "gitlab" });
 	}
 
-	const jenkinsCredentials = await resolveJenkinsCredentials(createFileCredentialStore(credentialPaths.jenkinsCredentials), env);
-	if (jenkinsCredentials) {
-		adapters.push(createJenkinsAdapter({ name: "jenkins", credentials: jenkinsCredentials }));
+	if (repoConfig.jenkins.length > 0) {
+		// Multiple named Jenkins servers -- env.JENKINS_URL is the single-instance legacy
+		// default's own signal and is not consulted per-target here, since one ambient env
+		// triple can't stand in for N different servers.
+		for (const target of repoConfig.jenkins) {
+			// A Jenkins target's default profile is its own full name, not a suffix on a shared
+			// "jenkins" identity the way github/gitlab profiles are -- each server is naturally
+			// its own self-contained credential unless a target explicitly opts into sharing one
+			// (two target names both set the same `profile` to point at the same stored file).
+			const profile = target.profile ?? target.name;
+			const credentials = await resolveJenkinsCredentialsForBaseUrl(createFileCredentialStore(dir, profile), target.baseUrl, env);
+			if (credentials) {
+				adapters.push(createJenkinsAdapter({ name: target.name, credentials }));
+			} else {
+				unconfigured.push({ name: target.name, type: "jenkins" });
+			}
+		}
 	} else {
-		unconfigured.push({ name: "jenkins", type: "jenkins" });
+		const jenkinsCredentials = await resolveJenkinsCredentials(createFileCredentialStore(dir, "jenkins"), env);
+		if (jenkinsCredentials) {
+			adapters.push(createJenkinsAdapter({ name: "jenkins", credentials: jenkinsCredentials }));
+		} else {
+			unconfigured.push({ name: "jenkins", type: "jenkins" });
+		}
 	}
 
 	return { adapters, unconfigured };

@@ -20,6 +20,8 @@ export interface GitHubRepoTarget {
 	name: string;
 	owner: string;
 	repo: string;
+	/** Selects a named local credential profile (see paths.ts's profiledBackend()); omitted uses the plain "github" credential file. */
+	profile?: string;
 }
 
 export interface GitLabRepoTarget {
@@ -29,11 +31,21 @@ export interface GitLabRepoTarget {
 	baseUrl?: string;
 	/** Defaults to GITLAB_CLIENT_ID when omitted. */
 	clientId?: string;
+	/** Selects a named local credential profile; omitted uses the plain "gitlab" credential file. */
+	profile?: string;
+}
+
+export interface JenkinsRepoTarget {
+	name: string;
+	baseUrl: string;
+	/** Defaults to `name` when omitted -- a Jenkins API token is scoped to one specific server+user, so each target is naturally its own profile unless explicitly shared with another target. */
+	profile?: string;
 }
 
 export interface RepoConfigFile {
 	github: GitHubRepoTarget[];
 	gitlab: GitLabRepoTarget[];
+	jenkins: JenkinsRepoTarget[];
 }
 
 export function defaultRepoConfigPath(env: Record<string, string | undefined> = process.env, home = homedir()): string {
@@ -41,16 +53,17 @@ export function defaultRepoConfigPath(env: Record<string, string | undefined> = 
 	return join(configHome, "pipes", "repos.json");
 }
 
-/** Returns {github: [], gitlab: []} when the file doesn't exist yet — multi-repo config is optional, not required to boot. */
+/** Returns {github: [], gitlab: [], jenkins: []} when the file doesn't exist yet — multi-repo config is optional, not required to boot. */
 export function loadRepoConfig(path: string): RepoConfigFile {
-	if (!existsSync(path)) return { github: [], gitlab: [] };
+	if (!existsSync(path)) return { github: [], gitlab: [], jenkins: [] };
 	const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<RepoConfigFile>;
 	const github = parsed.github ?? [];
 	const gitlab = parsed.gitlab ?? [];
-	if (!Array.isArray(github) || !Array.isArray(gitlab)) {
-		throw new Error(`${path}: expected "github" and "gitlab" to each be arrays`);
+	const jenkins = parsed.jenkins ?? [];
+	if (!Array.isArray(github) || !Array.isArray(gitlab) || !Array.isArray(jenkins)) {
+		throw new Error(`${path}: expected "github", "gitlab", and "jenkins" to each be arrays`);
 	}
-	return { github, gitlab };
+	return { github, gitlab, jenkins };
 }
 
 /** Persists the full target set back to the same human-edited file loadRepoConfig reads, atomically (write-then-rename). */

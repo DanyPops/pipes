@@ -65,10 +65,10 @@ type, it replaces that type's env-var default rather than adding to it:
 ```json
 {
 	"github": [
-		{ "name": "github-lector", "owner": "DanyPops", "repo": "lector" },
-		{ "name": "github-packed", "owner": "DanyPops", "repo": "pi-packed" }
+		{ "name": "github-a", "owner": "octocat", "repo": "repo-a" },
+		{ "name": "github-b", "owner": "octocat", "repo": "repo-b" }
 	],
-	"gitlab": [{ "name": "gitlab-infra", "projectId": "42" }]
+	"gitlab": [{ "name": "gitlab-a", "projectId": "42" }]
 }
 ```
 

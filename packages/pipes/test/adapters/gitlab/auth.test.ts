@@ -6,17 +6,15 @@ import type { FetchLike } from "../../../src/adapters/github/auth.ts";
 import {
 	authenticate,
 	buildAuthorizationUrl,
-	createFileTokenStore,
+	createGitLabTokenStore,
 	detectDeviceFlowSupport,
 	DeviceFlowDeniedError,
 	DeviceFlowExpiredError,
 	exchangeAuthorizationCode,
 	generatePkce,
-	isTokenExpired,
 	pollDeviceAccessToken,
 	refreshAccessToken,
 	requestDeviceCode,
-	resolveGitLabToken,
 	resolveStaticToken,
 	runDeviceFlow,
 	runPkceFlow,
@@ -126,7 +124,7 @@ describe("exchangeAuthorizationCode", () => {
 			fetchImpl,
 		});
 		expect(token.accessToken).toBe("glpat-x");
-		expect(token.expiresInS).toBe(7200);
+		expect(token.expiresAt).toBeDefined();
 	});
 });
 
@@ -142,7 +140,7 @@ describe("refreshAccessToken", () => {
 		const token = await refreshAccessToken({ baseUrl: "https://gitlab.example.com", clientId: "c", fetchImpl }, "old-refresh");
 		expect(token.accessToken).toBe("new-access");
 		expect(token.refreshToken).toBe("new-refresh");
-		expect(token.expiresInS).toBe(7200);
+		expect(token.expiresAt).toBeDefined();
 	});
 
 	it("keeps the current refresh token when GitLab's response omits a rotated one", async () => {
@@ -270,32 +268,36 @@ describe("authenticate: prefers device flow, falls back to PKCE", () => {
 	});
 });
 
-describe("isTokenExpired / createFileTokenStore / resolveGitLabToken", () => {
-	it("round-trips a token through the file store", () => {
+describe("createGitLabTokenStore", () => {
+	it("round-trips a token through save/load, one file per profile-qualified backend name", () => {
 		const dir = mkdtempSync(join(tmpdir(), "pipes-gitlab-auth-"));
-		const path = join(dir, "token.json");
 		try {
-			const store = createFileTokenStore(path);
+			const store = createGitLabTokenStore(dir, "gitlab-work");
 			expect(store.load()).toBeUndefined();
-			store.save({ accessToken: "glpat-y", tokenType: "bearer", scope: "api", obtainedAt: 1 });
+			store.save({ accessToken: "glpat-y", scope: "api" });
 			expect(store.load()?.accessToken).toBe("glpat-y");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 
-	it("treats a non-expiring token (no expiresInS) as never expired", () => {
-		expect(isTokenExpired({ accessToken: "t", tokenType: "bearer", scope: "", obtainedAt: 0 })).toBe(false);
+	it("keeps two profile-qualified backends in separate files, not colliding", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pipes-gitlab-auth-"));
+		try {
+			createGitLabTokenStore(dir, "gitlab").save({ accessToken: "default-token" });
+			createGitLabTokenStore(dir, "gitlab-work").save({ accessToken: "work-token" });
+			expect(createGitLabTokenStore(dir, "gitlab").load()?.accessToken).toBe("default-token");
+			expect(createGitLabTokenStore(dir, "gitlab-work").load()?.accessToken).toBe("work-token");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
+});
 
+describe("resolveStaticToken", () => {
 	it("falls back to PRIVATE_TOKEN then GITLAB_TOKEN for the static PAT", () => {
 		expect(resolveStaticToken({ GITLAB_TOKEN: "a" })).toBe("a");
 		expect(resolveStaticToken({ PRIVATE_TOKEN: "b" })).toBe("b");
 		expect(resolveStaticToken({})).toBeUndefined();
-	});
-
-	it("prefers a fresh stored token over the static PAT", () => {
-		const store = { load: () => ({ accessToken: "stored", tokenType: "bearer", scope: "", obtainedAt: Date.now(), expiresInS: 3600 }), save: () => {}, clear: () => {} };
-		expect(resolveGitLabToken(store, { GITLAB_TOKEN: "pat" })).toBe("stored");
 	});
 });

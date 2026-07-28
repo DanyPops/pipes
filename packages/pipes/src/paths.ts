@@ -1,15 +1,6 @@
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { type DaemonPaths, type PathEnvironment, resolveDaemonPaths } from "@danypops/daemon-kit/paths";
-import {
-	DATABASE_FILENAME,
-	GITHUB_TOKEN_FILENAME,
-	GITLAB_TOKEN_FILENAME,
-	HANDLE_FILENAME,
-	JENKINS_CREDENTIALS_FILENAME,
-	STATE_DIRECTORY_NAME,
-	SYSTEMD_UNIT_NAME,
-	TOKEN_FILENAME,
-} from "./constants.ts";
+import { DATABASE_FILENAME, HANDLE_FILENAME, STATE_DIRECTORY_NAME, SYSTEMD_UNIT_NAME, TOKEN_FILENAME } from "./constants.ts";
 
 export function resolvePipesPaths(options: PathEnvironment = {}): DaemonPaths {
 	return resolveDaemonPaths(
@@ -24,18 +15,25 @@ export function resolvePipesPaths(options: PathEnvironment = {}): DaemonPaths {
 	);
 }
 
+/** One directory, shared by every backend's daemon-kit vault.ts file store -- each backend picks its own filename via profiledBackend(). */
 export interface PipesCredentialPaths {
-	githubToken: string;
-	gitlabToken: string;
-	jenkinsCredentials: string;
+	credentialsDir: string;
 }
 
 /** Credential files live next to auth-token in the same XDG_STATE_HOME/pipes directory, not under a separate root. */
 export function resolvePipesCredentialPaths(paths: DaemonPaths): PipesCredentialPaths {
-	const stateDirectory = dirname(paths.token);
-	return {
-		githubToken: join(stateDirectory, GITHUB_TOKEN_FILENAME),
-		gitlabToken: join(stateDirectory, GITLAB_TOKEN_FILENAME),
-		jenkinsCredentials: join(stateDirectory, JENKINS_CREDENTIALS_FILENAME),
-	};
+	return { credentialsDir: dirname(paths.token) };
+}
+
+/**
+ * Profile-qualifies a backend name for daemon-kit's createFileStore/createEncryptedFileStore
+ * keying (e.g. "github" -> github.json, "github-work" -> github-work.json) -- the local
+ * named-credential-profile tier: omitted resolves the plain backend name unchanged (a target
+ * that never opts into profiles sees zero behavior change), a named profile resolves its own
+ * separate file so two targets of the same backend type (two GitHub accounts, two Jenkins
+ * servers) can hold genuinely different credentials instead of being forced to share the one
+ * file every target used to share.
+ */
+export function profiledBackend(backend: string, profile?: string): string {
+	return profile ? `${backend}-${profile}` : backend;
 }

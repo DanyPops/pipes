@@ -13,7 +13,7 @@
 		"check": "bun x tsc --noEmit"
 	},
 	"dependencies": {
-		"@danypops/daemon-kit": "^0.3.0",
+		"@danypops/daemon-kit": "^0.17.0",
 		"@danypops/enigma-client": "^0.3.0"
 	},
 	"devDependencies": {

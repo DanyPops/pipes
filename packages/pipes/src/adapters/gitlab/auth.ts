@@ -11,8 +11,7 @@
  * either, documented as an exception rather than a default.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { createFileStore, type RefreshableAccessToken, type TokenProviderStore } from "@danypops/daemon-kit/vault";
 import type { FetchLike } from "../github/auth.ts";
 
 export interface GitLabAuthOptions {
@@ -22,13 +21,10 @@ export interface GitLabAuthOptions {
 	fetchImpl?: FetchLike;
 }
 
-export interface AccessToken {
-	accessToken: string;
-	tokenType: string;
-	scope: string;
-	refreshToken?: string;
-	expiresInS?: number;
-	obtainedAt: number;
+export type AccessToken = RefreshableAccessToken;
+
+function expiresAtFrom(expiresInS: number | undefined): string | undefined {
+	return expiresInS !== undefined ? new Date(Date.now() + expiresInS * 1000).toISOString() : undefined;
 }
 
 function trimBaseUrl(baseUrl: string): string {
@@ -132,11 +128,9 @@ export async function exchangeAuthorizationCode(
 	const body = (await response.json()) as { access_token: string; token_type: string; scope?: string; refresh_token?: string; expires_in?: number };
 	return {
 		accessToken: body.access_token,
-		tokenType: body.token_type,
-		scope: body.scope ?? "",
+		scope: body.scope,
 		refreshToken: body.refresh_token,
-		expiresInS: body.expires_in,
-		obtainedAt: Date.now(),
+		expiresAt: expiresAtFrom(body.expires_in),
 	};
 }
 
@@ -152,12 +146,10 @@ export async function refreshAccessToken(options: GitLabAuthOptions, refreshToke
 	const body = (await response.json()) as { access_token: string; token_type: string; scope?: string; refresh_token?: string; expires_in?: number };
 	return {
 		accessToken: body.access_token,
-		tokenType: body.token_type,
-		scope: body.scope ?? "",
+		scope: body.scope,
 		// GitLab rotates refresh tokens on use; fall back to the current one only if the response omits a new one.
 		refreshToken: body.refresh_token ?? refreshToken,
-		expiresInS: body.expires_in,
-		obtainedAt: Date.now(),
+		expiresAt: expiresAtFrom(body.expires_in),
 	};
 }
 
@@ -276,11 +268,9 @@ export async function pollDeviceAccessToken(options: GitLabAuthOptions, deviceCo
 	if (!body.access_token) throw new Error("GitLab device flow response missing access_token");
 	return {
 		accessToken: body.access_token,
-		tokenType: body.token_type ?? "bearer",
-		scope: body.scope ?? "",
+		scope: body.scope,
 		refreshToken: body.refresh_token,
-		expiresInS: body.expires_in,
-		obtainedAt: Date.now(),
+		expiresAt: expiresAtFrom(body.expires_in),
 	};
 }
 
@@ -328,45 +318,12 @@ export async function authenticate(options: AuthenticateOptions): Promise<Access
 	return runPkceFlow({ ...options, onPrompt: options.onPkcePrompt });
 }
 
-export function isTokenExpired(token: AccessToken): boolean {
-	if (token.expiresInS === undefined) return false;
-	return Date.now() >= token.obtainedAt + token.expiresInS * 1000;
-}
-
-export interface TokenStore {
-	load(): AccessToken | undefined;
-	save(token: AccessToken): void;
-	clear(): void;
-}
-
-export function createFileTokenStore(path: string): TokenStore {
-	return {
-		load(): AccessToken | undefined {
-			if (!existsSync(path)) return undefined;
-			try {
-				return JSON.parse(readFileSync(path, "utf8")) as AccessToken;
-			} catch {
-				return undefined;
-			}
-		},
-		save(token: AccessToken): void {
-			mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-			writeFileSync(path, JSON.stringify(token), { mode: 0o600 });
-			chmodSync(path, 0o600);
-		},
-		clear(): void {
-			if (existsSync(path)) writeFileSync(path, "");
-		},
-	};
+/** One file per profile-qualified backend name, e.g. "gitlab" or "gitlab-work" -- see paths.ts's profiledBackend(). */
+export function createGitLabTokenStore(credentialsDir: string, backend: string): TokenProviderStore<AccessToken> {
+	return createFileStore<AccessToken>(credentialsDir, backend);
 }
 
 /** Documented fallback for self-managed instances too old for either delegated flow, or users who prefer a static token. */
 export function resolveStaticToken(env: Record<string, string | undefined> = process.env): string | undefined {
 	return env.GITLAB_TOKEN || env.PRIVATE_TOKEN || undefined;
-}
-
-export function resolveGitLabToken(store: TokenStore, env: Record<string, string | undefined> = process.env): string | undefined {
-	const stored = store.load();
-	if (stored && !isTokenExpired(stored)) return stored.accessToken;
-	return resolveStaticToken(env);
 }

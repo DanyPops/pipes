@@ -4,9 +4,12 @@
  * browser redirect), with a static PAT as an explicit, documented
  * fallback for users who prefer it. Prefer the device flow wherever
  * possible rather than asking for a pasted token.
+ *
+ * Token storage/freshness/refresh is daemon-kit's shared vault.ts, not a
+ * hand-rolled duplicate -- this file only owns GitHub's own device-flow
+ * wire mechanics (vendor-specific, correctly kept out of daemon-kit).
  */
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { createFileStore, type RefreshableAccessToken, type TokenProviderStore } from "@danypops/daemon-kit/vault";
 
 const DEVICE_CODE_URL = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
@@ -23,17 +26,7 @@ export interface DeviceCodeResponse {
 	intervalS: number;
 }
 
-export interface AccessToken {
-	accessToken: string;
-	tokenType: string;
-	scope: string;
-	/** Present only when the GitHub App has "expire user tokens" enabled. */
-	refreshToken?: string;
-	expiresInS?: number;
-	refreshTokenExpiresInS?: number;
-	/** When this token was obtained, for expiresInS-relative expiry checks. */
-	obtainedAt: number;
-}
+export type AccessToken = RefreshableAccessToken;
 
 export class DeviceFlowPendingError extends Error {
 	constructor() {
@@ -130,12 +123,9 @@ export async function pollDeviceAccessToken(options: GitHubAuthOptions, deviceCo
 
 	return {
 		accessToken: body.access_token,
-		tokenType: body.token_type ?? "bearer",
-		scope: body.scope ?? "",
+		scope: body.scope,
 		refreshToken: body.refresh_token,
-		expiresInS: body.expires_in,
-		refreshTokenExpiresInS: body.refresh_token_expires_in,
-		obtainedAt: Date.now(),
+		expiresAt: body.expires_in !== undefined ? new Date(Date.now() + body.expires_in * 1000).toISOString() : undefined,
 	};
 }
 
@@ -170,47 +160,12 @@ export async function runDeviceFlow(options: RunDeviceFlowOptions): Promise<Acce
 	throw new DeviceFlowExpiredError();
 }
 
-export function isTokenExpired(token: AccessToken): boolean {
-	if (token.expiresInS === undefined) return false; // non-expiring token (app has expiry disabled)
-	return Date.now() >= token.obtainedAt + token.expiresInS * 1000;
-}
-
-export interface TokenStore {
-	load(): AccessToken | undefined;
-	save(token: AccessToken): void;
-	clear(): void;
-}
-
-/** Persists the device-flow token as JSON at 0600, mirroring daemon-kit's auth-token file convention. */
-export function createFileTokenStore(path: string): TokenStore {
-	return {
-		load(): AccessToken | undefined {
-			if (!existsSync(path)) return undefined;
-			try {
-				return JSON.parse(readFileSync(path, "utf8")) as AccessToken;
-			} catch {
-				return undefined;
-			}
-		},
-		save(token: AccessToken): void {
-			mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-			writeFileSync(path, JSON.stringify(token), { mode: 0o600 });
-			chmodSync(path, 0o600);
-		},
-		clear(): void {
-			if (existsSync(path)) writeFileSync(path, "");
-		},
-	};
+/** One file per profile-qualified backend name, e.g. "github" or "github-work" -- see paths.ts's profiledBackend(). */
+export function createGitHubTokenStore(credentialsDir: string, backend: string): TokenProviderStore<AccessToken> {
+	return createFileStore<AccessToken>(credentialsDir, backend);
 }
 
 /** Documented fallback for users who prefer a static token, or environments with no interactive prompt available — not the primary path. */
 export function resolveStaticToken(env: Record<string, string | undefined> = process.env): string | undefined {
 	return env.GITHUB_TOKEN || env.GH_TOKEN || undefined;
-}
-
-/** Resolves a usable token: a stored/fresh device-flow token first, then the static PAT fallback, else undefined. */
-export function resolveGitHubToken(store: TokenStore, env: Record<string, string | undefined> = process.env): string | undefined {
-	const stored = store.load();
-	if (stored && !isTokenExpired(stored)) return stored.accessToken;
-	return resolveStaticToken(env);
 }

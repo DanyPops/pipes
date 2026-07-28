@@ -10,8 +10,7 @@
  * cannot be assumed for older or differently configured instances, so a
  * crumb is always fetched and attached defensively rather than skipped.
  */
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { createFileStore, type RefreshableAccessToken } from "@danypops/daemon-kit/vault";
 import type { TryEnigmaCredential } from "@danypops/enigma-client";
 import { tryEnigmaCredential } from "@danypops/enigma-client";
 import type { FetchLike } from "../github/auth.ts";
@@ -80,33 +79,34 @@ export async function withCrumbHeaders(
 export interface CredentialStore {
 	load(): JenkinsCredentials | undefined;
 	save(credentials: JenkinsCredentials): void;
-	clear(): void;
+}
+
+function toAccessToken(credentials: JenkinsCredentials): RefreshableAccessToken {
+	return { accessToken: credentials.apiToken, extra: { baseUrl: credentials.baseUrl, username: credentials.username } };
+}
+
+function fromAccessToken(token: RefreshableAccessToken): JenkinsCredentials | undefined {
+	const baseUrl = token.extra?.baseUrl;
+	const username = token.extra?.username;
+	if (!baseUrl || !username) return undefined;
+	return { baseUrl, username, apiToken: token.accessToken };
 }
 
 /**
- * Same 0600/0700 file convention as daemon-kit's ensureAuthToken, adapted
- * for a user-supplied username+token pair rather than a daemon-generated
- * random bearer token — daemon-kit's helper always mints a fresh token on
- * first read, which is wrong for a credential the user must provide.
+ * Jenkins credentials never expire and have nothing to refresh, so daemon-kit's
+ * createFileStore is used purely for its atomic-write/0600 file mechanics -- the
+ * apiToken/baseUrl/username triple is encoded into/out of RefreshableAccessToken's
+ * generic accessToken+extra shape at this boundary, one file per profile-qualified
+ * backend name (see paths.ts's profiledBackend()).
  */
-export function createFileCredentialStore(path: string): CredentialStore {
+export function createFileCredentialStore(credentialsDir: string, backend: string): CredentialStore {
+	const fileStore = createFileStore<RefreshableAccessToken>(credentialsDir, backend);
 	return {
-		load(): JenkinsCredentials | undefined {
-			if (!existsSync(path)) return undefined;
-			try {
-				return JSON.parse(readFileSync(path, "utf8")) as JenkinsCredentials;
-			} catch {
-				return undefined;
-			}
+		load: () => {
+			const token = fileStore.load();
+			return token ? fromAccessToken(token) : undefined;
 		},
-		save(credentials: JenkinsCredentials): void {
-			mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-			writeFileSync(path, JSON.stringify(credentials), { mode: 0o600 });
-			chmodSync(path, 0o600);
-		},
-		clear(): void {
-			if (existsSync(path)) writeFileSync(path, "");
-		},
+		save: (credentials) => fileStore.save(toAccessToken(credentials)),
 	};
 }
 
@@ -117,7 +117,8 @@ export function createFileCredentialStore(path: string): CredentialStore {
  * Jenkins login (a static username+API-token pair, the same real primary
  * path this file documents) can still be the source of truth when
  * configured -- url and username live in the stored credential's `extra`
- * field.
+ * field. Used for the single-instance legacy default only -- a named
+ * repos.json target uses resolveJenkinsCredentialsForBaseUrl instead.
  */
 export async function resolveJenkinsCredentials(
 	store: CredentialStore,
@@ -134,6 +135,28 @@ export async function resolveJenkinsCredentials(
 
 	if (env.JENKINS_URL && env.JENKINS_USER && env.JENKINS_API_TOKEN) {
 		return { baseUrl: env.JENKINS_URL, username: env.JENKINS_USER, apiToken: env.JENKINS_API_TOKEN };
+	}
+	return store.load();
+}
+
+/**
+ * Used only when repos.json names explicit Jenkins targets -- env.JENKINS_URL is the
+ * single-instance legacy default's own signal, not consulted here, since multiple named
+ * targets can't share one ambient env triple (which of two Jenkins servers would it mean?).
+ * Enigma is still consulted, but only trusted when its stored url actually matches this
+ * target's baseUrl -- Enigma's Jenkins credential is a single global entry, not
+ * profile-aware, so blindly reusing it across every target would silently point every
+ * one of them at the same server regardless of which was actually asked for.
+ */
+export async function resolveJenkinsCredentialsForBaseUrl(
+	store: CredentialStore,
+	baseUrl: string,
+	env: Record<string, string | undefined> = process.env,
+	tryEnigma: TryEnigmaCredential = tryEnigmaCredential,
+): Promise<JenkinsCredentials | undefined> {
+	const fromEnigma = await tryEnigma("jenkins", { env, token: env.ENIGMA_CLIENT_TOKEN });
+	if (fromEnigma?.extra?.url === baseUrl && fromEnigma.extra?.username) {
+		return { baseUrl, username: fromEnigma.extra.username, apiToken: fromEnigma.accessToken };
 	}
 	return store.load();
 }

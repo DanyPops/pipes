@@ -10,6 +10,7 @@ import {
 	createFileCredentialStore,
 	fetchCrumb,
 	resolveJenkinsCredentials,
+	resolveJenkinsCredentialsForBaseUrl,
 	withCrumbHeaders,
 } from "../../../src/adapters/jenkins/auth.ts";
 
@@ -71,14 +72,27 @@ describe("withCrumbHeaders", () => {
 });
 
 describe("createFileCredentialStore", () => {
-	it("round-trips credentials through save/load", () => {
+	it("round-trips credentials through save/load, one file per profile-qualified backend name", () => {
 		const dir = mkdtempSync(join(tmpdir(), "pipes-jenkins-auth-"));
-		const path = join(dir, "credentials.json");
 		try {
-			const store = createFileCredentialStore(path);
+			const store = createFileCredentialStore(dir, "jenkins-a");
 			expect(store.load()).toBeUndefined();
 			store.save(CREDENTIALS);
 			expect(store.load()).toEqual(CREDENTIALS);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps two profile-qualified servers in separate files, not colliding", () => {
+		const dir = mkdtempSync(join(tmpdir(), "pipes-jenkins-auth-"));
+		try {
+			const aCredentials = { baseUrl: "https://jenkins-a.example.com", username: "a-bot", apiToken: "a-token" };
+			const bCredentials = { baseUrl: "https://jenkins-b.example.com", username: "b-bot", apiToken: "b-token" };
+			createFileCredentialStore(dir, "jenkins-a").save(aCredentials);
+			createFileCredentialStore(dir, "jenkins-b").save(bCredentials);
+			expect(createFileCredentialStore(dir, "jenkins-a").load()).toEqual(aCredentials);
+			expect(createFileCredentialStore(dir, "jenkins-b").load()).toEqual(bCredentials);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -130,5 +144,37 @@ describe("resolveJenkinsCredentials", () => {
 		};
 		await resolveJenkinsCredentials(store, { ENIGMA_CLIENT_TOKEN: "pipes-scoped-token" }, fromEnigma);
 		expect(seenTokens).toEqual(["pipes-scoped-token"]);
+	});
+});
+
+describe("resolveJenkinsCredentialsForBaseUrl: multiple independent Jenkins server targets", () => {
+	it("never consults JENKINS_URL/JENKINS_USER/JENKINS_API_TOKEN -- a named target can't share one ambient env triple with another", async () => {
+		const store = { load: () => undefined, save: () => {}, clear: () => {} };
+		const resolved = await resolveJenkinsCredentialsForBaseUrl(
+			store,
+			"https://jenkins-a.example.com",
+			{ JENKINS_URL: "https://jenkins-a.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" },
+			noEnigma,
+		);
+		expect(resolved).toBeUndefined();
+	});
+
+	it("falls back to the stored file when Enigma has nothing", async () => {
+		const store = { load: () => CREDENTIALS, save: () => {}, clear: () => {} };
+		expect(await resolveJenkinsCredentialsForBaseUrl(store, CREDENTIALS.baseUrl, {}, noEnigma)).toEqual(CREDENTIALS);
+	});
+
+	it("uses Enigma's credential only when its stored url matches this target's baseUrl -- never misattributes one server's credential to another", async () => {
+		const store = { load: () => undefined, save: () => {}, clear: () => {} };
+		const fromEnigma: TryEnigmaCredential = async () => ({
+			accessToken: "a-token",
+			extra: { url: "https://jenkins-a.example.com", username: "a-bot" },
+		});
+		const matching = await resolveJenkinsCredentialsForBaseUrl(store, "https://jenkins-a.example.com", {}, fromEnigma);
+		expect(matching).toEqual({ baseUrl: "https://jenkins-a.example.com", username: "a-bot", apiToken: "a-token" });
+
+		// Same Enigma answer, different target baseUrl -- must not silently reuse server A's credential for server B.
+		const nonMatching = await resolveJenkinsCredentialsForBaseUrl(store, "https://jenkins-b.example.com", {}, fromEnigma);
+		expect(nonMatching).toBeUndefined();
 	});
 });

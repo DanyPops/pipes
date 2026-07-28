@@ -71,10 +71,33 @@ describe("pipes login (real subprocess)", () => {
 			expect(code).toBe(0);
 			expect(stdout).toContain("Jenkins credentials saved");
 
-			const stateFile = join(dir, "pipes", "jenkins-credentials.json");
+			// daemon-kit's vault.ts file store keys its filename by backend name alone ("jenkins.json"),
+			// encoding the baseUrl/username/apiToken triple into RefreshableAccessToken's generic
+			// accessToken+extra shape -- see jenkins/auth.ts's toAccessToken/fromAccessToken boundary.
+			const stateFile = join(dir, "pipes", "jenkins.json");
 			expect(existsSync(stateFile)).toBe(true);
 			const saved = JSON.parse(readFileSync(stateFile, "utf8"));
-			expect(saved).toEqual({ baseUrl: "https://jenkins.example.com", username: "bot", apiToken: "tok-123" });
+			expect(saved).toEqual({ accessToken: "tok-123", extra: { baseUrl: "https://jenkins.example.com", username: "bot" } });
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("--as <profile> stores credentials under a separate, profile-qualified file instead of the plain backend name", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pipes-login-"));
+		try {
+			const { code, stdout } = await runCli(
+				["login", "jenkins", "--as", "jenkins-b"],
+				{ ...tempXdgEnv(dir), JENKINS_URL: "https://jenkins-b.example.com", JENKINS_USER: "bot", JENKINS_API_TOKEN: "tok-b" },
+			);
+			expect(code).toBe(0);
+			expect(stdout).toContain('stored as "jenkins-b"');
+
+			expect(existsSync(join(dir, "pipes", "jenkins.json"))).toBe(false);
+			const stateFile = join(dir, "pipes", "jenkins-b.json");
+			expect(existsSync(stateFile)).toBe(true);
+			const saved = JSON.parse(readFileSync(stateFile, "utf8"));
+			expect(saved).toEqual({ accessToken: "tok-b", extra: { baseUrl: "https://jenkins-b.example.com", username: "bot" } });
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

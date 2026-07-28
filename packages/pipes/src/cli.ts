@@ -1,12 +1,18 @@
 #!/usr/bin/env bun
-import { createFileTokenStore as createGitHubTokenStore, runDeviceFlow as runGitHubDeviceFlow } from "./adapters/github/auth.ts";
-import { authenticate as authenticateGitLab, createFileTokenStore as createGitLabTokenStore } from "./adapters/gitlab/auth.ts";
+import { createGitHubTokenStore, runDeviceFlow as runGitHubDeviceFlow } from "./adapters/github/auth.ts";
+import { authenticate as authenticateGitLab, createGitLabTokenStore } from "./adapters/gitlab/auth.ts";
 import { createFileCredentialStore } from "./adapters/jenkins/auth.ts";
 import { connectPipesClient } from "./client.ts";
 import { serveMain } from "./daemon.ts";
-import { resolvePipesCredentialPaths, resolvePipesPaths } from "./paths.ts";
+import { profiledBackend, resolvePipesCredentialPaths, resolvePipesPaths } from "./paths.ts";
 
 const [, , command] = process.argv;
+
+/** Reads "--as <profile>" from a login command's trailing args, e.g. `pipes login jenkins --as auto`. */
+function parseAsFlag(args: string[]): string | undefined {
+	const index = args.indexOf("--as");
+	return index === -1 ? undefined : args[index + 1];
+}
 
 /**
  * Runs entirely client-side against the backend's own OAuth endpoints, not
@@ -16,8 +22,9 @@ const [, , command] = process.argv;
  * files the daemon's token provider re-reads on every request, so a running
  * daemon picks up a fresh login on its very next call, no restart needed.
  */
-async function loginMain(backend: string | undefined): Promise<void> {
+async function loginMain(backend: string | undefined, args: string[]): Promise<void> {
 	const credentialPaths = resolvePipesCredentialPaths(resolvePipesPaths());
+	const profile = parseAsFlag(args);
 
 	if (backend === "github") {
 		const clientId = process.env.GITHUB_CLIENT_ID;
@@ -33,8 +40,8 @@ async function loginMain(backend: string | undefined): Promise<void> {
 				console.log("Waiting for authorization...");
 			},
 		});
-		createGitHubTokenStore(credentialPaths.githubToken).save(token);
-		console.log("GitHub login complete.");
+		createGitHubTokenStore(credentialPaths.credentialsDir, profiledBackend("github", profile)).save(token);
+		console.log(profile ? `GitHub login complete (stored as "${profile}").` : "GitHub login complete.");
 		return;
 	}
 
@@ -58,8 +65,8 @@ async function loginMain(backend: string | undefined): Promise<void> {
 				console.log("Waiting for the browser redirect...");
 			},
 		});
-		createGitLabTokenStore(credentialPaths.gitlabToken).save(token);
-		console.log("GitLab login complete.");
+		createGitLabTokenStore(credentialPaths.credentialsDir, profiledBackend("gitlab", profile)).save(token);
+		console.log(profile ? `GitLab login complete (stored as "${profile}").` : "GitLab login complete.");
 		return;
 	}
 
@@ -69,12 +76,16 @@ async function loginMain(backend: string | undefined): Promise<void> {
 			console.error("JENKINS_URL, JENKINS_USER, and JENKINS_API_TOKEN are required — generate an API token from your Jenkins user's Configure page");
 			process.exit(1);
 		}
-		createFileCredentialStore(credentialPaths.jenkinsCredentials).save({ baseUrl: url, username, apiToken });
-		console.log("Jenkins credentials saved.");
+		// Unlike github/gitlab's profile (a suffix on a shared default identity), a Jenkins
+		// profile IS the final backend name directly -- matches config.ts's own repos.json
+		// wiring, where a target's stored-credential file is named after its own profile
+		// (defaulting to the target's own name) with no "jenkins-" prefix added on top.
+		createFileCredentialStore(credentialPaths.credentialsDir, profile ?? "jenkins").save({ baseUrl: url, username, apiToken });
+		console.log(profile ? `Jenkins credentials saved (stored as "${profile}").` : "Jenkins credentials saved.");
 		return;
 	}
 
-	console.error("usage: pipes login <github|gitlab|jenkins>");
+	console.error("usage: pipes login <github|gitlab|jenkins> [--as <profile>]");
 	process.exit(1);
 }
 
@@ -83,7 +94,7 @@ switch (command) {
 		await serveMain();
 		break;
 	case "login":
-		await loginMain(process.argv[3]);
+		await loginMain(process.argv[3], process.argv.slice(4));
 		break;
 	case "health": {
 		const client = connectPipesClient();
@@ -111,7 +122,7 @@ switch (command) {
 	}
 	default:
 		console.error(
-			"usage: pipes <serve|login|health|backends|call>\n  login <github|gitlab|jenkins>  authenticate and store credentials for a backend\n  call <op> [json-input]         invoke any ci.* operation, e.g. call ci.pool '{\"backend\":\"gh\",\"jobRef\":\"job\"}'",
+			"usage: pipes <serve|login|health|backends|call>\n  login <github|gitlab|jenkins> [--as <profile>]  authenticate and store credentials for a backend\n  call <op> [json-input]         invoke any ci.* operation, e.g. call ci.pool '{\"backend\":\"gh\",\"jobRef\":\"job\"}'",
 		);
 		process.exit(1);
 }
