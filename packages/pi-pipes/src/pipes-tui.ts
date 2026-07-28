@@ -12,11 +12,9 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder, getSelectListTheme } from "@earendil-works/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
-import { runSecretsCommand } from "@danypops/daemon-kit/secrets-tui";
 import { findFirstUrl, openLine } from "./ci-render.ts";
 import { summarize } from "./ci-tool.ts";
 import type { PipesClient } from "./daemon-client.ts";
-import { buildPipesSecretsBackends } from "./secrets.ts";
 interface BackendInfo {
 	name: string;
 	type: string;
@@ -33,7 +31,6 @@ const ACTION_RUN_PRESET_PREFIX = "run-preset:";
 const ACTION_TRIGGER_DIRECT = "__pipes_trigger_direct__";
 const ACTION_MANAGE_RUN = "__pipes_manage_run__";
 const ACTION_MANAGE_PRESETS = "__pipes_manage_presets__";
-const ACTION_MANAGE_SECRETS = "__pipes_manage_secrets__";
 const ACTION_ADD_PRESET = "__pipes_add_preset__";
 const ACTION_VIEW_PRESET_PREFIX = "view-preset:";
 const ACTION_BACK = "__pipes_back__";
@@ -283,13 +280,7 @@ async function managePresetsFlow(ctx: ExtensionCommandContext, client: PipesClie
 	}
 }
 
-export async function runPipesCommand(
-	ctx: ExtensionCommandContext,
-	connect: () => Promise<PipesClient>,
-	pick: PickFromList = pickFromList,
-	show: ShowScreen = showScreen,
-	buildSecretsBackends: typeof buildPipesSecretsBackends = buildPipesSecretsBackends,
-): Promise<void> {
+export async function runPipesCommand(ctx: ExtensionCommandContext, connect: () => Promise<PipesClient>, pick: PickFromList = pickFromList, show: ShowScreen = showScreen): Promise<void> {
 	let client: PipesClient;
 	try {
 		client = await connect();
@@ -315,7 +306,6 @@ export async function runPipesCommand(
 			{ value: ACTION_TRIGGER_DIRECT, label: "Trigger a job directly", description: "Pick a backend and job ref manually" },
 			{ value: ACTION_MANAGE_RUN, label: "Check status / manage a run", description: "Status, trigger, wait, cancel, or view a log" },
 			{ value: ACTION_MANAGE_PRESETS, label: "Manage presets", description: `${presets.length} configured` },
-			{ value: ACTION_MANAGE_SECRETS, label: "Secrets", description: "View status, rotate, or revoke stored credential profiles" },
 		];
 		const selected = await pick(ctx, "Pipes", items, "\u2191\u2193 navigate \u2022 enter select \u2022 esc close");
 		if (!selected) return;
@@ -326,8 +316,6 @@ export async function runPipesCommand(
 			await manageRunFlow(ctx, client, backends, pick, show);
 		} else if (selected === ACTION_MANAGE_PRESETS) {
 			await managePresetsFlow(ctx, client, backends, pick, show);
-		} else if (selected === ACTION_MANAGE_SECRETS) {
-			await runSecretsCommand(ctx, { backends: buildSecretsBackends(), pick });
 		} else if (selected.startsWith(ACTION_RUN_PRESET_PREFIX)) {
 			const name = selected.slice(ACTION_RUN_PRESET_PREFIX.length);
 			const preset = presets.find((p) => p.name === name);

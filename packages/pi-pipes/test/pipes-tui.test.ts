@@ -391,51 +391,6 @@ describe("runPipesCommand: presets", () => {
 	});
 });
 
-describe("runPipesCommand: secrets", () => {
-	it("selecting Secrets runs the generic /secrets flow against pipes' own backends, not a separate top-level command", async () => {
-		const { ctx } = fakeCtx();
-		const client = fakeClient({
-			"ci.help": () => ({ backends: BACKENDS, pipelines: [] }),
-			"ci.presets.list": () => ({ presets: [] }),
-		});
-		const fakeBackend = {
-			source: "local",
-			list: async () => [{ name: "github", source: "local", configured: true }],
-			get: async () => ({ name: "github", source: "local", configured: true }),
-			rotate: async () => {},
-			revoke: async () => {},
-		};
-		const seenMenus: string[][] = [];
-		const pick = async (_ctx: unknown, _title: string, items: Array<{ label: string }>) => {
-			seenMenus.push(items.map((i) => i.label));
-			return null;
-		};
-
-		await runPipesCommand(ctx, async () => client, pick as PickFromList, undefined, () => [fakeBackend]);
-
-		// First menu is /pipes' own top-level menu (contains "Secrets"); picking null there ends the command
-		// immediately, so the secrets submenu is never reached -- this only proves the entry exists and wires in.
-		expect(seenMenus[0]).toContain("Secrets");
-	});
-
-	it("actually enters the secrets submenu and lists pipes' own backend's records when selected", async () => {
-		const { ctx } = fakeCtx();
-		const client = fakeClient({
-			"ci.help": () => ({ backends: BACKENDS, pipelines: [] }),
-			"ci.presets.list": () => ({ presets: [] }),
-		});
-		const fakeBackend = {
-			source: "local",
-			list: async () => [{ name: "github", source: "local", configured: true }],
-			get: async () => ({ name: "github", source: "local", configured: true }),
-			rotate: async () => {},
-			revoke: async () => {},
-		};
-		const seenMenus: string[][] = [];
-		const pick = scriptedPickCapturing(seenMenus, "__pipes_manage_secrets__", null, null);
-
-		await runPipesCommand(ctx, async () => client, pick, undefined, () => [fakeBackend]);
-
-		expect(seenMenus.some((labels) => labels.includes("github (local)"))).toBe(true);
-	});
-});
+// Secrets moved out of /pipes' own menu and into the shared /secrets namespace --
+// see index.test.ts for the registerSharedSecretsCommand wiring, and daemon-kit's
+// own secrets-tui.test.ts for the generic command's behavior.
