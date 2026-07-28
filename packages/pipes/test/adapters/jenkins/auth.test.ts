@@ -153,6 +153,7 @@ describe("resolveJenkinsCredentialsForBaseUrl: multiple independent Jenkins serv
 		const resolved = await resolveJenkinsCredentialsForBaseUrl(
 			store,
 			"https://jenkins-a.example.com",
+			"jenkins-a",
 			{ JENKINS_URL: "https://jenkins-a.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" },
 			noEnigma,
 		);
@@ -161,7 +162,7 @@ describe("resolveJenkinsCredentialsForBaseUrl: multiple independent Jenkins serv
 
 	it("falls back to the stored file when Enigma has nothing", async () => {
 		const store = { load: () => CREDENTIALS, save: () => {}, clear: () => {} };
-		expect(await resolveJenkinsCredentialsForBaseUrl(store, CREDENTIALS.baseUrl, {}, noEnigma)).toEqual(CREDENTIALS);
+		expect(await resolveJenkinsCredentialsForBaseUrl(store, CREDENTIALS.baseUrl, "jenkins", {}, noEnigma)).toEqual(CREDENTIALS);
 	});
 
 	it("uses Enigma's credential only when its stored url matches this target's baseUrl -- never misattributes one server's credential to another", async () => {
@@ -170,11 +171,22 @@ describe("resolveJenkinsCredentialsForBaseUrl: multiple independent Jenkins serv
 			accessToken: "a-token",
 			extra: { url: "https://jenkins-a.example.com", username: "a-bot" },
 		});
-		const matching = await resolveJenkinsCredentialsForBaseUrl(store, "https://jenkins-a.example.com", {}, fromEnigma);
+		const matching = await resolveJenkinsCredentialsForBaseUrl(store, "https://jenkins-a.example.com", "jenkins-a", {}, fromEnigma);
 		expect(matching).toEqual({ baseUrl: "https://jenkins-a.example.com", username: "a-bot", apiToken: "a-token" });
 
 		// Same Enigma answer, different target baseUrl -- must not silently reuse server A's credential for server B.
-		const nonMatching = await resolveJenkinsCredentialsForBaseUrl(store, "https://jenkins-b.example.com", {}, fromEnigma);
+		const nonMatching = await resolveJenkinsCredentialsForBaseUrl(store, "https://jenkins-b.example.com", "jenkins-b", {}, fromEnigma);
 		expect(nonMatching).toBeUndefined();
+	});
+
+	it("asks Enigma for this target's own profile-qualified name, the same name its local store file uses", async () => {
+		const store = { load: () => undefined, save: () => {}, clear: () => {} };
+		const seenBackends: string[] = [];
+		const fromEnigma: TryEnigmaCredential = async (backend) => {
+			seenBackends.push(backend);
+			return undefined;
+		};
+		await resolveJenkinsCredentialsForBaseUrl(store, "https://jenkins-a.example.com", "jenkins-a", {}, fromEnigma);
+		expect(seenBackends).toEqual(["jenkins-a"]);
 	});
 });

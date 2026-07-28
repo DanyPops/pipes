@@ -63,8 +63,12 @@ export async function buildConfiguredAdapters(
 				staticFallback: () => resolveStaticGitHubToken(env),
 				// ENIGMA_CLIENT_TOKEN is this daemon's own registered-client token (`enigma client
 				// add pipes --backends ...`), scoped to exactly the backends pipes needs -- preferred
-				// over Enigma's shared admin-token file, which grants every vaulted backend.
-				enigmaSource: () => tryEnigma("github", { env, token: env.ENIGMA_CLIENT_TOKEN }),
+				// over Enigma's shared admin-token file, which grants every vaulted backend. Asks
+				// Enigma for the same profile-qualified name (e.g. "github-work") this target's local
+				// store uses -- an Enigma alias and a pipes profile share one naming convention on
+				// purpose, so moving a profile from the local store to Enigma is a rename, not a
+				// re-architecture.
+				enigmaSource: () => tryEnigma(profiledBackend("github", target.profile), { env, token: env.ENIGMA_CLIENT_TOKEN }),
 			});
 			adapters.push(createGitHubAdapter({ name: target.name, owner: target.owner, repo: target.repo, getToken }));
 		}
@@ -94,7 +98,9 @@ export async function buildConfiguredAdapters(
 				// setups) there is nothing to refresh against — omit rather than fail every call.
 				refresh: clientId ? (current) => refreshGitLabToken({ baseUrl, clientId }, current.refreshToken as string) : undefined,
 				staticFallback: () => resolveStaticGitLabToken(env),
-				enigmaSource: () => tryEnigma("gitlab", { env, token: env.ENIGMA_CLIENT_TOKEN }),
+				// Same profile-qualified naming as the GitHub target above -- an Enigma alias and a
+				// pipes profile are the same name on purpose.
+				enigmaSource: () => tryEnigma(profiledBackend("gitlab", target.profile), { env, token: env.ENIGMA_CLIENT_TOKEN }),
 			});
 			adapters.push(createGitLabAdapter({ name: target.name, baseUrl, projectId: target.projectId, getToken }));
 		}
@@ -112,7 +118,7 @@ export async function buildConfiguredAdapters(
 			// its own self-contained credential unless a target explicitly opts into sharing one
 			// (two target names both set the same `profile` to point at the same stored file).
 			const profile = target.profile ?? target.name;
-			const credentials = await resolveJenkinsCredentialsForBaseUrl(createFileCredentialStore(dir, profile), target.baseUrl, env);
+			const credentials = await resolveJenkinsCredentialsForBaseUrl(createFileCredentialStore(dir, profile), target.baseUrl, profile, env);
 			if (credentials) {
 				adapters.push(createJenkinsAdapter({ name: target.name, credentials }));
 			} else {

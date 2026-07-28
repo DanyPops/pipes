@@ -87,6 +87,24 @@ admin-token file if one exists at `$XDG_STATE_HOME/enigma/token` — fine for
 a single-user machine where every local daemon is equally trusted, but a
 scoped client token is the least-privilege default.
 
+With an Enigma new enough to serve its admin Unix socket (kernel-verified
+peer identity, `SO_PEERCRED`), pipes tries that transport first and needs
+**no token at all** for a client registered by uid (`enigma client add pipes
+--backends ... --uid $(id -u)`) — nothing to generate, export, or leak.
+Falls back to `ENIGMA_CLIENT_TOKEN`/the shared admin-token file unchanged
+when no socket is available (older Enigma, or none running).
+
+### The full ladder
+
+Each backend resolves its credential in this order, every request, cheapest
+and least secret-bearing first:
+
+1. **Static env var** (`GITHUB_TOKEN`, `GITLAB_TOKEN`, `JENKINS_API_TOKEN`) — zero setup, but a plaintext secret in the process environment.
+2. **A local named credential profile** — `pipes login github --as work` stores a separate credential per profile (one file per profile-qualified name, e.g. `github-work.json`), so two accounts on the same platform never collide. `pipes credentials list` / `pipes credentials remove <name>` manage what's stored, without ever printing a stored credential's contents. A `repos.json` target opts into one via its own `profile` field.
+3. **Enigma, if running** — checked first, ahead of both of the above, via a scoped client token or (when available) the zero-secret Unix-socket transport described above.
+
+Each rung is opt-in: skipping straight to env vars, or never running Enigma at all, works identically to always having used it.
+
 ## Multiple repos/projects/servers per backend
 
 `GITHUB_OWNER`/`GITHUB_REPO`, `GITLAB_URL`/`GITLAB_PROJECT_ID`, and

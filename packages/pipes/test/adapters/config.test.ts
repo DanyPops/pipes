@@ -305,6 +305,36 @@ describe("buildConfiguredAdapters > Enigma as an optional, additive credential s
 		}
 	});
 
+	it("asks Enigma for a profiled target's own profile-qualified name (e.g. \"github-work\"), not the bare backend type", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
+		const originalFetch = globalThis.fetch;
+		const seenAuthHeaders: (string | null)[] = [];
+		globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+			seenAuthHeaders.push(new Headers(init?.headers).get("authorization"));
+			const run = { id: 1, name: "run", status: "completed", conclusion: "success", html_url: "https://example.com", created_at: new Date().toISOString() };
+			return new Response(JSON.stringify({ workflow_runs: [run] }), { status: 200 });
+		}) as typeof fetch;
+		try {
+			const seenBackends: string[] = [];
+			const fromEnigma: TryEnigmaAccessToken = async (backend) => {
+				seenBackends.push(backend);
+				return backend === "github-work" ? "enigma-work-token" : undefined;
+			};
+			const { adapters } = await buildConfiguredAdapters(credentialPaths(dir), {}, fromEnigma, {
+				github: [{ name: "github-work", owner: "acme", repo: "widgets", profile: "work" }],
+				gitlab: [],
+				jenkins: [],
+			});
+			await adapters[0]?.getRun("workflow.yml", "latest");
+
+			expect(seenBackends).toEqual(["github-work"]);
+			expect(seenAuthHeaders[0]).toBe("Bearer enigma-work-token");
+		} finally {
+			globalThis.fetch = originalFetch;
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("still configures every backend when Enigma has nothing for any of them, unchanged from before Enigma existed", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
 		try {

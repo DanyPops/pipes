@@ -143,18 +143,22 @@ export async function resolveJenkinsCredentials(
  * Used only when repos.json names explicit Jenkins targets -- env.JENKINS_URL is the
  * single-instance legacy default's own signal, not consulted here, since multiple named
  * targets can't share one ambient env triple (which of two Jenkins servers would it mean?).
- * Enigma is still consulted, but only trusted when its stored url actually matches this
- * target's baseUrl -- Enigma's Jenkins credential is a single global entry, not
- * profile-aware, so blindly reusing it across every target would silently point every
- * one of them at the same server regardless of which was actually asked for.
+ * Asks Enigma for the exact same name (e.g. "prod-jenkins") this target's local store
+ * uses as its own filename -- unlike github/gitlab, a Jenkins profile IS the literal
+ * backend name here (see config.ts), not a suffix on a shared default, so the Enigma
+ * alias asked for matches it directly rather than through profiledBackend(). Still
+ * verified against this target's own baseUrl before being trusted: a stale or
+ * misconfigured alias pointing at the wrong server is caught here rather than silently
+ * authenticating against the wrong Jenkins instance.
  */
 export async function resolveJenkinsCredentialsForBaseUrl(
 	store: CredentialStore,
 	baseUrl: string,
+	profile: string,
 	env: Record<string, string | undefined> = process.env,
 	tryEnigma: TryEnigmaCredential = tryEnigmaCredential,
 ): Promise<JenkinsCredentials | undefined> {
-	const fromEnigma = await tryEnigma("jenkins", { env, token: env.ENIGMA_CLIENT_TOKEN });
+	const fromEnigma = await tryEnigma(profile, { env, token: env.ENIGMA_CLIENT_TOKEN });
 	if (fromEnigma?.extra?.url === baseUrl && fromEnigma.extra?.username) {
 		return { baseUrl, username: fromEnigma.extra.username, apiToken: fromEnigma.accessToken };
 	}

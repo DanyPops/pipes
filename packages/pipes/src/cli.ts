@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { existsSync, readdirSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { createGitHubTokenStore, runDeviceFlow as runGitHubDeviceFlow } from "./adapters/github/auth.ts";
 import { readGhCliToken } from "./adapters/github/gh-cli.ts";
 import { authenticate as authenticateGitLab, createGitLabTokenStore } from "./adapters/gitlab/auth.ts";
@@ -123,6 +125,47 @@ async function loginMain(backend: string | undefined, args: string[]): Promise<v
 	process.exit(1);
 }
 
+/**
+ * Local filesystem introspection only, same as loginMain -- never routed through the daemon's
+ * RPC. Lists/removes the profile-qualified store files a profile is (see paths.ts's
+ * profiledBackend()), never their contents: a stored credential's own accessToken/extra fields
+ * are never printed. A running daemon re-reads its token provider's store fresh on every
+ * request, so a remove here takes effect on the daemon's very next call, no restart needed --
+ * same live-pickup guarantee login already documents above.
+ */
+function credentialsMain(subcommand: string | undefined, name: string | undefined): void {
+	const dir = resolvePipesCredentialPaths(resolvePipesPaths()).credentialsDir;
+
+	if (subcommand === "list") {
+		const names = existsSync(dir)
+			? readdirSync(dir)
+					.filter((file) => file.endsWith(".json"))
+					.map((file) => file.slice(0, -".json".length))
+					.sort()
+			: [];
+		console.log(JSON.stringify(names));
+		return;
+	}
+
+	if (subcommand === "remove") {
+		if (!name) {
+			console.error("usage: pipes credentials remove <name>");
+			process.exit(1);
+		}
+		const path = join(dir, `${name}.json`);
+		if (!existsSync(path)) {
+			console.error(`no stored credential named "${name}"`);
+			process.exit(1);
+		}
+		unlinkSync(path);
+		console.log(`Removed "${name}".`);
+		return;
+	}
+
+	console.error("usage: pipes credentials <list|remove> [name]");
+	process.exit(1);
+}
+
 switch (command) {
 	case "serve":
 		await serveMain();
@@ -142,6 +185,9 @@ switch (command) {
 		console.log(JSON.stringify({ backends, pipelines }));
 		break;
 	}
+	case "credentials":
+		credentialsMain(process.argv[3], process.argv[4]);
+		break;
 	case "call": {
 		const [, , , op, inputJson] = process.argv;
 		if (!op) {
@@ -156,7 +202,7 @@ switch (command) {
 	}
 	default:
 		console.error(
-			"usage: pipes <serve|login|health|backends|call>\n  login <github|gitlab|jenkins> [--as <profile>]  authenticate and store credentials for a backend\n  call <op> [json-input]         invoke any ci.* operation, e.g. call ci.pool '{\"backend\":\"gh\",\"jobRef\":\"job\"}'",
+			"usage: pipes <serve|login|health|backends|credentials|call>\n  login <github|gitlab|jenkins> [--as <profile>]  authenticate and store credentials for a backend\n  credentials list                                list stored local credential profile names, never their contents\n  credentials remove <name>                       delete a stored local credential profile (e.g. \"github-work\")\n  call <op> [json-input]         invoke any ci.* operation, e.g. call ci.pool '{\"backend\":\"gh\",\"jobRef\":\"job\"}'",
 		);
 		process.exit(1);
 }
