@@ -31,6 +31,22 @@ via a local loopback listener on older instances). Jenkins has no delegated
 auth API, so it uses a stored username+API-token pair — the one documented
 exception, not a default.
 
+`pipes login <github|gitlab|jenkins> [--as <profile>]` runs the flow and
+stores the result — omit `--as` to use the plain default credential, or
+name a profile to keep a second account/server separate (see "Multiple
+repos/projects per backend" below). Every device-flow and PKCE login prints
+the verification URL/code as text regardless, and also best-effort opens it
+in your default browser (matching GitHub CLI's own UX) — a headless
+session or missing browser opener never blocks the login, it just falls
+back to the printed URL.
+
+```bash
+GITHUB_CLIENT_ID=<client-id> pipes login github --as personal
+GITHUB_CLIENT_ID=<client-id> pipes login github --as work
+GITLAB_CLIENT_ID=<client-id> pipes login gitlab
+JENKINS_URL=<url> JENKINS_USER=<user> JENKINS_API_TOKEN=<token> pipes login jenkins --as ci
+```
+
 ### Optional: credentials via Enigma
 
 If a [Enigma](https://github.com/DanyPops/enigma) vault is running, pipes
@@ -53,11 +69,12 @@ admin-token file if one exists at `$XDG_STATE_HOME/enigma/token` — fine for
 a single-user machine where every local daemon is equally trusted, but a
 scoped client token is the least-privilege default.
 
-## Multiple repos/projects per backend
+## Multiple repos/projects/servers per backend
 
-`GITHUB_OWNER`/`GITHUB_REPO` (and `GITLAB_URL`/`GITLAB_PROJECT_ID`) configure
-one default GitHub/GitLab backend, both named after the backend type. To
-address more than one repo or project through the same daemon, add a
+`GITHUB_OWNER`/`GITHUB_REPO`, `GITLAB_URL`/`GITLAB_PROJECT_ID`, and
+`JENKINS_URL`/`JENKINS_USER`/`JENKINS_API_TOKEN` each configure one default
+backend, named after the backend type. To address more than one repo,
+project, or Jenkins server through the same daemon, add a
 `~/.config/pipes/repos.json` (or `$XDG_CONFIG_HOME/pipes/repos.json`)
 naming each target explicitly — once this file has entries for a backend
 type, it replaces that type's env-var default rather than adding to it:
@@ -66,14 +83,26 @@ type, it replaces that type's env-var default rather than adding to it:
 {
 	"github": [
 		{ "name": "github-a", "owner": "octocat", "repo": "repo-a" },
-		{ "name": "github-b", "owner": "octocat", "repo": "repo-b" }
+		{ "name": "github-b", "owner": "octocat", "repo": "repo-b", "profile": "work" }
 	],
-	"gitlab": [{ "name": "gitlab-a", "projectId": "42" }]
+	"gitlab": [{ "name": "gitlab-a", "projectId": "42" }],
+	"jenkins": [
+		{ "name": "jenkins-ci", "baseUrl": "https://ci.example.com" },
+		{ "name": "jenkins-auto", "baseUrl": "https://auto.example.com" }
+	]
 }
 ```
 
-Every GitHub target shares the one logged-in GitHub credential (a device-flow
-token authenticates any repo the granting user can access); every GitLab
-target shares one credential too, so all configured GitLab targets must be
-on the same GitLab host. `ci(action=help)` lists each configured target by
-its own name — pass that name as `backend` to address it.
+Every GitHub target shares one logged-in GitHub credential by default (a
+device-flow token authenticates any repo the granting user can access);
+every GitLab target likewise shares one credential, so every configured
+GitLab target must be on the same GitLab host. A target's optional
+`profile` field selects a separate, named local credential file instead of
+sharing the default (`pipes login <backend> --as <profile>` writes to it) —
+use this for a second GitHub/GitLab account. Jenkins targets are the
+exception: since a Jenkins API token is inherently scoped to one specific
+server+user, each target's profile defaults to its own `name` already, so
+two Jenkins servers never collide without needing an explicit `profile`.
+
+`ci(action=help)` lists each configured target by its own name — pass that
+name as `backend` to address it.

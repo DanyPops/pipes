@@ -2,6 +2,7 @@
 import { createGitHubTokenStore, runDeviceFlow as runGitHubDeviceFlow } from "./adapters/github/auth.ts";
 import { authenticate as authenticateGitLab, createGitLabTokenStore } from "./adapters/gitlab/auth.ts";
 import { createFileCredentialStore } from "./adapters/jenkins/auth.ts";
+import { openInBrowser } from "./browser-launcher.ts";
 import { connectPipesClient } from "./client.ts";
 import { serveMain } from "./daemon.ts";
 import { profiledBackend, resolvePipesCredentialPaths, resolvePipesPaths } from "./paths.ts";
@@ -38,6 +39,9 @@ async function loginMain(backend: string | undefined, args: string[]): Promise<v
 			onPrompt: (info) => {
 				console.log(`Visit ${info.verificationUri} and enter code: ${info.userCode}`);
 				console.log("Waiting for authorization...");
+				void openInBrowser(info.verificationUri).then((opened) => {
+					if (!opened) console.log("Could not open a browser automatically -- open the URL above manually.");
+				});
 			},
 		});
 		createGitHubTokenStore(credentialPaths.credentialsDir, profiledBackend("github", profile)).save(token);
@@ -59,10 +63,16 @@ async function loginMain(backend: string | undefined, args: string[]): Promise<v
 			onDevicePrompt: (info) => {
 				console.log(`Visit ${info.verificationUri} and enter code: ${info.userCode}`);
 				console.log("Waiting for authorization...");
+				void openInBrowser(info.verificationUri).then((opened) => {
+					if (!opened) console.log("Could not open a browser automatically -- open the URL above manually.");
+				});
 			},
 			onPkcePrompt: (authorizationUrl) => {
 				console.log(`Visit ${authorizationUrl} to authorize (this GitLab instance doesn't advertise device flow).`);
 				console.log("Waiting for the browser redirect...");
+				void openInBrowser(authorizationUrl).then((opened) => {
+					if (!opened) console.log("Could not open a browser automatically -- open the URL above manually.");
+				});
 			},
 		});
 		createGitLabTokenStore(credentialPaths.credentialsDir, profiledBackend("gitlab", profile)).save(token);
