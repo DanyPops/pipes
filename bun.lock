@@ -13,6 +13,7 @@
       "name": "@danypops/pi-pipes",
       "version": "0.3.1",
       "dependencies": {
+        "@danypops/daemon-kit": "^0.20.2",
         "@danypops/pipes": "^0.8.0",
       },
       "devDependencies": {
@@ -99,7 +100,7 @@
 
     "@babel/runtime": ["@babel/runtime@7.29.7", "", {}, "sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw=="],
 
-    "@danypops/daemon-kit": ["@danypops/daemon-kit@0.17.2", "", { "dependencies": { "pino": "^10.3.1" }, "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "typescript": "^5" }, "optionalPeers": ["@earendil-works/pi-coding-agent"] }, "sha512-Ltes62eBnTdfjSZKuVOZTWDMMQi5uNgxJwsW4RNURgxh125uztjxjE20zY+dvxv+g85X9/IQxzG5zNzWuO0vjg=="],
+    "@danypops/daemon-kit": ["@danypops/daemon-kit@0.20.2", "", { "dependencies": { "pino": "^10.3.1" }, "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typescript": "^5" }, "optionalPeers": ["@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"] }, "sha512-dsayxrLQIn1G60RJt+hYzxIwWOVYqaLH7ReXptNq+kelHI0t+RxeR6zZ9cYHMdc8SVT23wHKcqVcEIOqt6V/UQ=="],
 
     "@danypops/enigma-client": ["@danypops/enigma-client@0.5.0", "", { "dependencies": { "@danypops/daemon-kit": "^0.18.0" } }, "sha512-+9BOflOcrq6adjwROPQ6GrQGt3wxJVSYKt6wIfXdXOiMTYxeBslTbiSyOWvkHdKrTk0YFz76m7X6KBN6GPNLHQ=="],
 
@@ -383,9 +384,13 @@
 
     "@danypops/pi-pipes/@danypops/pipes": ["@danypops/pipes@0.8.0", "", { "dependencies": { "@danypops/daemon-kit": "^0.17.0", "@danypops/enigma-client": "^0.3.0", "open": "^11.0.0" }, "bin": { "pipes": "src/cli.ts" } }, "sha512-TFN+W2VLbsbEju5oBpz8xRi5oDZSfwuahXk74nleu2dPlxQz2mPJuCtsPyZCeLxnh18sUAADPiXthHFXn6LH9A=="],
 
+    "@danypops/pipes/@danypops/daemon-kit": ["@danypops/daemon-kit@0.17.2", "", { "dependencies": { "pino": "^10.3.1" }, "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "typescript": "^5" }, "optionalPeers": ["@earendil-works/pi-coding-agent"] }, "sha512-Ltes62eBnTdfjSZKuVOZTWDMMQi5uNgxJwsW4RNURgxh125uztjxjE20zY+dvxv+g85X9/IQxzG5zNzWuO0vjg=="],
+
     "p-retry/retry": ["retry@0.13.1", "", {}, "sha512-XQBQ3I8W1Cge0Seh+6gjj03LbmRFWuoszgK9ooCpwYIrhhoO80pfq4cUkU5DkknwfOfFteRwlZ56PYOGYyFWdg=="],
 
     "thread-stream/real-require": ["real-require@1.0.0", "", {}, "sha512-P4nbQYQfePJxRSmY+v/KINxVucm4NF3p3s7pJveMTtom52FR4YGltUQLB8idDXwDDWW+eYrWDFbuzUnjoWHF7g=="],
+
+    "@danypops/pi-pipes/@danypops/pipes/@danypops/daemon-kit": ["@danypops/daemon-kit@0.17.2", "", { "dependencies": { "pino": "^10.3.1" }, "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "typescript": "^5" }, "optionalPeers": ["@earendil-works/pi-coding-agent"] }, "sha512-Ltes62eBnTdfjSZKuVOZTWDMMQi5uNgxJwsW4RNURgxh125uztjxjE20zY+dvxv+g85X9/IQxzG5zNzWuO0vjg=="],
 
     "@danypops/pi-pipes/@danypops/pipes/@danypops/enigma-client": ["@danypops/enigma-client@0.3.0", "", { "dependencies": { "@danypops/daemon-kit": "^0.13.0" } }, "sha512-EexbeI8tKV8YsvrkaKqt2HwvNYp86m56Qd1P2l8ANWSx8zCwjkWJfM+ZLyNJzswQe/lwS3vaabrH4hzFxFDk9A=="],
 

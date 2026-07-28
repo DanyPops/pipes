@@ -10,6 +10,7 @@
 		"extensions": ["./src/index.ts"]
 	},
 	"dependencies": {
+		"@danypops/daemon-kit": "^0.20.2",
 		"@danypops/pipes": "^0.8.0"
 	},
 	"peerDependencies": {
