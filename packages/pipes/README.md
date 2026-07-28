@@ -40,6 +40,24 @@ in your default browser (matching GitHub CLI's own UX) — a headless
 session or missing browser opener never blocks the login, it just falls
 back to the printed URL.
 
+### GitHub: reuse an already-authenticated `gh` CLI session
+
+`pipes login github --gh-cli [account]` skips the OAuth device flow (and
+the `GITHUB_CLIENT_ID` App registration it needs) entirely by reading
+`gh auth token` instead — the same delegation pattern packed uses for
+`npm login --auth-type=web`: never re-implement a vendor CLI's own auth,
+just consume its result. Works whether `gh` stores its token in the OS
+keyring or a legacy plaintext file, since `gh auth token` is GitHub's own
+stable interface for exactly this, abstracting over both. Omit `account`
+for `gh`'s current active account, or name one of `gh`'s own multiple
+authenticated accounts (`gh auth status` lists them) — pairs naturally
+with `--as` to register each as its own pipes profile:
+
+```bash
+pipes login github --gh-cli DanyPops --as personal
+pipes login github --gh-cli work-account --as work
+```
+
 ```bash
 GITHUB_CLIENT_ID=<client-id> pipes login github --as personal
 GITHUB_CLIENT_ID=<client-id> pipes login github --as work

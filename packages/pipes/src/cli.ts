@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { createGitHubTokenStore, runDeviceFlow as runGitHubDeviceFlow } from "./adapters/github/auth.ts";
+import { readGhCliToken } from "./adapters/github/gh-cli.ts";
 import { authenticate as authenticateGitLab, createGitLabTokenStore } from "./adapters/gitlab/auth.ts";
 import { createFileCredentialStore } from "./adapters/jenkins/auth.ts";
 import { openInBrowser } from "./browser-launcher.ts";
@@ -15,6 +16,14 @@ function parseAsFlag(args: string[]): string | undefined {
 	return index === -1 ? undefined : args[index + 1];
 }
 
+/** Reads "--gh-cli [account]" -- an already-authenticated gh CLI account name, or true for gh's own active account. */
+function parseGhCliFlag(args: string[]): string | true | undefined {
+	const index = args.indexOf("--gh-cli");
+	if (index === -1) return undefined;
+	const next = args[index + 1];
+	return next && !next.startsWith("--") ? next : true;
+}
+
 /**
  * Runs entirely client-side against the backend's own OAuth endpoints, not
  * through the daemon's RPC — a device-flow poll can run for minutes, which
@@ -28,9 +37,24 @@ async function loginMain(backend: string | undefined, args: string[]): Promise<v
 	const profile = parseAsFlag(args);
 
 	if (backend === "github") {
+		const ghCli = parseGhCliFlag(args);
+		if (ghCli !== undefined) {
+			const result = await readGhCliToken(ghCli === true ? undefined : ghCli);
+			if (!result.ok) {
+				console.error(result.reason);
+				process.exit(1);
+			}
+			createGitHubTokenStore(credentialPaths.credentialsDir, profiledBackend("github", profile)).save({ accessToken: result.token });
+			console.log(profile ? `GitHub login complete via gh CLI (stored as "${profile}").` : "GitHub login complete via gh CLI.");
+			return;
+		}
+
 		const clientId = process.env.GITHUB_CLIENT_ID;
 		if (!clientId) {
-			console.error("GITHUB_CLIENT_ID is required — register a personal OAuth App with Device Flow enabled at github.com/settings/developers");
+			console.error(
+				"GITHUB_CLIENT_ID is required — register a personal OAuth App with Device Flow enabled at github.com/settings/developers, " +
+					"or pass --gh-cli [account] to reuse an already-authenticated gh CLI session instead.",
+			);
 			process.exit(1);
 		}
 		const token = await runGitHubDeviceFlow({
@@ -95,7 +119,7 @@ async function loginMain(backend: string | undefined, args: string[]): Promise<v
 		return;
 	}
 
-	console.error("usage: pipes login <github|gitlab|jenkins> [--as <profile>]");
+	console.error("usage: pipes login <github|gitlab|jenkins> [--as <profile>] [--gh-cli [account]] (github only)");
 	process.exit(1);
 }
 
