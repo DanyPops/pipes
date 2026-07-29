@@ -5,16 +5,17 @@
 import { classifyLog } from "./classify.ts";
 import { CHAIN_CRAWL_MAX_NODES } from "./constants.ts";
 import type { BackendInfo } from "./domain/backend.ts";
-import type {
-	BuildFilter,
-	CIArtifact,
-	CIArtifactDir,
-	CIRun,
-	CIRunNode,
-	CIRunRef,
-	CIStageNode,
-	LogFilter,
-	LogResult,
+import {
+	isTerminalStatus,
+	type BuildFilter,
+	type CIArtifact,
+	type CIArtifactDir,
+	type CIRun,
+	type CIRunNode,
+	type CIRunRef,
+	type CIStageNode,
+	type LogFilter,
+	type LogResult,
 } from "./domain/ci-run.ts";
 import type { RepoInfo, WorkflowInfo } from "./domain/discovery.ts";
 import type { CICheck, CIVerdict, FailureContext } from "./domain/monitor.ts";
@@ -277,14 +278,21 @@ export class Orchestrator {
 		return failure;
 	}
 
-	/** Real-time progress: percent complete against EstimateDuration, overdue past 1.5x estimate. */
-	async ciWatch(backendName: string, jobRef: string, runId: string): Promise<WatchStatus> {
+	/**
+	 * Real-time progress: percent complete against EstimateDuration, overdue past 1.5x estimate.
+	 * A backend's own durationMs (e.g. Jenkins' `build.duration`) is only meaningful once a run is
+	 * terminal -- most backends report it as 0 the entire time a run is still in progress, which
+	 * would pin progressPercent at 0% for a run's whole duration. While still running/pending, derive
+	 * elapsed time from startedAt instead, the one field every adapter populates from the run's real
+	 * start time regardless of backend.
+	 */
+	async ciWatch(backendName: string, jobRef: string, runId: string, now: () => number = Date.now): Promise<WatchStatus> {
 		const backend = this.adapter(backendName);
 		const run = await backend.getRun(jobRef, runId);
 
 		const triggerable = asTriggerable(backend);
 		const estimatedMs = triggerable ? await triggerable.estimateDuration(jobRef) : 0;
-		const elapsedMs = run.durationMs ?? 0;
+		const elapsedMs = isTerminalStatus(run.status) ? (run.durationMs ?? 0) : Math.max(0, now() - run.startedAt.getTime());
 
 		const watch: WatchStatus = {
 			buildNumber: run.id,

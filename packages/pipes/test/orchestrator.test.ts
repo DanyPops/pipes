@@ -227,23 +227,35 @@ describe("Orchestrator.ciListRepos / ciListWorkflows: discovery capability gatin
 });
 
 describe("Orchestrator.ciWatch: real-time progress", () => {
-	it("computes progress percent and overdue against the estimated duration", async () => {
+	it("computes progress percent and overdue against the estimated duration, from startedAt while still running", async () => {
 		const orchestrator = new Orchestrator();
-		const run: CIRun = { id: "1", name: "run", status: "running", startedAt: new Date(0), durationMs: 60_000 };
+		// durationMs is deliberately a red herring here -- a running build's durationMs is backend-reported
+		// noise (e.g. Jenkins always reports 0 until terminal), so elapsed must come from startedAt instead.
+		const run: CIRun = { id: "1", name: "run", status: "running", startedAt: new Date(0), durationMs: 999_999 };
 		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, run, estimatedDurationMs: 120_000 }));
 
-		const watch = await orchestrator.ciWatch("gh", "job", "1");
+		const watch = await orchestrator.ciWatch("gh", "job", "1", () => 60_000);
 		expect(watch.progressPercent).toBe(50);
 		expect(watch.overdue).toBe(false);
 	});
 
 	it("flags overdue once elapsed exceeds 1.5x the estimate", async () => {
 		const orchestrator = new Orchestrator();
-		const run: CIRun = { id: "1", name: "run", status: "running", startedAt: new Date(0), durationMs: 200_000 };
+		const run: CIRun = { id: "1", name: "run", status: "running", startedAt: new Date(0) };
 		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, run, estimatedDurationMs: 100_000 }));
 
-		const watch = await orchestrator.ciWatch("gh", "job", "1");
+		const watch = await orchestrator.ciWatch("gh", "job", "1", () => 200_000);
 		expect(watch.overdue).toBe(true);
+	});
+
+	it("uses the backend's own durationMs once the run is terminal, not a live now()-startedAt computation", async () => {
+		const orchestrator = new Orchestrator();
+		const run: CIRun = { id: "1", name: "run", status: "success", startedAt: new Date(0), durationMs: 60_000 };
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, run, estimatedDurationMs: 120_000 }));
+
+		// now() is far past startedAt -- if this were used instead of durationMs, progress would read 100%+.
+		const watch = await orchestrator.ciWatch("gh", "job", "1", () => 10_000_000);
+		expect(watch.progressPercent).toBe(50);
 	});
 
 	it("carries the backend's web URL through onto the watch status", async () => {
