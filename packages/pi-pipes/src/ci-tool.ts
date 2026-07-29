@@ -173,25 +173,13 @@ export function registerCiTool(pi: ExtensionAPI): void {
 		},
 
 		renderResult(result, { expanded, isPartial }, theme, context) {
-			if (isPartial) return new Text(theme.fg("warning", "Running..."), 0, 0);
-
-			if (context.isError) {
-				const message = result.content[0];
-				return new Text(theme.fg("error", `Error: ${message?.type === "text" ? message.text : "unknown error"}`), 0, 0);
+			let text = renderResultText(result, isPartial, context.isError, theme);
+			const data = (result.details as { result?: unknown } | undefined)?.result;
+			if (data !== undefined) {
+				const url = findFirstUrl(data);
+				if (url) text += `\n${openLine(url, theme)}`;
+				if (expanded) text += `\n${theme.fg("dim", JSON.stringify(data, null, 2))}`;
 			}
-
-			const details = result.details as { result?: unknown } | undefined;
-			const data = details?.result;
-			if (data === undefined) {
-				const message = result.content[0];
-				return new Text(message?.type === "text" ? message.text : "", 0, 0);
-			}
-
-			const summary = summarize(data, theme);
-			let text = summary;
-			const url = findFirstUrl(data);
-			if (url) text += `\n${openLine(url, theme)}`;
-			if (expanded) text += `\n${theme.fg("dim", JSON.stringify(data, null, 2))}`;
 			return new Text(text, 0, 0);
 		},
 	});
@@ -200,6 +188,39 @@ export function registerCiTool(pi: ExtensionAPI): void {
 interface ThemeLike {
 	fg(color: string, text: string): string;
 	bold(text: string): string;
+}
+
+/**
+ * The text a `ci` tool call result renders as, before any URL/expanded-JSON lines get appended --
+ * split out from renderResult so the isPartial/error/no-data-yet branching is unit-testable without
+ * a full registerTool harness. A still-in-flight `ci wait` (waitAndStreamTail) pushes a real
+ * WatchStatus+tail snapshot on every ~20s poll tick via onUpdate; this renders that snapshot through
+ * the same summarize() path as a final result instead of discarding it for a bare "Running..." the
+ * whole time. Only falls back to that placeholder before the first tick has landed any data at all.
+ */
+export function renderResultText(
+	result: { content: Array<{ type: string; text?: string }>; details?: unknown },
+	isPartial: boolean,
+	isError: boolean,
+	theme: ThemeLike,
+): string {
+	const details = result.details as { result?: unknown } | undefined;
+	const data = details?.result;
+
+	if (isPartial && data === undefined) return theme.fg("warning", "Running...");
+
+	if (!isPartial && isError) {
+		const message = result.content[0];
+		return theme.fg("error", `Error: ${message?.type === "text" ? message.text : "unknown error"}`);
+	}
+
+	if (data === undefined) {
+		const message = result.content[0];
+		return message?.type === "text" ? (message.text ?? "") : "";
+	}
+
+	const summary = summarize(data, theme);
+	return isPartial ? `${theme.fg("warning", "Running...")} ${summary}` : summary;
 }
 
 const TAIL_PREVIEW_LINES = 5;
