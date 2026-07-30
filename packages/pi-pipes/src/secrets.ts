@@ -1,5 +1,5 @@
 /**
- * Builds pipes' own SecretsBackend set for daemon-kit's generic /secrets
+ * Builds pipes' own SecretsBackend set for vehicle-client-pi's generic /secrets
  * menu: the local credential-profile directory every `pipes login` writes
  * to (github/gitlab/jenkins profiles, including the gh-CLI-sourced ones),
  * plus the two static-token env vars pipes' adapters fall back to.
@@ -15,9 +15,9 @@
  * Exposed instead as a "Secrets" entry inside pipes' own `/pipes` menu.
  */
 import { dirname } from "node:path";
-import { createEnvSecretsBackend } from "@danypops/daemon-kit/secrets-backend-env";
-import { createLocalSecretsBackend } from "@danypops/daemon-kit/secrets-backend-local";
-import type { SecretsBackend } from "@danypops/daemon-kit/secrets-backend";
+import { createEnvSecretsBackend } from "@danypops/vehicle-client-pi/secrets-backend-env";
+import { createLocalSecretsBackend } from "@danypops/vehicle-client-pi/secrets-backend-local";
+import type { SecretsBackend } from "@danypops/vehicle-client-pi/secrets-backend";
 import { resolvePipesPaths } from "./daemon-client.ts";
 
 export interface BuildPipesSecretsBackendsOptions {

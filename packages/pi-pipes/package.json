@@ -10,7 +10,8 @@
 		"extensions": ["./src/index.ts"]
 	},
 	"dependencies": {
-		"@danypops/daemon-kit": "^0.22.0",
+		"@danypops/vehicle-client-pi": "^0.1.1",
+		"@danypops/vehicle-server": "^0.1.1",
 		"@danypops/pipes": "^0.8.0"
 	},
 	"peerDependencies": {

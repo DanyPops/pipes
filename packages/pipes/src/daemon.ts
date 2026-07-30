@@ -1,8 +1,8 @@
-/** Bun composition root: binds and serves via @danypops/daemon-kit's runDaemonProcess. */
+/** Bun composition root: binds and serves via @danypops/vehicle-server's runDaemonProcess. */
 import { buildConfiguredAdapters } from "./adapters/config.ts";
-import { runDaemonProcess } from "@danypops/daemon-kit/daemon";
-import { createLogger } from "@danypops/daemon-kit/logging";
-import { ensureAuthToken } from "@danypops/daemon-kit/paths";
+import { runDaemonProcess } from "@danypops/vehicle-server/daemon";
+import { createLogger } from "@danypops/vehicle-server/logging";
+import { ensureAuthToken } from "@danypops/vehicle-server/paths";
 import { RUN_POOL_SYNC_INTERVAL_MS } from "./constants.ts";
 import { openPipesDb } from "./db.ts";
 import { Orchestrator } from "./orchestrator.ts";

@@ -392,5 +392,5 @@ describe("runPipesCommand: presets", () => {
 });
 
 // Secrets moved out of /pipes' own menu and into the shared /secrets namespace --
-// see index.test.ts for the registerSharedSecretsCommand wiring, and daemon-kit's
+// see index.test.ts for the registerSharedSecretsCommand wiring, and vehicle-client-pi's
 // own secrets-tui.test.ts for the generic command's behavior.

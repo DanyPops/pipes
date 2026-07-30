@@ -1,6 +1,6 @@
 /** Exercises createApp/createPipesService end to end, in-process, over the authenticated transport (auth, /health, /ready, /api/v1/ops). */
 import { describe, expect, it } from "bun:test";
-import { AuthenticatedRpcClient } from "@danypops/daemon-kit/rpc-client";
+import { AuthenticatedRpcClient } from "@danypops/vehicle-client/rpc-client";
 import { Orchestrator } from "../src/orchestrator.ts";
 import { createApp, createPipesService, type OperationInputs, type OperationName, type OperationOutputs } from "../src/service.ts";
 

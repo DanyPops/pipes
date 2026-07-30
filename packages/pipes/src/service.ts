@@ -1,5 +1,5 @@
 /** Operation registry + fetch handler: bearer auth, /health, /ready, /api/v1/ops. */
-import { errorResponse, healthResponse, jsonResponse, readyResponse, requireBearerToken } from "@danypops/daemon-kit/http";
+import { errorResponse, healthResponse, jsonResponse, readyResponse, requireBearerToken } from "@danypops/vehicle-server/rpc-http";
 import { DEFAULT_LOG_TAIL_TOKENS } from "./constants.ts";
 import type { CIRunNode, CIStageNode, LogResult, RunResult } from "./domain/ci-run.ts";
 import type { RepoInfo, WorkflowInfo } from "./domain/discovery.ts";

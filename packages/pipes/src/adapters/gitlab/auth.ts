@@ -11,7 +11,7 @@
  * either, documented as an exception rather than a default.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { createFileStore, type RefreshableAccessToken, type TokenProviderStore } from "@danypops/daemon-kit/vault";
+import { createFileStore, type RefreshableAccessToken, type TokenProviderStore } from "@danypops/vehicle-server/vault";
 import type { FetchLike } from "../github/auth.ts";
 
 export interface GitLabAuthOptions {
@@ -70,7 +70,7 @@ export interface CallbackServer {
 	close(): void;
 }
 
-/** Binds loopback:0 (an OS-assigned port), matching daemon-kit's loopback-only convention for anything listening locally. */
+/** Binds loopback:0 (an OS-assigned port), matching vehicle-server's loopback-only convention for anything listening locally. */
 export function startCallbackServer(): CallbackServer {
 	let resolveCallback: (result: CallbackResult) => void;
 	const waiter = new Promise<CallbackResult>((resolve) => {

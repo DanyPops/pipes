@@ -1,13 +1,13 @@
 /**
  * Adds Enigma as an optional, additive credential source on top of
- * daemon-kit's shared vault.ts token provider -- daemon-kit stays
+ * vehicle-server's shared vault.ts token provider -- vehicle-server stays
  * vendor-agnostic (it has no idea Enigma exists), so this thin wrapper is
  * the one place pipes checks a running Enigma vault first, on every call,
- * before falling through to daemon-kit's own store/refresh/static chain.
+ * before falling through to vehicle-server's own store/refresh/static chain.
  */
-import { createTokenProvider as createBaseTokenProvider, type RefreshableAccessToken, type TokenProviderOptions as BaseTokenProviderOptions } from "@danypops/daemon-kit/vault";
+import { createTokenProvider as createBaseTokenProvider, type RefreshableAccessToken, type TokenProviderOptions as BaseTokenProviderOptions } from "@danypops/vehicle-server/vault";
 
-export type { RefreshableAccessToken, TokenProviderStore } from "@danypops/daemon-kit/vault";
+export type { RefreshableAccessToken, TokenProviderStore } from "@danypops/vehicle-server/vault";
 
 export interface TokenProviderOptions<T extends RefreshableAccessToken> extends BaseTokenProviderOptions<T> {
 	/**
@@ -30,7 +30,7 @@ export function createTokenProvider<T extends RefreshableAccessToken>(options: T
 			// Deliberately defensive here even though the real tryEnigmaCredential never throws
 			// (every one of its own failure paths already resolves undefined): enigmaSource is a
 			// caller-supplied function, and this integration's whole premise is that it must never
-			// be capable of breaking a request, matching how daemon-kit's own `refresh` failures
+			// be capable of breaking a request, matching how vehicle-server's own `refresh` failures
 			// are contained rather than propagated.
 			const fromEnigma = await options.enigmaSource().catch(() => undefined);
 			if (fromEnigma) return fromEnigma;

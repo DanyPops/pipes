@@ -5,11 +5,11 @@
  * fallback for users who prefer it. Prefer the device flow wherever
  * possible rather than asking for a pasted token.
  *
- * Token storage/freshness/refresh is daemon-kit's shared vault.ts, not a
+ * Token storage/freshness/refresh is vehicle-server's shared vault.ts, not a
  * hand-rolled duplicate -- this file only owns GitHub's own device-flow
- * wire mechanics (vendor-specific, correctly kept out of daemon-kit).
+ * wire mechanics (vendor-specific, correctly kept out of vehicle-server).
  */
-import { createFileStore, type RefreshableAccessToken, type TokenProviderStore } from "@danypops/daemon-kit/vault";
+import { createFileStore, type RefreshableAccessToken, type TokenProviderStore } from "@danypops/vehicle-server/vault";
 
 const DEVICE_CODE_URL = "https://github.com/login/device/code";
 const ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";

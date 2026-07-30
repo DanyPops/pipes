@@ -1,6 +1,6 @@
 /**
  * SQLite composition root. Bootstrap (pragmas, PRAGMA user_version
- * migration runner) delegates to @danypops/daemon-kit's storage module.
+ * migration runner) delegates to @danypops/vehicle-server's storage module.
  * Schema: one table, run_snapshots — the local pool of last-known run
  * status per (backend, job_ref, run_id), independent of any live backend
  * call. `watched` marks rows the background sync loop should keep
@@ -8,7 +8,7 @@
  * pool doesn't poll finished work forever.
  */
 import type { Database } from "bun:sqlite";
-import { openSqliteWithPragmas } from "@danypops/daemon-kit/storage";
+import { openSqliteWithPragmas } from "@danypops/vehicle-server/storage";
 
 const INITIAL_SCHEMA = `
 CREATE TABLE run_snapshots (

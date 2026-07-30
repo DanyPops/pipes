@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { __resetSecretsRegistryForTests, claimSecretsCommandName, listSecretsContributors } from "@danypops/daemon-kit/secrets-registry";
+import { __resetSecretsRegistryForTests, claimSecretsCommandName, listSecretsContributors } from "@danypops/vehicle-client-pi/secrets-registry";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import pipesExtension from "../src/index.ts";
 

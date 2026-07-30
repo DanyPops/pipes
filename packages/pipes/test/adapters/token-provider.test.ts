@@ -17,7 +17,7 @@ function fakeStore(initial: RefreshableAccessToken | undefined) {
 const future = (ms: number) => new Date(Date.now() + ms).toISOString();
 const past = (ms: number) => new Date(Date.now() - ms).toISOString();
 
-describe("createTokenProvider: delegates store/refresh/static-fallback to daemon-kit's own vault.ts", () => {
+describe("createTokenProvider: delegates store/refresh/static-fallback to vehicle-server's own vault.ts", () => {
 	it("returns the stored access token directly when it is fresh", async () => {
 		const store = fakeStore({ accessToken: "fresh", expiresAt: future(3_600_000) });
 		const getToken = createTokenProvider({ store, staticFallback: () => undefined });
@@ -60,7 +60,7 @@ describe("createTokenProvider: delegates store/refresh/static-fallback to daemon
 		expect(await getToken()).toBe("static-pat");
 	});
 
-	describe("enigmaSource: an optional, additive credential source checked first on every call -- pipes' own addition on top of daemon-kit's provider", () => {
+	describe("enigmaSource: an optional, additive credential source checked first on every call -- pipes' own addition on top of vehicle-server's provider", () => {
 		it("prefers Enigma's token over a fresh stored token, never even touching the store", async () => {
 			const store = fakeStore({ accessToken: "fresh-stored", expiresAt: future(3_600_000) });
 			const calls: string[] = [];

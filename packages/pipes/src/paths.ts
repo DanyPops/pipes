@@ -1,5 +1,5 @@
 import { dirname } from "node:path";
-import { type DaemonPaths, type PathEnvironment, resolveDaemonPaths } from "@danypops/daemon-kit/paths";
+import { type DaemonPaths, type PathEnvironment, resolveDaemonPaths } from "@danypops/vehicle-server/paths";
 import { DATABASE_FILENAME, HANDLE_FILENAME, STATE_DIRECTORY_NAME, SYSTEMD_UNIT_NAME, TOKEN_FILENAME } from "./constants.ts";
 
 export function resolvePipesPaths(options: PathEnvironment = {}): DaemonPaths {
@@ -15,7 +15,7 @@ export function resolvePipesPaths(options: PathEnvironment = {}): DaemonPaths {
 	);
 }
 
-/** One directory, shared by every backend's daemon-kit vault.ts file store -- each backend picks its own filename via profiledBackend(). */
+/** One directory, shared by every backend's vehicle-server vault.ts file store -- each backend picks its own filename via profiledBackend(). */
 export interface PipesCredentialPaths {
 	credentialsDir: string;
 }
@@ -26,7 +26,7 @@ export function resolvePipesCredentialPaths(paths: DaemonPaths): PipesCredential
 }
 
 /**
- * Profile-qualifies a backend name for daemon-kit's createFileStore/createEncryptedFileStore
+ * Profile-qualifies a backend name for vehicle-server's createFileStore/createEncryptedFileStore
  * keying (e.g. "github" -> github.json, "github-work" -> github-work.json) -- the local
  * named-credential-profile tier: omitted resolves the plain backend name unchanged (a target
  * that never opts into profiles sees zero behavior change), a named profile resolves its own

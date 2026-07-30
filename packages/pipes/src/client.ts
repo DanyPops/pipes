@@ -5,8 +5,8 @@
  * paths that do not reliably transpile a dependency's raw Bun-targeted
  * TypeScript.
  */
-import { ensureAuthToken, readDaemonHandle } from "@danypops/daemon-kit/paths";
-import { AuthenticatedRpcClient } from "@danypops/daemon-kit/rpc-client";
+import { ensureAuthToken, readDaemonHandle } from "@danypops/vehicle-server/paths";
+import { AuthenticatedRpcClient } from "@danypops/vehicle-client/rpc-client";
 import { resolvePipesPaths } from "./paths.ts";
 import type { OperationInputs, OperationName, OperationOutputs } from "./service.ts";
 

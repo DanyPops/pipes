@@ -87,7 +87,7 @@ describe("pipes login (real subprocess)", () => {
 			expect(code).toBe(0);
 			expect(stdout).toContain("Jenkins credentials saved");
 
-			// daemon-kit's vault.ts file store keys its filename by backend name alone ("jenkins.json"),
+			// vehicle-server's vault.ts file store keys its filename by backend name alone ("jenkins.json"),
 			// encoding the baseUrl/username/apiToken triple into RefreshableAccessToken's generic
 			// accessToken+extra shape -- see jenkins/auth.ts's toAccessToken/fromAccessToken boundary.
 			const stateFile = join(dir, "pipes", "jenkins.json");

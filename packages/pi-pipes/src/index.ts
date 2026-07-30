@@ -4,7 +4,7 @@
  * no network access or credentials of its own.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerSharedSecretsCommand } from "@danypops/daemon-kit/secrets-tui";
+import { registerSharedSecretsCommand } from "@danypops/vehicle-client-pi/secrets-tui";
 import { registerCiTool } from "./ci-tool.ts";
 import { connectOrStartPipesClient } from "./daemon-client.ts";
 import { runPipesCommand } from "./pipes-tui.ts";
@@ -18,7 +18,7 @@ export default function pipesExtension(pi: ExtensionAPI) {
 		handler: async (_args, ctx) => runPipesCommand(ctx, connectOrStartPipesClient),
 	});
 
-	// Contributes to the shared /secrets namespace (daemon-kit's
+	// Contributes to the shared /secrets namespace (vehicle-client-pi's
 	// registerSharedSecretsCommand) instead of a menu entry buried inside
 	// /pipes -- pi-enigma and pi-tickets contribute the same way, so
 	// whichever of the three loads first in a given Pi session ends up

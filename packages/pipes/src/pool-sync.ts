@@ -14,7 +14,7 @@
  * now. One job's failed refresh must not abort the rest of the batch, so
  * each job is fetched and caught independently.
  */
-import type { Logger } from "@danypops/daemon-kit/logging";
+import type { Logger } from "@danypops/vehicle-server/logging";
 import { isTerminalStatus } from "./domain/ci-run.ts";
 import type { Orchestrator } from "./orchestrator.ts";
 import type { RunPool } from "./run-pool.ts";
