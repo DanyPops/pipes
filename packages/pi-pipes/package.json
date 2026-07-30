@@ -1,6 +1,6 @@
 {
 	"name": "@danypops/pi-pipes",
-	"version": "0.8.2",
+	"version": "0.8.3",
 	"license": "MIT",
 	"description": "Pi extension: agent-facing CI tool for cross-platform CI (GitHub Actions, GitLab CI, Jenkins)",
 	"keywords": ["pi-package"],
