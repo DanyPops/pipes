@@ -12,6 +12,7 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder, getSelectListTheme } from "@earendil-works/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
+import { BorderedSelectPanel } from "malevich-tui-components";
 import { findFirstUrl, openLine } from "./ci-render.ts";
 import { summarize } from "./ci-tool.ts";
 import type { PipesClient } from "./daemon-client.ts";
@@ -58,27 +59,38 @@ export function describePreset(preset: PresetInfo): string {
 	return `${preset.backend} \u2014 ${preset.steps.length} step(s): ${preset.steps.map((s) => s.jobName).join(", ")}`;
 }
 
-/** Generic picker, identical in shape to pi-enigma's own pickFromList: a bordered SelectList in TUI mode, a plain notify listing in non-TUI mode. */
-async function pickFromList(ctx: ExtensionCommandContext, title: string, items: SelectItem[], helpText: string): Promise<string | null> {
+/**
+ * Generic picker, built on malevich-tui-components' BorderedSelectPanel -- the same
+ * border+title+list+help scaffold this file used to hand-roll independently (its own
+ * prior doc comment noted it was "identical in shape to pi-enigma's own pickFromList";
+ * Malevich's own doc comment confirms the same scaffold was duplicated across five real
+ * codebases before being formalized there). A bordered SelectList in TUI mode, a plain
+ * notify listing in non-TUI mode.
+ */
+export async function pickFromList(ctx: ExtensionCommandContext, title: string, items: SelectItem[], helpText: string): Promise<string | null> {
 	if (ctx.mode !== "tui") {
 		ctx.ui.notify(`${title}: ${items.map((item) => item.label).join(", ") || "(none)"}`, "info");
 		return null;
 	}
 	return ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
-		const container = new Container();
-		container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
-		container.addChild(new Text(theme.fg("accent", theme.bold(title)), 1, 0));
 		const selectList = new SelectList(items, Math.min(items.length, 10), getSelectListTheme());
 		selectList.onSelect = (item) => done(item.value);
 		selectList.onCancel = () => done(null);
-		container.addChild(selectList);
-		container.addChild(new Text(theme.fg("dim", helpText), 1, 0));
-		container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+		const panel = new BorderedSelectPanel({
+			title,
+			list: selectList,
+			helpText,
+			theme: {
+				border: (s: string) => theme.fg("accent", s),
+				title: (s: string) => theme.fg("accent", theme.bold(s)),
+				help: (s: string) => theme.fg("dim", s),
+			},
+		});
 		return {
-			render: (w) => container.render(w),
-			invalidate: () => container.invalidate(),
+			render: (w) => panel.render(w),
+			invalidate: () => panel.invalidate(),
 			handleInput: (data) => {
-				selectList.handleInput(data);
+				panel.handleInput(data);
 				tui.requestRender();
 			},
 		};

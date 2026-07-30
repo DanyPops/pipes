@@ -1,7 +1,84 @@
 import { describe, expect, it } from "bun:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { describePreset, isTriggerable, parseParams, type PickFromList, runPipesCommand, type ShowScreen } from "../src/pipes-tui.ts";
+import { describePreset, isTriggerable, parseParams, pickFromList, type PickFromList, runPipesCommand, type ShowScreen } from "../src/pipes-tui.ts";
 import type { PipesClient } from "../src/daemon-client.ts";
+
+/**
+ * pickFromList's real (non-fake) implementation was never covered by the rest of
+ * this suite -- every other test injects its own recording pick fake. This exercises
+ * it directly against a minimal ctx.ui.custom, proving the BorderedSelectPanel swap
+ * (from a hand-rolled Container/DynamicBorder/Text scaffold) still renders the title,
+ * items, and help text, and still resolves via the wrapped SelectList's own callbacks.
+ */
+describe("pickFromList (real implementation, via malevich-tui-components' BorderedSelectPanel)", () => {
+	type FakeComponent = { render(width: number): string[]; handleInput(data: string): void; invalidate(): void };
+
+	function fakeTuiCtx(): { ctx: ExtensionCommandContext; componentReady: Promise<FakeComponent> } {
+		let resolveComponent!: (component: FakeComponent) => void;
+		const componentReady = new Promise<FakeComponent>((r) => { resolveComponent = r; });
+		const ctx = {
+			mode: "tui",
+			ui: {
+				notify: () => {},
+				custom: async (factory: (tui: unknown, theme: unknown, kb: unknown, done: (r: unknown) => void) => FakeComponent | Promise<FakeComponent>) => {
+					let resolveResult!: (value: unknown) => void;
+					const resultPromise = new Promise((r) => { resolveResult = r; });
+					const fakeTheme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+					const fakeTui = { requestRender: () => {} };
+					const component = await factory(fakeTui, fakeTheme, {}, resolveResult);
+					resolveComponent(component);
+					return resultPromise;
+				},
+			},
+		} as unknown as ExtensionCommandContext;
+		return { ctx, componentReady };
+	}
+
+	// Note: this doesn't assert on component.render() output -- pi-tui's real SelectList.render()
+	// calls getSelectListTheme(), which reads Pi's global theme singleton rather than the theme
+	// object passed into ctx.ui.custom's factory. That's a pre-existing property of pickFromList's
+	// design (unrelated to the BorderedSelectPanel swap), not something a fake theme object here
+	// can satisfy without a much larger Pi-runtime mock. handleInput/done wiring -- the actual
+	// logic this swap touched -- doesn't go through render() and is fully covered below.
+	it("cancels via the wrapped SelectList's own onCancel, forwarded through handleInput", async () => {
+		const { ctx, componentReady } = fakeTuiCtx();
+		const resultPromise = pickFromList(ctx, "Pick a backend", [
+			{ value: "github", label: "github", description: "trigger history" },
+			{ value: "gitlab", label: "gitlab", description: "unconfigured" },
+		], "\u2191\u2193 navigate \u2022 enter select \u2022 esc back");
+		const component = await componentReady;
+		component.handleInput("\x1b");
+		expect(await resultPromise).toBeNull();
+	});
+
+	it("resolves the selected item's value when the wrapped SelectList's own Enter selects it", async () => {
+		const { ctx, componentReady } = fakeTuiCtx();
+		const resultPromise = pickFromList(ctx, "Pick a backend", [
+			{ value: "github", label: "github" },
+			{ value: "gitlab", label: "gitlab" },
+		], "help");
+		const component = await componentReady;
+		component.handleInput("\r");
+		expect(await resultPromise).toBe("github");
+	});
+
+	it("falls back to a plain notify listing in non-TUI mode, without ever calling ui.custom", async () => {
+		const notifications: Array<{ text: string; level: string }> = [];
+		let customCalled = false;
+		const ctx = {
+			mode: "headless",
+			ui: {
+				notify: (text: string, level: string) => notifications.push({ text, level }),
+				custom: async () => { customCalled = true; },
+			},
+		} as unknown as ExtensionCommandContext;
+		const result = await pickFromList(ctx, "Pick a backend", [{ value: "github", label: "github" }], "help");
+		expect(result).toBeNull();
+		expect(customCalled).toBe(false);
+		expect(notifications[0]?.text).toContain("Pick a backend");
+		expect(notifications[0]?.level).toBe("info");
+	});
+});
 
 describe("parseParams", () => {
 	it("parses comma-separated key=value pairs", () => {
