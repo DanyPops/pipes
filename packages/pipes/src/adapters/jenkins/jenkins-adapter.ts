@@ -7,6 +7,7 @@ import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, CIStep } from 
 import type { TriggerReceipt } from "../../domain/trigger.ts";
 import { Capability, type CapabilitySet, type CIArtifactStore, type CIBackend, type CIChainable, type CIHistorical, type CIPipeliner, type CITriggerable } from "../../ports/ci-backend.ts";
 import type { FetchLike } from "../github/auth.ts";
+import { withTimeout } from "../http-timeout.ts";
 import { type CrumbCache, createCrumbCache, type JenkinsCredentials, withCrumbHeaders } from "./auth.ts";
 
 export class JenkinsNotFoundError extends Error {
@@ -96,7 +97,9 @@ export function createJenkinsAdapter(
 	options: JenkinsAdapterOptions,
 ): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIChainable {
 	const { name, credentials } = options;
-	const doFetch = options.fetchImpl ?? (fetch as unknown as FetchLike);
+	// A caller-supplied fetchImpl (tests, or a future custom transport) is used as-is; the real
+	// default fetch is wrapped so a stalled connection to Jenkins can't hang ci.wait's poll loop forever.
+	const doFetch = options.fetchImpl ?? withTimeout();
 	const crumbCache = options.crumbCache ?? createCrumbCache();
 	const baseUrl = credentials.baseUrl.replace(/\/$/, "");
 

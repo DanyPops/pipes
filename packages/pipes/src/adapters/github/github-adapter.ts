@@ -16,6 +16,7 @@ import {
 	type CITriggerable,
 } from "../../ports/ci-backend.ts";
 import { parseRateLimitHeaders, parseRetryAfterMs, RateLimitError } from "../http-rate-limit.ts";
+import { withTimeout } from "../http-timeout.ts";
 import type { FetchLike } from "./auth.ts";
 
 const API_BASE_URL = "https://api.github.com";
@@ -53,7 +54,9 @@ export interface GitHubAdapterOptions {
 
 export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIDiscoverable {
 	const { name, owner, repo: fixedRepo, token } = options;
-	const doFetch = options.fetchImpl ?? (fetch as unknown as FetchLike);
+	// A caller-supplied fetchImpl (tests, or a future custom transport) is used as-is; the real
+	// default fetch is wrapped so a stalled connection to GitHub can't hang ci.wait's poll loop forever.
+	const doFetch = options.fetchImpl ?? withTimeout();
 	const resolveToken = options.getToken ?? (async () => token);
 
 	/**

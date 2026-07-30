@@ -51,7 +51,14 @@ export async function waitAndStreamTail(
 		const remainingS = Math.max(1, Math.ceil((deadline - now()) / 1000));
 		const tickTimeoutS = Math.min(WAIT_TICK_TIMEOUT_S, remainingS);
 
-		const status = await client.call<Record<string, unknown>>("ci.wait", { backend: params.backend, jobRef: params.jobRef, runId: params.runId, timeoutS: tickTimeoutS });
+		// The daemon can legitimately block for the whole tick budget servicing this call (it's a real
+		// blocking poll on its side too) -- give the client-side deadline headroom above tickTimeoutS so
+		// a normal, in-flight tick is never mistaken for a wedged daemon.
+		const status = await client.call<Record<string, unknown>>(
+			"ci.wait",
+			{ backend: params.backend, jobRef: params.jobRef, runId: params.runId, timeoutS: tickTimeoutS },
+			tickTimeoutS * 1000 + 10_000,
+		);
 		const tail = await client.call<WaitStreamTail>("ci.tail", { backend: params.backend, jobRef: params.jobRef, runId: params.runId, maxTokens: params.maxTokens });
 		result = { ...status, tail };
 

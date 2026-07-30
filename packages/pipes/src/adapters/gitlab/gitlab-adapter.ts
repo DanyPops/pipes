@@ -8,8 +8,9 @@
 import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode } from "../../domain/ci-run.ts";
 import type { TriggerReceipt } from "../../domain/trigger.ts";
 import { Capability, type CapabilitySet, type CIArtifactStore, type CIBackend, type CIChainable, type CIHistorical, type CIPipeliner, type CITriggerable } from "../../ports/ci-backend.ts";
-import { parseRateLimitHeaders, parseRetryAfterMs, RateLimitError } from "../http-rate-limit.ts";
 import type { FetchLike } from "../github/auth.ts";
+import { parseRateLimitHeaders, parseRetryAfterMs, RateLimitError } from "../http-rate-limit.ts";
+import { withTimeout } from "../http-timeout.ts";
 
 export class GitLabNotFoundError extends Error {
 	constructor(path: string) {
@@ -37,7 +38,9 @@ export interface GitLabAdapterOptions {
 export function createGitLabAdapter(options: GitLabAdapterOptions): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIChainable {
 	const { name, projectId, token } = options;
 	const apiBaseUrl = `${options.baseUrl.replace(/\/$/, "")}/api/v4`;
-	const doFetch = options.fetchImpl ?? (fetch as unknown as FetchLike);
+	// A caller-supplied fetchImpl (tests, or a future custom transport) is used as-is; the real
+	// default fetch is wrapped so a stalled connection to GitLab can't hang ci.wait's poll loop forever.
+	const doFetch = options.fetchImpl ?? withTimeout();
 	const resolveToken = options.getToken ?? (async () => token);
 
 	async function api<T>(method: string, path: string, body?: unknown): Promise<T | undefined> {

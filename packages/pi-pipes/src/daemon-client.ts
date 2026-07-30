@@ -83,6 +83,9 @@ export function readDaemonHandle(paths: PipesPaths): DaemonHandle | null {
 
 export type FetchTransport = (request: Request) => Promise<Response>;
 
+/** Default deadline for a single daemon RPC. Generous relative to a normal local loopback call, but still bounded: a wedged daemon process must fail loudly rather than hang the caller (e.g. ci-wait-stream's poll loop) forever. */
+const DEFAULT_CALL_TIMEOUT_MS = 30_000;
+
 export class PipesClient {
 	constructor(
 		private readonly baseUrl: string,
@@ -90,14 +93,20 @@ export class PipesClient {
 		private readonly transport: FetchTransport = fetch,
 	) {}
 
-	async call<T = unknown>(operation: string, input: Record<string, unknown>): Promise<T> {
-		const response = await this.transport(
+	/** timeoutMs bounds this one call; pass a larger value for an operation the daemon may legitimately block on (e.g. ci.wait's own tickTimeoutS) so a real in-flight wait isn't mistaken for a wedged daemon. */
+	async call<T = unknown>(operation: string, input: Record<string, unknown>, timeoutMs: number = DEFAULT_CALL_TIMEOUT_MS): Promise<T> {
+		let timer: ReturnType<typeof setTimeout>;
+		const deadline = new Promise<Response>((_resolve, reject) => {
+			timer = setTimeout(() => reject(new Error(`Pipes daemon call "${operation}" timed out after ${timeoutMs}ms`)), timeoutMs);
+		});
+		const request = this.transport(
 			new Request(`${this.baseUrl}/api/v1/ops`, {
 				method: "POST",
 				headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" },
 				body: JSON.stringify({ op: operation, input }),
 			}),
 		);
+		const response = await Promise.race([request, deadline]).finally(() => clearTimeout(timer));
 		const body = (await response.json()) as { result?: T; error?: string };
 		if (!response.ok) throw new Error(body.error ?? `Pipes operation failed with HTTP ${response.status}`);
 		return body.result as T;
