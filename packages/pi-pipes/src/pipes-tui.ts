@@ -16,6 +16,7 @@ import { BorderedSelectPanel } from "malevich-tui-components";
 import { findFirstUrl, openLine } from "./ci-render.ts";
 import { summarize } from "./ci-tool.ts";
 import type { PipesClient } from "./daemon-client.ts";
+import { showRunDetailView, type RunDetailData } from "./run-detail-view.ts";
 interface BackendInfo {
 	name: string;
 	type: string;
@@ -162,12 +163,38 @@ async function triggerDirectFlow(ctx: ExtensionCommandContext, client: PipesClie
 
 const RUN_ACTIONS: SelectItem[] = [
 	{ value: "status", label: "Status", description: "Check the current verdict" },
+	{ value: "detail", label: "Full detail view", description: "Scrollable status + log in one screen" },
 	{ value: "trigger", label: "Trigger", description: "Start a new run" },
 	{ value: "wait", label: "Wait", description: "Block until the run finishes" },
 	{ value: "cancel", label: "Cancel", description: "Cancel a specific run (requires a run id)" },
 	{ value: "log", label: "Log", description: "View the run's log" },
 	{ value: ACTION_BACK, label: "Back" },
 ];
+
+/**
+ * Fetches ci.status and ci.log together and normalizes them into the flat
+ * shape run-detail-view.ts renders -- ci.status's CIVerdict already nests a
+ * FailureContext.log when the run failed, but manageRunFlow always fetches
+ * its own top-level log too so the detail view works for a passing run as
+ * well, not only a failed one.
+ */
+interface RawCIVerdict {
+	check: RunDetailData["check"];
+	failure?: RunDetailData["failure"] & { log?: { lines: string[]; totalLines: number; truncated?: boolean } };
+}
+
+async function fetchRunDetail(client: PipesClient, backend: string, jobRef: string, runId: string | undefined): Promise<RunDetailData> {
+	const { verdict } = await client.call<{ verdict: RawCIVerdict }>("ci.status", { backend, jobRef, runId });
+	let log: RunDetailData["log"];
+	try {
+		const logResult = await client.call<{ lines: string[]; totalLines: number; truncated?: boolean }>("ci.log", { backend, jobRef, runId });
+		log = { lines: logResult.lines, totalLines: logResult.totalLines, truncated: logResult.truncated };
+	} catch {
+		// A run with no log yet (queued, or the backend has none) -- the view works fine without one.
+		log = verdict.failure?.log;
+	}
+	return { check: verdict.check, failure: verdict.failure, log };
+}
 
 async function manageRunFlow(ctx: ExtensionCommandContext, client: PipesClient, backends: BackendInfo[], pick: PickFromList, show: ShowScreen): Promise<void> {
 	const backend = await pickBackend(ctx, backends, pick, false);
@@ -185,6 +212,13 @@ async function manageRunFlow(ctx: ExtensionCommandContext, client: PipesClient, 
 
 		if (action === "status") {
 			await runOperation(ctx, client, "Status", "ci.status", { backend, jobRef, runId }, show);
+		} else if (action === "detail") {
+			try {
+				const detail = await fetchRunDetail(client, backend, jobRef, runId);
+				await showRunDetailView(ctx, detail);
+			} catch (error) {
+				ctx.ui.notify(`Full detail view failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+			}
 		} else if (action === "trigger") {
 			const paramsText = await ctx.ui.input("Params (optional, key=value,key2=value2)");
 			const params = paramsText ? parseParams(paramsText) : {};

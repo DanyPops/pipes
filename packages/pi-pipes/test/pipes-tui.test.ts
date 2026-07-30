@@ -130,7 +130,7 @@ describe("describePreset", () => {
 
 // ── Interactive-flow harness, mirroring pi-enigma's own fakeCtx/scriptedPick pattern ──
 
-function fakeCtx(overrides: { confirms?: boolean[]; inputs?: Array<string | undefined> } = {}): {
+function fakeCtx(overrides: { confirms?: boolean[]; inputs?: Array<string | undefined>; custom?: (factory: (tui: unknown, theme: unknown, kb: unknown, done: () => void) => unknown) => unknown } = {}): {
 	ctx: ExtensionCommandContext;
 	notifications: Array<{ text: string; level: string }>;
 	inputPrompts: string[];
@@ -150,6 +150,10 @@ function fakeCtx(overrides: { confirms?: boolean[]; inputs?: Array<string | unde
 				inputPrompts.push(title);
 				return inputQueue.length > 0 ? inputQueue.shift() : undefined;
 			},
+			// Only exercised by flows that call ctx.ui.custom directly (the real pickFromList,
+			// showRunDetailView) -- every other test here injects its own scriptedPick/recordingShow
+			// and never reaches this. Defaults to a no-op so those tests are unaffected.
+			custom: overrides.custom ?? (async () => undefined),
 		},
 	} as unknown as ExtensionCommandContext;
 	return { ctx, notifications, inputPrompts };
@@ -300,6 +304,70 @@ describe("runPipesCommand: manage a run", () => {
 
 		const statusCall = client.calls.find((c) => c.op === "ci.status");
 		expect(statusCall?.input).toEqual({ backend: "github", jobRef: "ci.yml", runId: undefined });
+	});
+
+	it("fetches ci.status and ci.log together and opens the full detail view", async () => {
+		let rendered: string[] = [];
+		const { ctx } = fakeCtx({
+			inputs: ["ci.yml", "42"],
+			custom: async (factory) => {
+				const component = (await factory({ terminal: { rows: 40 }, requestRender: () => {} }, { fg: (_c: string, t: string) => t, bold: (t: string) => t }, {}, () => {})) as { render(w: number): string[] };
+				rendered = component.render(100);
+			},
+		});
+		const client = fakeClient({
+			"ci.help": () => ({ backends: BACKENDS, pipelines: [] }),
+			"ci.presets.list": () => ({ presets: [] }),
+			"ci.status": (input) => ({ verdict: { check: { ...input, status: "failure" }, failure: { classification: "test-failure" } } }),
+			"ci.log": () => ({ lines: ["build failed at step 3"], totalLines: 1 }),
+		});
+		const pick = scriptedPick("__pipes_manage_run__", "github", "detail", "__pipes_back__");
+
+		await runPipesCommand(ctx, async () => client, pick, recordingShow().show);
+
+		expect(client.calls.some((c) => c.op === "ci.status")).toBe(true);
+		expect(client.calls.some((c) => c.op === "ci.log")).toBe(true);
+		const text = rendered.join("\n");
+		expect(text).toContain("github/ci.yml #42");
+		expect(text).toContain("Status: failure");
+		expect(text).toContain("test-failure");
+		expect(text).toContain("build failed at step 3");
+	});
+
+	it("falls back to the verdict's own failure log when ci.log itself fails", async () => {
+		let rendered: string[] = [];
+		const { ctx } = fakeCtx({
+			inputs: ["ci.yml", undefined],
+			custom: async (factory) => {
+				const component = (await factory({ terminal: { rows: 40 }, requestRender: () => {} }, { fg: (_c: string, t: string) => t, bold: (t: string) => t }, {}, () => {})) as { render(w: number): string[] };
+				rendered = component.render(100);
+			},
+		});
+		const client = fakeClient({
+			"ci.help": () => ({ backends: BACKENDS, pipelines: [] }),
+			"ci.presets.list": () => ({ presets: [] }),
+			"ci.status": (input) => ({ verdict: { check: { ...input, status: "failure" }, failure: { classification: "test-failure", log: { lines: ["from failure context"], totalLines: 1 } } } }),
+			"ci.log": () => { throw new Error("no artifact log available"); },
+		});
+		const pick = scriptedPick("__pipes_manage_run__", "github", "detail", "__pipes_back__");
+
+		await runPipesCommand(ctx, async () => client, pick, recordingShow().show);
+
+		expect(rendered.join("\n")).toContain("from failure context");
+	});
+
+	it("surfaces a status/log failure via notify instead of throwing", async () => {
+		const { ctx, notifications } = fakeCtx({ inputs: ["ci.yml", undefined] });
+		const client = fakeClient({
+			"ci.help": () => ({ backends: BACKENDS, pipelines: [] }),
+			"ci.presets.list": () => ({ presets: [] }),
+			"ci.status": () => { throw new Error("daemon unavailable"); },
+		});
+		const pick = scriptedPick("__pipes_manage_run__", "github", "detail", "__pipes_back__");
+
+		await runPipesCommand(ctx, async () => client, pick, recordingShow().show);
+
+		expect(notifications.some((n) => n.text.includes("Full detail view failed") && n.text.includes("daemon unavailable"))).toBe(true);
 	});
 
 	it("refuses to cancel without an explicit run id, and re-prompts the action picker instead of calling cancel blind", async () => {
