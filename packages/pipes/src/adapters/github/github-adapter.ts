@@ -3,6 +3,7 @@
  * connectivity is only ever exercised by the first real operation call.
  */
 import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode } from "../../domain/ci-run.ts";
+import { isTerminalStatus } from "../../domain/ci-run.ts";
 import type { RepoInfo, WorkflowInfo } from "../../domain/discovery.ts";
 import type { TriggerReceipt } from "../../domain/trigger.ts";
 import {
@@ -139,15 +140,18 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 		}
 	}
 
+	/** GitHub exposes no duration field directly; a completed run's wall-clock span is `updated_at - run_started_at` (falling back to `created_at` if the run never queued). Still-running/pending runs keep durationMs undefined -- orchestrator.ciWatch derives their elapsed time from startedAt instead. */
 	function toCIRun(run: GhWorkflowRun): CIRun {
+		const status = mapStatus(run.status, run.conclusion);
+		const startedAt = new Date(run.run_started_at ?? run.created_at);
 		return {
 			id: String(run.id),
 			name: run.name ?? "",
-			status: mapStatus(run.status, run.conclusion),
+			status,
 			result: mapResult(run.conclusion),
 			url: run.html_url,
-			startedAt: new Date(run.created_at),
-			durationMs: undefined,
+			startedAt,
+			durationMs: isTerminalStatus(status) && run.updated_at ? Math.max(0, new Date(run.updated_at).getTime() - startedAt.getTime()) : undefined,
 		};
 	}
 
@@ -234,8 +238,16 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 			return { ...receipt, runId: String(match.id), needsResolve: false };
 		},
 
-		async estimateDuration(): Promise<number> {
-			return 0; // GitHub Actions does not expose an estimated duration
+		/** GitHub Actions exposes no estimated-duration field (unlike Jenkins' `lastBuild.estimatedDuration`) -- averages durationMs across the most recent completed runs of this workflow instead. */
+		async estimateDuration(jobRef: string): Promise<number> {
+			const { repo, workflow } = resolveJobRef(jobRef);
+			const page = await api<{ workflow_runs: GhWorkflowRun[] }>(
+				"GET",
+				`/repos/${owner}/${repo}/actions/workflows/${workflow}/runs?status=completed&per_page=10`,
+			);
+			const durations = (page?.workflow_runs ?? []).map((run) => toCIRun(run).durationMs).filter((ms): ms is number => typeof ms === "number" && ms > 0);
+			if (durations.length === 0) return 0;
+			return durations.reduce((sum, ms) => sum + ms, 0) / durations.length;
 		},
 
 		async listRuns(jobRef: string, limit: number): Promise<CIRun[]> {
@@ -309,6 +321,8 @@ interface GhWorkflowRun {
 	conclusion: string | null;
 	html_url: string;
 	created_at: string;
+	run_started_at?: string;
+	updated_at?: string;
 }
 
 interface GhWorkflowJob {

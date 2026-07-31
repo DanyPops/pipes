@@ -8,7 +8,10 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 	return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" }, ...init });
 }
 
-function ghRun(id: number, overrides: Partial<{ status: string; conclusion: string | null; created_at: string }> = {}) {
+function ghRun(
+	id: number,
+	overrides: Partial<{ status: string; conclusion: string | null; created_at: string; run_started_at: string; updated_at: string }> = {},
+) {
 	return {
 		id,
 		name: "CI",
@@ -16,6 +19,8 @@ function ghRun(id: number, overrides: Partial<{ status: string; conclusion: stri
 		conclusion: overrides.conclusion ?? "success",
 		html_url: `https://github.com/o/r/actions/runs/${id}`,
 		created_at: overrides.created_at ?? "2026-01-01T00:00:00Z",
+		run_started_at: overrides.run_started_at,
+		updated_at: overrides.updated_at,
 	};
 }
 
@@ -133,6 +138,53 @@ describe("createGitHubAdapter.getLog: per-job concatenation, not the zipped run-
 		const log = await adapter.getLog("workflow.yml", "1", {});
 		expect(log).toContain("--- build ---");
 		expect(log).toContain("line one\nline two");
+	});
+});
+
+describe("createGitHubAdapter.getRun: durationMs", () => {
+	it("computes durationMs from run_started_at/updated_at for a completed run", async () => {
+		const fetchImpl: FetchLike = async () =>
+			jsonResponse(ghRun(1, { run_started_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:05:00Z" }));
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl });
+
+		const run = await adapter.getRun("workflow.yml", "1");
+		expect(run.durationMs).toBe(5 * 60 * 1000);
+	});
+
+	it("leaves durationMs undefined for a still-running run", async () => {
+		const fetchImpl: FetchLike = async () =>
+			jsonResponse(ghRun(1, { status: "in_progress", conclusion: null, run_started_at: "2026-01-01T00:00:00Z" }));
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl });
+
+		const run = await adapter.getRun("workflow.yml", "1");
+		expect(run.durationMs).toBeUndefined();
+	});
+});
+
+describe("createGitHubAdapter.estimateDuration", () => {
+	it("averages durationMs across recent completed runs of the workflow", async () => {
+		const fetchImpl: FetchLike = async (url) => {
+			expect(url).toContain("/actions/workflows/workflow.yml/runs?status=completed");
+			return jsonResponse({
+				workflow_runs: [
+					ghRun(1, { run_started_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:10:00Z" }),
+					ghRun(2, { run_started_at: "2026-01-02T00:00:00Z", updated_at: "2026-01-02T00:20:00Z" }),
+				],
+			});
+		};
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl });
+		const triggerable = asTriggerable(adapter);
+
+		const estimatedMs = await triggerable?.estimateDuration("workflow.yml");
+		expect(estimatedMs).toBe(15 * 60 * 1000);
+	});
+
+	it("returns 0 when no completed runs exist yet", async () => {
+		const fetchImpl: FetchLike = async () => jsonResponse({ workflow_runs: [] });
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl });
+		const triggerable = asTriggerable(adapter);
+
+		expect(await triggerable?.estimateDuration("workflow.yml")).toBe(0);
 	});
 });
 
