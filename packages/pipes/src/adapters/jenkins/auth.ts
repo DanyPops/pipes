@@ -10,9 +10,10 @@
  * cannot be assumed for older or differently configured instances, so a
  * crumb is always fetched and attached defensively rather than skipped.
  */
-import { createFileStore, type RefreshableAccessToken } from "@danypops/vehicle-server/vault";
+
 import type { TryEnigmaCredential } from "@danypops/enigma-client";
 import { tryEnigmaCredential } from "@danypops/enigma-client";
+import { createFileStore, type RefreshableAccessToken } from "@danypops/vehicle-server/vault";
 import type { FetchLike } from "../github/auth.ts";
 
 export interface JenkinsCredentials {

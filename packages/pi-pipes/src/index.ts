@@ -3,8 +3,9 @@
  * Jenkins, Prow). Thin authenticated client to @danypops/pipes —
  * no network access or credentials of its own.
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
 import { registerSharedSecretsCommand } from "@danypops/vehicle-client-pi/secrets-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerCiTool } from "./ci-tool.ts";
 import { connectOrStartPipesClient } from "./daemon-client.ts";
 import { runPipesCommand } from "./pipes-tui.ts";

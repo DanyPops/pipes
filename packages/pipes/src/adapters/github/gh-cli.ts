@@ -16,9 +16,7 @@
  */
 export type GhCliTokenResult = { ok: true; token: string } | { ok: false; reason: string };
 
-export interface SpawnLike {
-	(command: string[]): { stdout: ReadableStream<Uint8Array> | number; exited: Promise<number> };
-}
+export type SpawnLike = (command: string[]) => { stdout: ReadableStream<Uint8Array> | number; exited: Promise<number> };
 
 const defaultSpawn: SpawnLike = (command) => Bun.spawn(command, { stdout: "pipe" });
 
@@ -40,7 +38,12 @@ export async function readGhCliToken(user?: string, spawn: SpawnLike = defaultSp
 		proc.exited,
 	]);
 	if (code !== 0) {
-		return { ok: false, reason: user ? `gh CLI has no authenticated account named "${user}" -- run \`gh auth login\` first` : "gh CLI is not authenticated -- run `gh auth login` first" };
+		return {
+			ok: false,
+			reason: user
+				? `gh CLI has no authenticated account named "${user}" -- run \`gh auth login\` first`
+				: "gh CLI is not authenticated -- run `gh auth login` first",
+		};
 	}
 	const token = stdout.trim();
 	if (!token) return { ok: false, reason: "gh auth token returned no token" };

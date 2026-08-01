@@ -9,7 +9,7 @@
  * trees are a real future step, not this one.
  */
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
-import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type TUI } from "@earendil-works/pi-tui";
+import { type Component, matchesKey, type TUI, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { buildDetailLines, type DetailField, type DetailSection, type TextMeasure } from "malevich-tui-components";
 
 const RESERVED_ROWS = 4;
@@ -71,7 +71,9 @@ class RunDetailViewport implements Component {
 		private readonly close: () => void,
 	) {}
 
-	invalidate(): void { this.renderedWidth = 0; }
+	invalidate(): void {
+		this.renderedWidth = 0;
+	}
 
 	render(width: number): string[] {
 		const contentWidth = Math.max(1, width - 2);
@@ -84,7 +86,9 @@ class RunDetailViewport implements Component {
 		const { check } = this.data;
 		const title = `${check.backend}/${check.jobRef} #${check.runId}`;
 		const footer = [
-			this.lines.length > visible ? `\u2191/\u2193 scroll \u00b7 pgup/pgdn page \u00b7 ${this.offsetY + 1}-${end}/${this.lines.length}` : "\u2191/\u2193 scroll \u00b7 pgup/pgdn page",
+			this.lines.length > visible
+				? `\u2191/\u2193 scroll \u00b7 pgup/pgdn page \u00b7 ${this.offsetY + 1}-${end}/${this.lines.length}`
+				: "\u2191/\u2193 scroll \u00b7 pgup/pgdn page",
 			"esc close",
 		].join(" \u00b7 ");
 		return [
@@ -99,7 +103,10 @@ class RunDetailViewport implements Component {
 
 	handleInput(data: string): void {
 		const visible = computeVisibleLines(this.tui);
-		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) { this.close(); return; }
+		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+			this.close();
+			return;
+		}
 		if (matchesKey(data, "up")) this.offsetY = Math.max(0, this.offsetY - 1);
 		else if (matchesKey(data, "down")) this.offsetY = Math.min(Math.max(0, this.lines.length - visible), this.offsetY + 1);
 		else if (matchesKey(data, "pageUp")) this.offsetY = Math.max(0, this.offsetY - visible);

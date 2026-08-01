@@ -1,7 +1,7 @@
+import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "bun:test";
 import type { Pipeline } from "../src/domain/pipeline.ts";
 import { defaultPresetsPath, loadPresets, savePresets } from "../src/presets.ts";
 

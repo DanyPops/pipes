@@ -88,7 +88,9 @@ export function startCallbackServer(): CallbackServer {
 			const error = url.searchParams.get("error");
 			if (error) {
 				resolveCallback({ ok: false, error });
-				return new Response(`<html><body>Authorization failed: ${error}. You can close this tab.</body></html>`, { headers: { "content-type": "text/html" } });
+				return new Response(`<html><body>Authorization failed: ${error}. You can close this tab.</body></html>`, {
+					headers: { "content-type": "text/html" },
+				});
 			}
 			if (!code || !state) {
 				resolveCallback({ ok: false, error: "missing code or state" });
@@ -125,7 +127,13 @@ export async function exchangeAuthorizationCode(
 		}),
 	});
 	if (!response.ok) throw new Error(`GitLab token exchange failed: HTTP ${response.status}`);
-	const body = (await response.json()) as { access_token: string; token_type: string; scope?: string; refresh_token?: string; expires_in?: number };
+	const body = (await response.json()) as {
+		access_token: string;
+		token_type: string;
+		scope?: string;
+		refresh_token?: string;
+		expires_in?: number;
+	};
 	return {
 		accessToken: body.access_token,
 		scope: body.scope,
@@ -143,7 +151,13 @@ export async function refreshAccessToken(options: GitLabAuthOptions, refreshToke
 		body: new URLSearchParams({ client_id: options.clientId, refresh_token: refreshToken, grant_type: "refresh_token" }),
 	});
 	if (!response.ok) throw new Error(`GitLab token refresh failed: HTTP ${response.status}`);
-	const body = (await response.json()) as { access_token: string; token_type: string; scope?: string; refresh_token?: string; expires_in?: number };
+	const body = (await response.json()) as {
+		access_token: string;
+		token_type: string;
+		scope?: string;
+		refresh_token?: string;
+		expires_in?: number;
+	};
 	return {
 		accessToken: body.access_token,
 		scope: body.scope,
@@ -231,8 +245,20 @@ export async function requestDeviceCode(options: GitLabAuthOptions): Promise<Dev
 		body: new URLSearchParams({ client_id: options.clientId, ...(options.scope ? { scope: options.scope } : {}) }),
 	});
 	if (!response.ok) throw new Error(`GitLab device code request failed: HTTP ${response.status}`);
-	const body = (await response.json()) as { device_code: string; user_code: string; verification_uri: string; expires_in: number; interval: number };
-	return { deviceCode: body.device_code, userCode: body.user_code, verificationUri: body.verification_uri, expiresInS: body.expires_in, intervalS: body.interval };
+	const body = (await response.json()) as {
+		device_code: string;
+		user_code: string;
+		verification_uri: string;
+		expires_in: number;
+		interval: number;
+	};
+	return {
+		deviceCode: body.device_code,
+		userCode: body.user_code,
+		verificationUri: body.verification_uri,
+		expiresInS: body.expires_in,
+		intervalS: body.interval,
+	};
 }
 
 export async function pollDeviceAccessToken(options: GitLabAuthOptions, deviceCode: string): Promise<AccessToken> {
@@ -240,7 +266,11 @@ export async function pollDeviceAccessToken(options: GitLabAuthOptions, deviceCo
 	const response = await doFetch(`${trimBaseUrl(options.baseUrl)}/oauth/token`, {
 		method: "POST",
 		headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
-		body: new URLSearchParams({ client_id: options.clientId, device_code: deviceCode, grant_type: "urn:ietf:params:oauth:grant-type:device_code" }),
+		body: new URLSearchParams({
+			client_id: options.clientId,
+			device_code: deviceCode,
+			grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+		}),
 	});
 	const body = (await response.json()) as {
 		error?: string;

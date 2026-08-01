@@ -7,9 +7,9 @@ import {
 	authenticate,
 	buildAuthorizationUrl,
 	createGitLabTokenStore,
-	detectDeviceFlowSupport,
 	DeviceFlowDeniedError,
 	DeviceFlowExpiredError,
+	detectDeviceFlowSupport,
 	exchangeAuthorizationCode,
 	generatePkce,
 	pollDeviceAccessToken,
@@ -114,7 +114,8 @@ describe("startCallbackServer + runPkceFlow: real loopback listener, not mocked"
 
 describe("exchangeAuthorizationCode", () => {
 	it("parses the token response", async () => {
-		const fetchImpl: FetchLike = async () => jsonResponse({ access_token: "glpat-x", token_type: "bearer", scope: "api", expires_in: 7200 });
+		const fetchImpl: FetchLike = async () =>
+			jsonResponse({ access_token: "glpat-x", token_type: "bearer", scope: "api", expires_in: 7200 });
 		const token = await exchangeAuthorizationCode({
 			baseUrl: "https://gitlab.example.com",
 			clientId: "c",
@@ -135,7 +136,13 @@ describe("refreshAccessToken", () => {
 			const body = init?.body?.toString() ?? "";
 			expect(body).toContain("grant_type=refresh_token");
 			expect(body).toContain("refresh_token=old-refresh");
-			return jsonResponse({ access_token: "new-access", token_type: "bearer", scope: "api", refresh_token: "new-refresh", expires_in: 7200 });
+			return jsonResponse({
+				access_token: "new-access",
+				token_type: "bearer",
+				scope: "api",
+				refresh_token: "new-refresh",
+				expires_in: 7200,
+			});
 		};
 		const token = await refreshAccessToken({ baseUrl: "https://gitlab.example.com", clientId: "c", fetchImpl }, "old-refresh");
 		expect(token.accessToken).toBe("new-access");
@@ -144,16 +151,17 @@ describe("refreshAccessToken", () => {
 	});
 
 	it("keeps the current refresh token when GitLab's response omits a rotated one", async () => {
-		const fetchImpl: FetchLike = async () => jsonResponse({ access_token: "new-access", token_type: "bearer", scope: "api", expires_in: 7200 });
+		const fetchImpl: FetchLike = async () =>
+			jsonResponse({ access_token: "new-access", token_type: "bearer", scope: "api", expires_in: 7200 });
 		const token = await refreshAccessToken({ baseUrl: "https://gitlab.example.com", clientId: "c", fetchImpl }, "old-refresh");
 		expect(token.refreshToken).toBe("old-refresh");
 	});
 
 	it("throws on a failed refresh rather than returning a malformed credential", async () => {
 		const fetchImpl: FetchLike = async () => new Response("invalid_grant", { status: 400 });
-		await expect(refreshAccessToken({ baseUrl: "https://gitlab.example.com", clientId: "c", fetchImpl }, "expired-refresh")).rejects.toThrow(
-			/token refresh failed/,
-		);
+		await expect(
+			refreshAccessToken({ baseUrl: "https://gitlab.example.com", clientId: "c", fetchImpl }, "expired-refresh"),
+		).rejects.toThrow(/token refresh failed/);
 	});
 });
 
@@ -179,33 +187,61 @@ describe("detectDeviceFlowSupport", () => {
 describe("device flow", () => {
 	it("requestDeviceCode parses the response", async () => {
 		const fetchImpl: FetchLike = async () =>
-			jsonResponse({ device_code: "dc", user_code: "ABCD-1234", verification_uri: "https://gitlab.example.com/oauth/device", expires_in: 900, interval: 5 });
+			jsonResponse({
+				device_code: "dc",
+				user_code: "ABCD-1234",
+				verification_uri: "https://gitlab.example.com/oauth/device",
+				expires_in: 900,
+				interval: 5,
+			});
 		const result = await requestDeviceCode({ baseUrl: "https://gitlab.example.com", clientId: "c", fetchImpl });
 		expect(result.userCode).toBe("ABCD-1234");
 	});
 
 	it("pollDeviceAccessToken throws DeviceFlowDeniedError for access_denied", async () => {
 		const fetchImpl: FetchLike = async () => jsonResponse({ error: "access_denied" });
-		await expect(pollDeviceAccessToken({ baseUrl: "https://gitlab.example.com", clientId: "c", fetchImpl }, "dc")).rejects.toThrow(DeviceFlowDeniedError);
+		await expect(pollDeviceAccessToken({ baseUrl: "https://gitlab.example.com", clientId: "c", fetchImpl }, "dc")).rejects.toThrow(
+			DeviceFlowDeniedError,
+		);
 	});
 
 	it("runDeviceFlow polls through pending before succeeding", async () => {
 		let call = 0;
 		const fetchImpl: FetchLike = async (url) => {
 			if (url.includes("authorize_device")) {
-				return jsonResponse({ device_code: "dc", user_code: "ABCD-1234", verification_uri: "https://gitlab.example.com/oauth/device", expires_in: 900, interval: 1 });
+				return jsonResponse({
+					device_code: "dc",
+					user_code: "ABCD-1234",
+					verification_uri: "https://gitlab.example.com/oauth/device",
+					expires_in: 900,
+					interval: 1,
+				});
 			}
 			call++;
-			return call === 1 ? jsonResponse({ error: "authorization_pending" }) : jsonResponse({ access_token: "glpat-final", token_type: "bearer", scope: "api" });
+			return call === 1
+				? jsonResponse({ error: "authorization_pending" })
+				: jsonResponse({ access_token: "glpat-final", token_type: "bearer", scope: "api" });
 		};
-		const token = await runDeviceFlow({ baseUrl: "https://gitlab.example.com", clientId: "c", fetchImpl, sleepImpl: async () => {}, onPrompt: () => {} });
+		const token = await runDeviceFlow({
+			baseUrl: "https://gitlab.example.com",
+			clientId: "c",
+			fetchImpl,
+			sleepImpl: async () => {},
+			onPrompt: () => {},
+		});
 		expect(token.accessToken).toBe("glpat-final");
 	});
 
 	it("runDeviceFlow throws DeviceFlowExpiredError once the device code expires", async () => {
 		const fetchImpl: FetchLike = async (url) => {
 			if (url.includes("authorize_device")) {
-				return jsonResponse({ device_code: "dc", user_code: "ABCD-1234", verification_uri: "https://gitlab.example.com/oauth/device", expires_in: 0, interval: 1 });
+				return jsonResponse({
+					device_code: "dc",
+					user_code: "ABCD-1234",
+					verification_uri: "https://gitlab.example.com/oauth/device",
+					expires_in: 0,
+					interval: 1,
+				});
 			}
 			return jsonResponse({ error: "authorization_pending" });
 		};
@@ -220,7 +256,13 @@ describe("authenticate: prefers device flow, falls back to PKCE", () => {
 		let usedPkce = false;
 		const fetchImpl: FetchLike = async (url) => {
 			if (url.includes("authorize_device")) {
-				return jsonResponse({ device_code: "dc", user_code: "ABCD-1234", verification_uri: "https://gitlab.example.com/oauth/device", expires_in: 900, interval: 1 });
+				return jsonResponse({
+					device_code: "dc",
+					user_code: "ABCD-1234",
+					verification_uri: "https://gitlab.example.com/oauth/device",
+					expires_in: 900,
+					interval: 1,
+				});
 			}
 			if (url.includes("oauth/token")) return jsonResponse({ access_token: "glpat-device", token_type: "bearer", scope: "api" });
 			throw new Error(`unexpected: ${url}`);

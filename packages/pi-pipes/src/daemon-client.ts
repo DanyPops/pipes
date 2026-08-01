@@ -6,8 +6,9 @@
  * installed as files on disk, to locate and spawn its cli.ts — it never
  * imports that package's code.
  */
-import { randomBytes } from "node:crypto";
+
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
@@ -113,9 +114,7 @@ export class PipesClient {
 	}
 
 	async health(): Promise<{ ok: true; version: string }> {
-		const response = await this.transport(
-			new Request(`${this.baseUrl}/health`, { headers: { authorization: `Bearer ${this.token}` } }),
-		);
+		const response = await this.transport(new Request(`${this.baseUrl}/health`, { headers: { authorization: `Bearer ${this.token}` } }));
 		const body = (await response.json()) as { ok?: boolean; version?: string; error?: string };
 		if (!response.ok || body.ok !== true || typeof body.version !== "string") {
 			throw new Error(body.error ?? "Pipes health check failed");

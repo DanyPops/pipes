@@ -6,14 +6,19 @@
  * backends are still reported via BackendInfo so ci.help lists all three
  * backend types even when only some are usable right now.
  */
-import type { BackendInfo } from "../domain/backend.ts";
-import type { CIBackend } from "../ports/ci-backend.ts";
-import { profiledBackend, type PipesCredentialPaths } from "../paths.ts";
-import type { GitLabRepoTarget, RepoConfigFile } from "../repo-config.ts";
+
 import { tryEnigmaAccessToken } from "@danypops/enigma-client";
+import type { BackendInfo } from "../domain/backend.ts";
+import { type PipesCredentialPaths, profiledBackend } from "../paths.ts";
+import type { CIBackend } from "../ports/ci-backend.ts";
+import type { GitLabRepoTarget, RepoConfigFile } from "../repo-config.ts";
 import { createGitHubTokenStore, resolveStaticToken as resolveStaticGitHubToken } from "./github/auth.ts";
 import { createGitHubAdapter } from "./github/github-adapter.ts";
-import { createGitLabTokenStore, refreshAccessToken as refreshGitLabToken, resolveStaticToken as resolveStaticGitLabToken } from "./gitlab/auth.ts";
+import {
+	createGitLabTokenStore,
+	refreshAccessToken as refreshGitLabToken,
+	resolveStaticToken as resolveStaticGitLabToken,
+} from "./gitlab/auth.ts";
 import { createGitLabAdapter } from "./gitlab/gitlab-adapter.ts";
 import { createFileCredentialStore, resolveJenkinsCredentials, resolveJenkinsCredentialsForBaseUrl } from "./jenkins/auth.ts";
 import { createJenkinsAdapter } from "./jenkins/jenkins-adapter.ts";
@@ -78,7 +83,9 @@ export async function buildConfiguredAdapters(
 
 	const gitlabTargets: (GitLabRepoTarget & { baseUrl: string })[] =
 		repoConfig.gitlab.length > 0
-			? repoConfig.gitlab.map((target) => ({ ...target, baseUrl: target.baseUrl ?? env.GITLAB_URL ?? "" })).filter((target) => target.baseUrl !== "")
+			? repoConfig.gitlab
+					.map((target) => ({ ...target, baseUrl: target.baseUrl ?? env.GITLAB_URL ?? "" }))
+					.filter((target) => target.baseUrl !== "")
 			: env.GITLAB_URL && env.GITLAB_PROJECT_ID
 				? [{ name: "gitlab", projectId: env.GITLAB_PROJECT_ID, baseUrl: env.GITLAB_URL }]
 				: [];

@@ -7,7 +7,16 @@
  */
 import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode } from "../../domain/ci-run.ts";
 import type { TriggerReceipt } from "../../domain/trigger.ts";
-import { Capability, type CapabilitySet, type CIArtifactStore, type CIBackend, type CIChainable, type CIHistorical, type CIPipeliner, type CITriggerable } from "../../ports/ci-backend.ts";
+import {
+	Capability,
+	type CapabilitySet,
+	type CIArtifactStore,
+	type CIBackend,
+	type CIChainable,
+	type CIHistorical,
+	type CIPipeliner,
+	type CITriggerable,
+} from "../../ports/ci-backend.ts";
 import type { FetchLike } from "../github/auth.ts";
 import { parseRateLimitHeaders, parseRetryAfterMs, RateLimitError } from "../http-rate-limit.ts";
 import { withTimeout } from "../http-timeout.ts";
@@ -35,7 +44,9 @@ export interface GitLabAdapterOptions {
 	fetchImpl?: FetchLike;
 }
 
-export function createGitLabAdapter(options: GitLabAdapterOptions): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIChainable {
+export function createGitLabAdapter(
+	options: GitLabAdapterOptions,
+): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIChainable {
 	const { name, projectId, token } = options;
 	const apiBaseUrl = `${options.baseUrl.replace(/\/$/, "")}/api/v4`;
 	// A caller-supplied fetchImpl (tests, or a future custom transport) is used as-is; the real
@@ -135,14 +146,17 @@ export function createGitLabAdapter(options: GitLabAdapterOptions): CIBackend & 
 			name: job.stage,
 			status: mapStatus(job.status),
 			durationMs: job.duration ? job.duration * 1000 : undefined,
-			steps: [{ id: String(job.id), name: job.name, status: mapStatus(job.status), durationMs: job.duration ? job.duration * 1000 : undefined }],
+			steps: [
+				{ id: String(job.id), name: job.name, status: mapStatus(job.status), durationMs: job.duration ? job.duration * 1000 : undefined },
+			],
 		}));
 	}
 
 	return {
 		name: () => name,
 		type: () => "gitlab",
-		capabilities: (): CapabilitySet => Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Chain,
+		capabilities: (): CapabilitySet =>
+			Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Chain,
 
 		/** "latest" is an explicit sentinel routed to a dedicated query; any other runId always fetches that exact pipeline, never a substitute. */
 		async getRun(_jobRef: string, runId: string): Promise<CIRun> {
@@ -241,9 +255,15 @@ export function createGitLabAdapter(options: GitLabAdapterOptions): CIBackend & 
 
 		async listArtifacts(_jobRef: string, runId: string): Promise<CIArtifact[]> {
 			const jobs = (await api<GlJob[]>("GET", `/projects/${projectId}/pipelines/${runId}/jobs`)) ?? [];
-			return jobs.filter((job) => job.artifacts && job.artifacts.length > 0).flatMap((job) =>
-				(job.artifacts ?? []).map((artifact) => ({ name: artifact.filename, path: `${job.id}/${artifact.filename}`, sizeBytes: artifact.size })),
-			);
+			return jobs
+				.filter((job) => job.artifacts && job.artifacts.length > 0)
+				.flatMap((job) =>
+					(job.artifacts ?? []).map((artifact) => ({
+						name: artifact.filename,
+						path: `${job.id}/${artifact.filename}`,
+						sizeBytes: artifact.size,
+					})),
+				);
 		},
 
 		async getArtifact(_jobRef: string, _runId: string, path: string): Promise<Uint8Array> {

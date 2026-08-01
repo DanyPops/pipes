@@ -53,7 +53,9 @@ export interface GitHubAdapterOptions {
 	fetchImpl?: FetchLike;
 }
 
-export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIDiscoverable {
+export function createGitHubAdapter(
+	options: GitHubAdapterOptions,
+): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIDiscoverable {
 	const { name, owner, repo: fixedRepo, token } = options;
 	// A caller-supplied fetchImpl (tests, or a future custom transport) is used as-is; the real
 	// default fetch is wrapped so a stalled connection to GitHub can't hang ci.wait's poll loop forever.
@@ -118,7 +120,6 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 					return "success";
 				case "cancelled":
 					return "aborted";
-				case "failure":
 				default:
 					return "failure";
 			}
@@ -151,14 +152,16 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 			result: mapResult(run.conclusion),
 			url: run.html_url,
 			startedAt,
-			durationMs: isTerminalStatus(status) && run.updated_at ? Math.max(0, new Date(run.updated_at).getTime() - startedAt.getTime()) : undefined,
+			durationMs:
+				isTerminalStatus(status) && run.updated_at ? Math.max(0, new Date(run.updated_at).getTime() - startedAt.getTime()) : undefined,
 		};
 	}
 
 	return {
 		name: () => name,
 		type: () => "github",
-		capabilities: (): CapabilitySet => Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Discover,
+		capabilities: (): CapabilitySet =>
+			Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Discover,
 
 		/** "latest" is an explicit sentinel routed to a dedicated query; any other runId always fetches that exact run, never a substitute. */
 		async getRun(jobRef: string, runId: string): Promise<CIRun> {
@@ -245,7 +248,9 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 				"GET",
 				`/repos/${owner}/${repo}/actions/workflows/${workflow}/runs?status=completed&per_page=10`,
 			);
-			const durations = (page?.workflow_runs ?? []).map((run) => toCIRun(run).durationMs).filter((ms): ms is number => typeof ms === "number" && ms > 0);
+			const durations = (page?.workflow_runs ?? [])
+				.map((run) => toCIRun(run).durationMs)
+				.filter((ms): ms is number => typeof ms === "number" && ms > 0);
 			if (durations.length === 0) return 0;
 			return durations.reduce((sum, ms) => sum + ms, 0) / durations.length;
 		},
@@ -283,7 +288,11 @@ export function createGitHubAdapter(options: GitHubAdapterOptions): CIBackend & 
 		async listArtifacts(jobRef: string, runId: string): Promise<CIArtifact[]> {
 			const { repo } = resolveJobRef(jobRef);
 			const page = await api<{ artifacts: GhArtifact[] }>("GET", `/repos/${owner}/${repo}/actions/runs/${runId}/artifacts`);
-			return (page?.artifacts ?? []).map((artifact) => ({ name: artifact.name, path: String(artifact.id), sizeBytes: artifact.size_in_bytes }));
+			return (page?.artifacts ?? []).map((artifact) => ({
+				name: artifact.name,
+				path: String(artifact.id),
+				sizeBytes: artifact.size_in_bytes,
+			}));
 		},
 
 		async getArtifact(jobRef: string, _runId: string, path: string): Promise<Uint8Array> {

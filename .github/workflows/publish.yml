@@ -44,6 +44,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
 
       - run: bun install
+      - run: npm run lint:ci
 
       - run: bun test
         working-directory: ${{ steps.package.outputs.dir }}

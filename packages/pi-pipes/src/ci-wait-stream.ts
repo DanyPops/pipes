@@ -59,10 +59,18 @@ export async function waitAndStreamTail(
 			{ backend: params.backend, jobRef: params.jobRef, runId: params.runId, timeoutS: tickTimeoutS },
 			tickTimeoutS * 1000 + 10_000,
 		);
-		const tail = await client.call<WaitStreamTail>("ci.tail", { backend: params.backend, jobRef: params.jobRef, runId: params.runId, maxTokens: params.maxTokens });
+		const tail = await client.call<WaitStreamTail>("ci.tail", {
+			backend: params.backend,
+			jobRef: params.jobRef,
+			runId: params.runId,
+			maxTokens: params.maxTokens,
+		});
 		result = { ...status, tail };
 
-		const patch: AgentToolResult<{ result: Record<string, unknown> }> = { content: [{ type: "text", text: JSON.stringify(result) }], details: { result } };
+		const patch: AgentToolResult<{ result: Record<string, unknown> }> = {
+			content: [{ type: "text", text: JSON.stringify(result) }],
+			details: { result },
+		};
 		onUpdate?.(patch);
 
 		const runStatus = status.status;

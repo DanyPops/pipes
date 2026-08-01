@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { FetchLike } from "../../../src/adapters/github/auth.ts";
 import type { TryEnigmaCredential } from "@danypops/enigma-client";
+import type { FetchLike } from "../../../src/adapters/github/auth.ts";
 import {
 	basicAuthHeader,
 	createCrumbCache,
@@ -102,7 +102,11 @@ describe("createFileCredentialStore", () => {
 describe("resolveJenkinsCredentials", () => {
 	it("prefers environment variables over a stored file", async () => {
 		const store = { load: () => CREDENTIALS, save: () => {}, clear: () => {} };
-		const resolved = await resolveJenkinsCredentials(store, { JENKINS_URL: "https://env.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" }, noEnigma);
+		const resolved = await resolveJenkinsCredentials(
+			store,
+			{ JENKINS_URL: "https://env.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" },
+			noEnigma,
+		);
 		expect(resolved).toEqual({ baseUrl: "https://env.example.com", username: "bob", apiToken: "envtok" });
 	});
 
@@ -123,7 +127,11 @@ describe("resolveJenkinsCredentials", () => {
 			calls.push(backend);
 			return { accessToken: "enigma-jenkins-token", extra: { url: "https://enigma.jenkins.example.com", username: "enigma-bot" } };
 		};
-		const resolved = await resolveJenkinsCredentials(store, { JENKINS_URL: "https://env.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" }, fromEnigma);
+		const resolved = await resolveJenkinsCredentials(
+			store,
+			{ JENKINS_URL: "https://env.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" },
+			fromEnigma,
+		);
 		expect(calls).toEqual(["jenkins"]);
 		expect(resolved).toEqual({ baseUrl: "https://enigma.jenkins.example.com", username: "enigma-bot", apiToken: "enigma-jenkins-token" });
 	});
@@ -131,7 +139,11 @@ describe("resolveJenkinsCredentials", () => {
 	it("falls through to env-then-store unchanged when Enigma's credential is missing the url/username extra fields it needs", async () => {
 		const store = { load: () => CREDENTIALS, save: () => {}, clear: () => {} };
 		const incompleteEnigma: TryEnigmaCredential = async () => ({ accessToken: "enigma-token-missing-extra" });
-		const resolved = await resolveJenkinsCredentials(store, { JENKINS_URL: "https://env.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" }, incompleteEnigma);
+		const resolved = await resolveJenkinsCredentials(
+			store,
+			{ JENKINS_URL: "https://env.example.com", JENKINS_USER: "bob", JENKINS_API_TOKEN: "envtok" },
+			incompleteEnigma,
+		);
 		expect(resolved).toEqual({ baseUrl: "https://env.example.com", username: "bob", apiToken: "envtok" });
 	});
 

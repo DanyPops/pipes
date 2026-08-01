@@ -1,7 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { describePreset, isTriggerable, parseParams, pickFromList, type PickFromList, runPipesCommand, type ShowScreen } from "../src/pipes-tui.ts";
 import type { PipesClient } from "../src/daemon-client.ts";
+import {
+	describePreset,
+	isTriggerable,
+	type PickFromList,
+	parseParams,
+	pickFromList,
+	runPipesCommand,
+	type ShowScreen,
+} from "../src/pipes-tui.ts";
 
 /**
  * pickFromList's real (non-fake) implementation was never covered by the rest of
@@ -15,14 +23,20 @@ describe("pickFromList (real implementation, via malevich-tui-components' Border
 
 	function fakeTuiCtx(): { ctx: ExtensionCommandContext; componentReady: Promise<FakeComponent> } {
 		let resolveComponent!: (component: FakeComponent) => void;
-		const componentReady = new Promise<FakeComponent>((r) => { resolveComponent = r; });
+		const componentReady = new Promise<FakeComponent>((r) => {
+			resolveComponent = r;
+		});
 		const ctx = {
 			mode: "tui",
 			ui: {
 				notify: () => {},
-				custom: async (factory: (tui: unknown, theme: unknown, kb: unknown, done: (r: unknown) => void) => FakeComponent | Promise<FakeComponent>) => {
+				custom: async (
+					factory: (tui: unknown, theme: unknown, kb: unknown, done: (r: unknown) => void) => FakeComponent | Promise<FakeComponent>,
+				) => {
 					let resolveResult!: (value: unknown) => void;
-					const resultPromise = new Promise((r) => { resolveResult = r; });
+					const resultPromise = new Promise((r) => {
+						resolveResult = r;
+					});
 					const fakeTheme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
 					const fakeTui = { requestRender: () => {} };
 					const component = await factory(fakeTui, fakeTheme, {}, resolveResult);
@@ -42,10 +56,15 @@ describe("pickFromList (real implementation, via malevich-tui-components' Border
 	// logic this swap touched -- doesn't go through render() and is fully covered below.
 	it("cancels via the wrapped SelectList's own onCancel, forwarded through handleInput", async () => {
 		const { ctx, componentReady } = fakeTuiCtx();
-		const resultPromise = pickFromList(ctx, "Pick a backend", [
-			{ value: "github", label: "github", description: "trigger history" },
-			{ value: "gitlab", label: "gitlab", description: "unconfigured" },
-		], "\u2191\u2193 navigate \u2022 enter select \u2022 esc back");
+		const resultPromise = pickFromList(
+			ctx,
+			"Pick a backend",
+			[
+				{ value: "github", label: "github", description: "trigger history" },
+				{ value: "gitlab", label: "gitlab", description: "unconfigured" },
+			],
+			"\u2191\u2193 navigate \u2022 enter select \u2022 esc back",
+		);
 		const component = await componentReady;
 		component.handleInput("\x1b");
 		expect(await resultPromise).toBeNull();
@@ -53,10 +72,15 @@ describe("pickFromList (real implementation, via malevich-tui-components' Border
 
 	it("resolves the selected item's value when the wrapped SelectList's own Enter selects it", async () => {
 		const { ctx, componentReady } = fakeTuiCtx();
-		const resultPromise = pickFromList(ctx, "Pick a backend", [
-			{ value: "github", label: "github" },
-			{ value: "gitlab", label: "gitlab" },
-		], "help");
+		const resultPromise = pickFromList(
+			ctx,
+			"Pick a backend",
+			[
+				{ value: "github", label: "github" },
+				{ value: "gitlab", label: "gitlab" },
+			],
+			"help",
+		);
 		const component = await componentReady;
 		component.handleInput("\r");
 		expect(await resultPromise).toBe("github");
@@ -69,7 +93,9 @@ describe("pickFromList (real implementation, via malevich-tui-components' Border
 			mode: "headless",
 			ui: {
 				notify: (text: string, level: string) => notifications.push({ text, level }),
-				custom: async () => { customCalled = true; },
+				custom: async () => {
+					customCalled = true;
+				},
 			},
 		} as unknown as ExtensionCommandContext;
 		const result = await pickFromList(ctx, "Pick a backend", [{ value: "github", label: "github" }], "help");
@@ -130,7 +156,13 @@ describe("describePreset", () => {
 
 // ── Interactive-flow harness, mirroring pi-enigma's own fakeCtx/scriptedPick pattern ──
 
-function fakeCtx(overrides: { confirms?: boolean[]; inputs?: Array<string | undefined>; custom?: (factory: (tui: unknown, theme: unknown, kb: unknown, done: () => void) => unknown) => unknown } = {}): {
+function fakeCtx(
+	overrides: {
+		confirms?: boolean[];
+		inputs?: Array<string | undefined>;
+		custom?: (factory: (tui: unknown, theme: unknown, kb: unknown, done: () => void) => unknown) => unknown;
+	} = {},
+): {
 	ctx: ExtensionCommandContext;
 	notifications: Array<{ text: string; level: string }>;
 	inputPrompts: string[];
@@ -165,15 +197,6 @@ function scriptedPick(...values: Array<string | null>): PickFromList {
 	return async () => (queue.length > 0 ? queue.shift()! : null);
 }
 
-/** Same as scriptedPick, but also appends every menu's item labels to `seen`, in call order. */
-function scriptedPickCapturing(seen: string[][], ...values: Array<string | null>): PickFromList {
-	const queue = [...values];
-	return async (_ctx, _title, items) => {
-		seen.push(items.map((item) => item.label));
-		return queue.length > 0 ? queue.shift()! : null;
-	};
-}
-
 /** Records every show() call instead of rendering a real TUI screen. */
 function recordingShow(): { show: ShowScreen; calls: Array<{ title: string; data: unknown }> } {
 	const calls: Array<{ title: string; data: unknown }> = [];
@@ -183,7 +206,9 @@ function recordingShow(): { show: ShowScreen; calls: Array<{ title: string; data
 	return { show, calls };
 }
 
-function fakeClient(handlers: Record<string, (input: Record<string, unknown>) => unknown>): PipesClient & { calls: Array<{ op: string; input: unknown }> } {
+function fakeClient(
+	handlers: Record<string, (input: Record<string, unknown>) => unknown>,
+): PipesClient & { calls: Array<{ op: string; input: unknown }> } {
 	const calls: Array<{ op: string; input: unknown }> = [];
 	return {
 		calls,
@@ -311,7 +336,12 @@ describe("runPipesCommand: manage a run", () => {
 		const { ctx } = fakeCtx({
 			inputs: ["ci.yml", "42"],
 			custom: async (factory) => {
-				const component = (await factory({ terminal: { rows: 40 }, requestRender: () => {} }, { fg: (_c: string, t: string) => t, bold: (t: string) => t }, {}, () => {})) as { render(w: number): string[] };
+				const component = (await factory(
+					{ terminal: { rows: 40 }, requestRender: () => {} },
+					{ fg: (_c: string, t: string) => t, bold: (t: string) => t },
+					{},
+					() => {},
+				)) as { render(w: number): string[] };
 				rendered = component.render(100);
 			},
 		});
@@ -339,15 +369,27 @@ describe("runPipesCommand: manage a run", () => {
 		const { ctx } = fakeCtx({
 			inputs: ["ci.yml", undefined],
 			custom: async (factory) => {
-				const component = (await factory({ terminal: { rows: 40 }, requestRender: () => {} }, { fg: (_c: string, t: string) => t, bold: (t: string) => t }, {}, () => {})) as { render(w: number): string[] };
+				const component = (await factory(
+					{ terminal: { rows: 40 }, requestRender: () => {} },
+					{ fg: (_c: string, t: string) => t, bold: (t: string) => t },
+					{},
+					() => {},
+				)) as { render(w: number): string[] };
 				rendered = component.render(100);
 			},
 		});
 		const client = fakeClient({
 			"ci.help": () => ({ backends: BACKENDS, pipelines: [] }),
 			"ci.presets.list": () => ({ presets: [] }),
-			"ci.status": (input) => ({ verdict: { check: { ...input, status: "failure" }, failure: { classification: "test-failure", log: { lines: ["from failure context"], totalLines: 1 } } } }),
-			"ci.log": () => { throw new Error("no artifact log available"); },
+			"ci.status": (input) => ({
+				verdict: {
+					check: { ...input, status: "failure" },
+					failure: { classification: "test-failure", log: { lines: ["from failure context"], totalLines: 1 } },
+				},
+			}),
+			"ci.log": () => {
+				throw new Error("no artifact log available");
+			},
 		});
 		const pick = scriptedPick("__pipes_manage_run__", "github", "detail", "__pipes_back__");
 
@@ -361,7 +403,9 @@ describe("runPipesCommand: manage a run", () => {
 		const client = fakeClient({
 			"ci.help": () => ({ backends: BACKENDS, pipelines: [] }),
 			"ci.presets.list": () => ({ presets: [] }),
-			"ci.status": () => { throw new Error("daemon unavailable"); },
+			"ci.status": () => {
+				throw new Error("daemon unavailable");
+			},
 		});
 		const pick = scriptedPick("__pipes_manage_run__", "github", "detail", "__pipes_back__");
 

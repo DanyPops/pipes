@@ -15,9 +15,9 @@
  * Exposed instead as a "Secrets" entry inside pipes' own `/pipes` menu.
  */
 import { dirname } from "node:path";
+import type { SecretsBackend } from "@danypops/vehicle-client-pi/secrets-backend";
 import { createEnvSecretsBackend } from "@danypops/vehicle-client-pi/secrets-backend-env";
 import { createLocalSecretsBackend } from "@danypops/vehicle-client-pi/secrets-backend-local";
-import type { SecretsBackend } from "@danypops/vehicle-client-pi/secrets-backend";
 import { resolvePipesPaths } from "./daemon-client.ts";
 
 export interface BuildPipesSecretsBackendsOptions {
@@ -29,5 +29,8 @@ export interface BuildPipesSecretsBackendsOptions {
 export function buildPipesSecretsBackends(options: BuildPipesSecretsBackendsOptions = {}): SecretsBackend[] {
 	const env = options.env ?? process.env;
 	const credentialsDir = dirname(resolvePipesPaths({ env, home: options.home, uid: options.uid }).token);
-	return [createLocalSecretsBackend({ dir: credentialsDir }), createEnvSecretsBackend({ github: "GITHUB_TOKEN", gitlab: "GITLAB_TOKEN" }, env)];
+	return [
+		createLocalSecretsBackend({ dir: credentialsDir }),
+		createEnvSecretsBackend({ github: "GITHUB_TOKEN", gitlab: "GITLAB_TOKEN" }, env),
+	];
 }

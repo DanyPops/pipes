@@ -73,7 +73,18 @@ const CLASSIFICATION_RULES: ClassificationRule[] = [
 	{
 		classification: "test_failure",
 		canRetry: false,
-		patterns: ["tests failed", "test failed", "assertion failed", "assertionerror", "expected but was", "failures:", "failed tests:", "build failed", "[fail]", "--- fail"],
+		patterns: [
+			"tests failed",
+			"test failed",
+			"assertion failed",
+			"assertionerror",
+			"expected but was",
+			"failures:",
+			"failed tests:",
+			"build failed",
+			"[fail]",
+			"--- fail",
+		],
 	},
 ];
 

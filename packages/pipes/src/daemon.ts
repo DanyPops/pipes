@@ -1,8 +1,9 @@
 /** Bun composition root: binds and serves via @danypops/vehicle-server's runDaemonProcess. */
-import { buildConfiguredAdapters } from "./adapters/config.ts";
+
 import { runDaemonProcess } from "@danypops/vehicle-server/daemon";
 import { createLogger } from "@danypops/vehicle-server/logging";
 import { ensureAuthToken } from "@danypops/vehicle-server/paths";
+import { buildConfiguredAdapters } from "./adapters/config.ts";
 import { RUN_POOL_SYNC_INTERVAL_MS } from "./constants.ts";
 import { openPipesDb } from "./db.ts";
 import { Orchestrator } from "./orchestrator.ts";
@@ -41,7 +42,9 @@ export async function serveMain(): Promise<void> {
 		handlePath: paths.handle,
 		logger,
 		buildApp: () => createApp({ service, token }),
-		maintenanceTasks: [{ name: "run-pool-sync", intervalMs: RUN_POOL_SYNC_INTERVAL_MS, run: () => syncRunPool(orchestrator, runPool, logger) }],
+		maintenanceTasks: [
+			{ name: "run-pool-sync", intervalMs: RUN_POOL_SYNC_INTERVAL_MS, run: () => syncRunPool(orchestrator, runPool, logger) },
+		],
 		onShutdown: () => db.close(),
 		onListen: ({ host, port }) => logger.info("listening", { host, port }),
 	});

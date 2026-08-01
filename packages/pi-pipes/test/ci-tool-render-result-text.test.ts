@@ -14,7 +14,15 @@ describe("renderResultText: still-in-flight ci wait (isPartial)", () => {
 	it("renders the real WatchStatus+tail snapshot once a tick has landed data, instead of staying a bare placeholder", () => {
 		const result = {
 			content: [{ type: "text" as const, text: "" }],
-			details: { result: { status: "running", buildNumber: "9176", progressPercent: 42, overdue: false, tail: { text: "line one\nline two", truncated: false } } },
+			details: {
+				result: {
+					status: "running",
+					buildNumber: "9176",
+					progressPercent: 42,
+					overdue: false,
+					tail: { text: "line one\nline two", truncated: false },
+				},
+			},
 		};
 		const text = renderResultText(result, true, false, theme);
 		expect(text).toContain("Running...");
@@ -43,7 +51,10 @@ describe("renderResultText: final result", () => {
 	});
 
 	it("renders the final structured result through summarize, without a Running prefix", () => {
-		const result = { content: [{ type: "text" as const, text: "" }], details: { result: { status: "success", buildNumber: "9176", progressPercent: 100, overdue: false } } };
+		const result = {
+			content: [{ type: "text" as const, text: "" }],
+			details: { result: { status: "success", buildNumber: "9176", progressPercent: 100, overdue: false } },
+		};
 		const text = renderResultText(result, false, false, theme);
 		expect(text).not.toContain("Running...");
 		expect(text).toContain("#9176");

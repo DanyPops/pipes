@@ -1,7 +1,7 @@
+import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "bun:test";
 import { openPipesDb } from "../src/db.ts";
 import { Orchestrator } from "../src/orchestrator.ts";
 import { Capability } from "../src/ports/ci-backend.ts";
@@ -24,7 +24,11 @@ describe("ci.status", () => {
 	it("returns a pipelineRun when pipeline is given instead of backend/jobRef", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(
-			createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, run: { id: "1", name: "run", status: "success", startedAt: new Date(0) } }),
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+			}),
 		);
 		orchestrator.registerPipeline({ name: "deploy", backend: "gh", steps: [{ jobName: "build" }] });
 		const service = createPipesService(orchestrator);
@@ -44,7 +48,11 @@ describe("ci.trigger", () => {
 	it("returns a TriggerResult for a raw backend+jobRef trigger", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(
-			createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "7" } }),
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "7" },
+			}),
 		);
 		const service = createPipesService(orchestrator);
 
@@ -74,7 +82,11 @@ describe("ci.wait", () => {
 	it("resolves immediately once the watched run reaches a terminal status", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(
-			createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, run: { id: "1", name: "run", status: "success", startedAt: new Date(0) } }),
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+			}),
 		);
 		const service = createPipesService(orchestrator, { waitPollIntervalMs: 1 });
 
@@ -85,7 +97,11 @@ describe("ci.wait", () => {
 	it("polls until timeout and returns the last known status when the run never terminates", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(
-			createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, run: { id: "1", name: "run", status: "running", startedAt: new Date(0) } }),
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				run: { id: "1", name: "run", status: "running", startedAt: new Date(0) },
+			}),
 		);
 		const service = createPipesService(orchestrator, { waitPollIntervalMs: 5 });
 
@@ -98,7 +114,11 @@ describe("ci.wait", () => {
 	it("resolves an opaqueRef without watching a run", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(
-			createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, resolvedReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "99" } }),
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				resolvedReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "99" },
+			}),
 		);
 		const service = createPipesService(orchestrator);
 
@@ -119,7 +139,11 @@ describe("ci.cancel", () => {
 	it("succeeds once the run was triggered through ci.trigger in this session", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(
-			createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "7" } }),
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "7" },
+			}),
 		);
 		const service = createPipesService(orchestrator);
 
@@ -144,7 +168,13 @@ describe("ci.search", () => {
 describe("ci.discover", () => {
 	it("lists repos when no repo is given", async () => {
 		const orchestrator = new Orchestrator();
-		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Discover, repos: [{ name: "pipes", fullName: "DanyPops/pipes", private: false }] }));
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Discover,
+				repos: [{ name: "pipes", fullName: "DanyPops/pipes", private: false }],
+			}),
+		);
 		const service = createPipesService(orchestrator);
 
 		const result = await service.execute("ci.discover", { backend: "gh" });
@@ -154,7 +184,13 @@ describe("ci.discover", () => {
 
 	it("lists workflows for that repo when repo is given", async () => {
 		const orchestrator = new Orchestrator();
-		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Discover, workflows: [{ name: "CI", fileName: "ci.yml", state: "active" }] }));
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Discover,
+				workflows: [{ name: "CI", fileName: "ci.yml", state: "active" }],
+			}),
+		);
 		const service = createPipesService(orchestrator);
 
 		const result = await service.execute("ci.discover", { backend: "gh", repo: "pipes" });
@@ -196,7 +232,17 @@ describe("ci.pool", () => {
 		const backend = createStubCIBackend({ name: "gh" });
 		orchestrator.addAdapter(backend);
 		const runPool = createRunPool(openPipesDb(":memory:"));
-		runPool.upsert({ backend: "gh", jobRef: "job", runId: "1", status: "success", result: "SUCCESS", url: "", startedAt: new Date(0), fetchedAt: new Date(0), watched: false });
+		runPool.upsert({
+			backend: "gh",
+			jobRef: "job",
+			runId: "1",
+			status: "success",
+			result: "SUCCESS",
+			url: "",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: false,
+		});
 		const service = createPipesService(orchestrator, { runPool });
 
 		const result = await service.execute("ci.pool", { backend: "gh", jobRef: "job" });
@@ -208,7 +254,11 @@ describe("ci.pool", () => {
 	it("seeds the pool immediately on ci.trigger, before any background sync tick has run", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(
-			createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "9" } }),
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "9" },
+			}),
 		);
 		const runPool = createRunPool(openPipesDb(":memory:"));
 		const service = createPipesService(orchestrator, { runPool });
@@ -242,7 +292,11 @@ describe("ci.pool", () => {
 	it("ci.trigger auto-subscribes the triggered job", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(
-			createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "7" } }),
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "7" },
+			}),
 		);
 		const runPool = createRunPool(openPipesDb(":memory:"));
 		const service = createPipesService(orchestrator, { runPool });
@@ -261,7 +315,13 @@ describe("ci.subscribe / ci.unsubscribe", () => {
 
 	it("subscribes, does an immediate fetch, and returns the seeded snapshot", async () => {
 		const orchestrator = new Orchestrator();
-		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } }, log: "hello" }));
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } },
+				log: "hello",
+			}),
+		);
 		const runPool = createRunPool(openPipesDb(":memory:"));
 		const service = createPipesService(orchestrator, { runPool });
 
@@ -288,7 +348,9 @@ describe("ci.subscribe / ci.unsubscribe", () => {
 
 	it("immediately unsubscribes if the just-subscribed job's latest run is already terminal", async () => {
 		const orchestrator = new Orchestrator();
-		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "success", startedAt: new Date(0) } } }));
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "success", startedAt: new Date(0) } } }),
+		);
 		const runPool = createRunPool(openPipesDb(":memory:"));
 		const service = createPipesService(orchestrator, { runPool });
 
@@ -319,7 +381,17 @@ describe("ci.tail", () => {
 		const backend = createStubCIBackend({ name: "gh" });
 		orchestrator.addAdapter(backend);
 		const runPool = createRunPool(openPipesDb(":memory:"));
-		runPool.upsert({ backend: "gh", jobRef: "job", runId: "1", status: "success", result: "SUCCESS", url: "", startedAt: new Date(0), fetchedAt: new Date(0), watched: false });
+		runPool.upsert({
+			backend: "gh",
+			jobRef: "job",
+			runId: "1",
+			status: "success",
+			result: "SUCCESS",
+			url: "",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: false,
+		});
 		runPool.upsertLog("gh", "job", "1", "cached log");
 		const service = createPipesService(orchestrator, { runPool });
 
@@ -331,10 +403,26 @@ describe("ci.tail", () => {
 
 	it("always live-resolves when runId is omitted, matching the background sync's autofocus", async () => {
 		const orchestrator = new Orchestrator();
-		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById: { latest: { id: "2", name: "job", status: "running", startedAt: new Date(0) } }, log: "fresh log" }));
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				runsById: { latest: { id: "2", name: "job", status: "running", startedAt: new Date(0) } },
+				log: "fresh log",
+			}),
+		);
 		const runPool = createRunPool(openPipesDb(":memory:"));
 		// A stale cached run "1" exists, but a newer run "2" is now latest.
-		runPool.upsert({ backend: "gh", jobRef: "job", runId: "1", status: "success", result: "", url: "", startedAt: new Date(0), fetchedAt: new Date(0), watched: false });
+		runPool.upsert({
+			backend: "gh",
+			jobRef: "job",
+			runId: "1",
+			status: "success",
+			result: "",
+			url: "",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: false,
+		});
 		runPool.upsertLog("gh", "job", "1", "stale log");
 		const service = createPipesService(orchestrator, { runPool });
 
@@ -347,7 +435,13 @@ describe("ci.tail", () => {
 	it("applies the token budget by default and reports truncation", async () => {
 		const orchestrator = new Orchestrator();
 		const longLog = Array.from({ length: 2000 }, (_, i) => `line ${i}`).join("\n");
-		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "success", startedAt: new Date(0) } }, log: longLog }));
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				runsById: { latest: { id: "1", name: "job", status: "success", startedAt: new Date(0) } },
+				log: longLog,
+			}),
+		);
 		const service = createPipesService(orchestrator);
 
 		const result = await service.execute("ci.tail", { backend: "gh", jobRef: "job", maxTokens: 50 });
@@ -359,7 +453,13 @@ describe("ci.tail", () => {
 
 	it("works with no run pool configured at all -- always falls back to a live fetch", async () => {
 		const orchestrator = new Orchestrator();
-		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "success", startedAt: new Date(0) } }, log: "no pool here" }));
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				runsById: { latest: { id: "1", name: "job", status: "success", startedAt: new Date(0) } },
+				log: "no pool here",
+			}),
+		);
 		const service = createPipesService(orchestrator);
 
 		const result = await service.execute("ci.tail", { backend: "gh", jobRef: "job" });
@@ -411,11 +511,20 @@ describe("ci.downstream", () => {
 	it("delegates straight to the backend's own CIChainable lookup", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(
-			createStubCIBackend({ name: "jenkins", capabilities: Capability.Chain, downstreamRuns: [{ id: "10", name: "downstream", status: "success", startedAt: new Date(0) }] }),
+			createStubCIBackend({
+				name: "jenkins",
+				capabilities: Capability.Chain,
+				downstreamRuns: [{ id: "10", name: "downstream", status: "success", startedAt: new Date(0) }],
+			}),
 		);
 		const service = createPipesService(orchestrator);
 
-		const result = await service.execute("ci.downstream", { backend: "jenkins", downstreamJob: "deploy", upstreamJob: "build", upstreamRunId: "5" });
+		const result = await service.execute("ci.downstream", {
+			backend: "jenkins",
+			downstreamJob: "deploy",
+			upstreamJob: "build",
+			upstreamRunId: "5",
+		});
 
 		expect(result.runs).toHaveLength(1);
 	});
@@ -425,7 +534,9 @@ describe("ci.downstream", () => {
 		orchestrator.addAdapter(createStubCIBackend({ name: "gh" }));
 		const service = createPipesService(orchestrator);
 
-		await expect(service.execute("ci.downstream", { backend: "gh", downstreamJob: "deploy", upstreamJob: "build", upstreamRunId: "5" })).rejects.toThrow(/chain traversal/);
+		await expect(
+			service.execute("ci.downstream", { backend: "gh", downstreamJob: "deploy", upstreamJob: "build", upstreamRunId: "5" }),
+		).rejects.toThrow(/chain traversal/);
 	});
 });
 
@@ -446,7 +557,11 @@ describe("ci.presets.*: live CRUD, not just a static file read at boot", () => {
 	it("ci.presets.set registers the preset in-memory immediately -- no restart needed to trigger it", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(
-			createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "build", runId: "1" } }),
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "build", runId: "1" },
+			}),
 		);
 		dir = mkdtempSync(join(tmpdir(), "pipes-service-presets-"));
 		const presetsPath = join(dir, "pipelines.json");

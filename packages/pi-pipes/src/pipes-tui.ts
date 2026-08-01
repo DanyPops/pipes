@@ -16,7 +16,8 @@ import { BorderedSelectPanel } from "malevich-tui-components";
 import { findFirstUrl, openLine } from "./ci-render.ts";
 import { summarize } from "./ci-tool.ts";
 import type { PipesClient } from "./daemon-client.ts";
-import { showRunDetailView, type RunDetailData } from "./run-detail-view.ts";
+import { type RunDetailData, showRunDetailView } from "./run-detail-view.ts";
+
 interface BackendInfo {
 	name: string;
 	type: string;
@@ -68,7 +69,12 @@ export function describePreset(preset: PresetInfo): string {
  * codebases before being formalized there). A bordered SelectList in TUI mode, a plain
  * notify listing in non-TUI mode.
  */
-export async function pickFromList(ctx: ExtensionCommandContext, title: string, items: SelectItem[], helpText: string): Promise<string | null> {
+export async function pickFromList(
+	ctx: ExtensionCommandContext,
+	title: string,
+	items: SelectItem[],
+	helpText: string,
+): Promise<string | null> {
 	if (ctx.mode !== "tui") {
 		ctx.ui.notify(`${title}: ${items.map((item) => item.label).join(", ") || "(none)"}`, "info");
 		return null;
@@ -126,7 +132,14 @@ async function showScreen(ctx: ExtensionCommandContext, title: string, data: unk
 
 export type ShowScreen = (ctx: ExtensionCommandContext, title: string, data: unknown) => Promise<void>;
 
-async function runOperation(ctx: ExtensionCommandContext, client: PipesClient, title: string, operation: string, input: Record<string, unknown>, show: ShowScreen): Promise<void> {
+async function runOperation(
+	ctx: ExtensionCommandContext,
+	client: PipesClient,
+	title: string,
+	operation: string,
+	input: Record<string, unknown>,
+	show: ShowScreen,
+): Promise<void> {
 	try {
 		const result = await client.call(operation, input);
 		await show(ctx, title, result);
@@ -135,7 +148,12 @@ async function runOperation(ctx: ExtensionCommandContext, client: PipesClient, t
 	}
 }
 
-async function pickBackend(ctx: ExtensionCommandContext, backends: BackendInfo[], pick: PickFromList, triggerableOnly: boolean): Promise<string | null> {
+async function pickBackend(
+	ctx: ExtensionCommandContext,
+	backends: BackendInfo[],
+	pick: PickFromList,
+	triggerableOnly: boolean,
+): Promise<string | null> {
 	const eligible = triggerableOnly ? backends.filter(isTriggerable) : backends;
 	if (eligible.length === 0) {
 		ctx.ui.notify(triggerableOnly ? "No configured backend supports triggering yet." : "No backends configured yet.", "info");
@@ -145,7 +163,13 @@ async function pickBackend(ctx: ExtensionCommandContext, backends: BackendInfo[]
 	return pick(ctx, "Pick a backend", items, "\u2191\u2193 navigate \u2022 enter select \u2022 esc back");
 }
 
-async function triggerDirectFlow(ctx: ExtensionCommandContext, client: PipesClient, backends: BackendInfo[], pick: PickFromList, show: ShowScreen): Promise<void> {
+async function triggerDirectFlow(
+	ctx: ExtensionCommandContext,
+	client: PipesClient,
+	backends: BackendInfo[],
+	pick: PickFromList,
+	show: ShowScreen,
+): Promise<void> {
 	const backend = await pickBackend(ctx, backends, pick, true);
 	if (!backend) return;
 
@@ -155,7 +179,10 @@ async function triggerDirectFlow(ctx: ExtensionCommandContext, client: PipesClie
 	const paramsText = await ctx.ui.input("Params (optional, key=value,key2=value2)");
 	const params = paramsText ? parseParams(paramsText) : {};
 
-	const confirmed = await ctx.ui.confirm(`Trigger ${backend}/${jobRef}?`, Object.keys(params).length > 0 ? `Params: ${JSON.stringify(params)}` : "No params.");
+	const confirmed = await ctx.ui.confirm(
+		`Trigger ${backend}/${jobRef}?`,
+		Object.keys(params).length > 0 ? `Params: ${JSON.stringify(params)}` : "No params.",
+	);
 	if (!confirmed) return;
 
 	await runOperation(ctx, client, "Trigger", "ci.trigger", { backend, jobRef, params }, show);
@@ -196,7 +223,13 @@ async function fetchRunDetail(client: PipesClient, backend: string, jobRef: stri
 	return { check: verdict.check, failure: verdict.failure, log };
 }
 
-async function manageRunFlow(ctx: ExtensionCommandContext, client: PipesClient, backends: BackendInfo[], pick: PickFromList, show: ShowScreen): Promise<void> {
+async function manageRunFlow(
+	ctx: ExtensionCommandContext,
+	client: PipesClient,
+	backends: BackendInfo[],
+	pick: PickFromList,
+	show: ShowScreen,
+): Promise<void> {
 	const backend = await pickBackend(ctx, backends, pick, false);
 	if (!backend) return;
 
@@ -207,7 +240,12 @@ async function manageRunFlow(ctx: ExtensionCommandContext, client: PipesClient, 
 		const runIdText = await ctx.ui.input("Run id (optional, blank = latest)");
 		const runId = runIdText || undefined;
 
-		const action = await pick(ctx, `${backend}/${jobRef}${runId ? ` #${runId}` : ""}`, RUN_ACTIONS, "\u2191\u2193 navigate \u2022 enter select \u2022 esc back");
+		const action = await pick(
+			ctx,
+			`${backend}/${jobRef}${runId ? ` #${runId}` : ""}`,
+			RUN_ACTIONS,
+			"\u2191\u2193 navigate \u2022 enter select \u2022 esc back",
+		);
 		if (!action || action === ACTION_BACK) return;
 
 		if (action === "status") {
@@ -222,14 +260,17 @@ async function manageRunFlow(ctx: ExtensionCommandContext, client: PipesClient, 
 		} else if (action === "trigger") {
 			const paramsText = await ctx.ui.input("Params (optional, key=value,key2=value2)");
 			const params = paramsText ? parseParams(paramsText) : {};
-			const confirmed = await ctx.ui.confirm(`Trigger ${backend}/${jobRef}?`, Object.keys(params).length > 0 ? `Params: ${JSON.stringify(params)}` : "No params.");
+			const confirmed = await ctx.ui.confirm(
+				`Trigger ${backend}/${jobRef}?`,
+				Object.keys(params).length > 0 ? `Params: ${JSON.stringify(params)}` : "No params.",
+			);
 			if (confirmed) await runOperation(ctx, client, "Trigger", "ci.trigger", { backend, jobRef, params }, show);
 		} else if (action === "wait") {
 			await runOperation(ctx, client, "Wait", "ci.wait", { backend, jobRef, runId }, show);
 		} else if (action === "cancel") {
 			const cancelRunId = runId ?? (await ctx.ui.input("Run id to cancel (required)"));
 			if (!cancelRunId) {
-				ctx.ui.notify("Cancel needs an explicit run id \u2014 \"latest\" isn't safe to cancel blind.", "error");
+				ctx.ui.notify('Cancel needs an explicit run id \u2014 "latest" isn\'t safe to cancel blind.', "error");
 				continue;
 			}
 			const confirmed = await ctx.ui.confirm(`Cancel ${backend}/${jobRef} #${cancelRunId}?`, "This cannot be undone.");
@@ -247,9 +288,19 @@ async function runPresetFlow(ctx: ExtensionCommandContext, client: PipesClient, 
 	const overridesText = await ctx.ui.input("Override params for this run (optional, key=value,key2=value2)");
 	const params = overridesText ? parseParams(overridesText) : undefined;
 
-	const confirmed = await ctx.ui.confirm(`Trigger preset "${preset.name}"?`, params ? `${describePreset(preset)}\nOverrides: ${JSON.stringify(params)}` : describePreset(preset));
+	const confirmed = await ctx.ui.confirm(
+		`Trigger preset "${preset.name}"?`,
+		params ? `${describePreset(preset)}\nOverrides: ${JSON.stringify(params)}` : describePreset(preset),
+	);
 	if (!confirmed) return;
-	await runOperation(ctx, client, `Trigger ${preset.name}`, "ci.trigger", params ? { pipeline: preset.name, params } : { pipeline: preset.name }, show);
+	await runOperation(
+		ctx,
+		client,
+		`Trigger ${preset.name}`,
+		"ci.trigger",
+		params ? { pipeline: preset.name, params } : { pipeline: preset.name },
+		show,
+	);
 }
 
 /** One "jobName" or "jobName param=value,other=value" line at a time, until the human leaves the job name blank. */
@@ -265,7 +316,14 @@ async function collectPresetSteps(ctx: ExtensionCommandContext): Promise<Array<{
 	return steps;
 }
 
-async function addPresetFlow(ctx: ExtensionCommandContext, client: PipesClient, backends: BackendInfo[], existing: PresetInfo[], pick: PickFromList, show: ShowScreen): Promise<void> {
+async function addPresetFlow(
+	ctx: ExtensionCommandContext,
+	client: PipesClient,
+	backends: BackendInfo[],
+	existing: PresetInfo[],
+	pick: PickFromList,
+	show: ShowScreen,
+): Promise<void> {
 	const name = await ctx.ui.input("Preset name");
 	if (!name) return;
 
@@ -290,7 +348,13 @@ async function addPresetFlow(ctx: ExtensionCommandContext, client: PipesClient, 
 	await runOperation(ctx, client, "Save preset", "ci.presets.set", { preset }, show);
 }
 
-async function managePresetsFlow(ctx: ExtensionCommandContext, client: PipesClient, backends: BackendInfo[], pick: PickFromList, show: ShowScreen): Promise<void> {
+async function managePresetsFlow(
+	ctx: ExtensionCommandContext,
+	client: PipesClient,
+	backends: BackendInfo[],
+	pick: PickFromList,
+	show: ShowScreen,
+): Promise<void> {
 	for (;;) {
 		const { presets } = await client.call<{ presets: PresetInfo[] }>("ci.presets.list", {});
 		const items: SelectItem[] = [
@@ -326,7 +390,12 @@ async function managePresetsFlow(ctx: ExtensionCommandContext, client: PipesClie
 	}
 }
 
-export async function runPipesCommand(ctx: ExtensionCommandContext, connect: () => Promise<PipesClient>, pick: PickFromList = pickFromList, show: ShowScreen = showScreen): Promise<void> {
+export async function runPipesCommand(
+	ctx: ExtensionCommandContext,
+	connect: () => Promise<PipesClient>,
+	pick: PickFromList = pickFromList,
+	show: ShowScreen = showScreen,
+): Promise<void> {
 	let client: PipesClient;
 	try {
 		client = await connect();

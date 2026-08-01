@@ -1,7 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import type { FetchLike } from "../../../src/adapters/github/auth.ts";
 import { createJenkinsAdapter, JenkinsNotFoundError } from "../../../src/adapters/jenkins/jenkins-adapter.ts";
-import { asArtifactStore, asChainable, asHistorical, asPipeliner, asTriggerable, Capability, hasCapability } from "../../../src/ports/ci-backend.ts";
+import {
+	asArtifactStore,
+	asChainable,
+	asHistorical,
+	asPipeliner,
+	asTriggerable,
+	Capability,
+	hasCapability,
+} from "../../../src/ports/ci-backend.ts";
 
 const CREDENTIALS = { baseUrl: "https://jenkins.example.com", username: "alice", apiToken: "tok123" };
 
@@ -21,8 +29,10 @@ describe("createJenkinsAdapter: construction performs no network I/O", () => {
 describe("createJenkinsAdapter.getRun: explicit run_id fidelity", () => {
 	it("returns distinct results for two distinct explicit run IDs", async () => {
 		const fetchImpl: FetchLike = async (url) => {
-			if (url.includes("/job/deploy/101/api/json")) return jsonResponse({ number: 101, result: "SUCCESS", building: false, url: "u", timestamp: 1 });
-			if (url.includes("/job/deploy/102/api/json")) return jsonResponse({ number: 102, result: "FAILURE", building: false, url: "u", timestamp: 2 });
+			if (url.includes("/job/deploy/101/api/json"))
+				return jsonResponse({ number: 101, result: "SUCCESS", building: false, url: "u", timestamp: 1 });
+			if (url.includes("/job/deploy/102/api/json"))
+				return jsonResponse({ number: 102, result: "FAILURE", building: false, url: "u", timestamp: 2 });
 			throw new Error(`unexpected url: ${url}`);
 		};
 		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import type { CIRun } from "../src/domain/ci-run.ts";
 import { openPipesDb } from "../src/db.ts";
+import type { CIRun } from "../src/domain/ci-run.ts";
 import { Orchestrator } from "../src/orchestrator.ts";
 import { syncRunPool } from "../src/pool-sync.ts";
 import { createRunPool } from "../src/run-pool.ts";
@@ -10,7 +10,11 @@ describe("syncRunPool", () => {
 	it("resolves a watched job's latest run and caches its status and full log", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(
-			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "success", startedAt: new Date(0) } }, log: "full log text" }),
+			createStubCIBackend({
+				name: "gh",
+				runsById: { latest: { id: "1", name: "job", status: "success", startedAt: new Date(0) } },
+				log: "full log text",
+			}),
 		);
 		const pool = createRunPool(openPipesDb(":memory:"));
 		pool.subscribeJob("gh", "job");
@@ -40,7 +44,9 @@ describe("syncRunPool", () => {
 
 	it("auto-unsubscribes the job once its latest run reaches a terminal status", async () => {
 		const orchestrator = new Orchestrator();
-		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "failure", startedAt: new Date(0) } } }));
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "failure", startedAt: new Date(0) } } }),
+		);
 		const pool = createRunPool(openPipesDb(":memory:"));
 		pool.subscribeJob("gh", "job");
 
@@ -53,7 +59,9 @@ describe("syncRunPool", () => {
 
 	it("keeps the job subscribed while its latest run is still running or pending", async () => {
 		const orchestrator = new Orchestrator();
-		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } } }));
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } } }),
+		);
 		const pool = createRunPool(openPipesDb(":memory:"));
 		pool.subscribeJob("gh", "job");
 
@@ -65,7 +73,9 @@ describe("syncRunPool", () => {
 	it("isolates one job's refresh failure from the rest of the batch", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(createStubCIBackend({ name: "broken", err: new Error("backend unreachable") }));
-		orchestrator.addAdapter(createStubCIBackend({ name: "ok", runsById: { latest: { id: "2", name: "job", status: "success", startedAt: new Date(0) } } }));
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "ok", runsById: { latest: { id: "2", name: "job", status: "success", startedAt: new Date(0) } } }),
+		);
 		const pool = createRunPool(openPipesDb(":memory:"));
 		pool.subscribeJob("broken", "job");
 		pool.subscribeJob("ok", "job");

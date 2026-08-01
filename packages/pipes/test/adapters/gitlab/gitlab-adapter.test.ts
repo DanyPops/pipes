@@ -2,14 +2,28 @@ import { describe, expect, it } from "bun:test";
 import type { FetchLike } from "../../../src/adapters/github/auth.ts";
 import { createGitLabAdapter, GitLabNotFoundError } from "../../../src/adapters/gitlab/gitlab-adapter.ts";
 import { RateLimitError } from "../../../src/adapters/http-rate-limit.ts";
-import { asArtifactStore, asChainable, asHistorical, asPipeliner, asTriggerable, Capability, hasCapability } from "../../../src/ports/ci-backend.ts";
+import {
+	asArtifactStore,
+	asChainable,
+	asHistorical,
+	asPipeliner,
+	asTriggerable,
+	Capability,
+	hasCapability,
+} from "../../../src/ports/ci-backend.ts";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 	return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" }, ...init });
 }
 
 function glPipeline(id: number, overrides: Partial<{ status: string; created_at: string }> = {}) {
-	return { id, ref: "main", status: overrides.status ?? "success", web_url: `https://gitlab.example.com/p/-/pipelines/${id}`, created_at: overrides.created_at ?? "2026-01-01T00:00:00Z" };
+	return {
+		id,
+		ref: "main",
+		status: overrides.status ?? "success",
+		web_url: `https://gitlab.example.com/p/-/pipelines/${id}`,
+		created_at: overrides.created_at ?? "2026-01-01T00:00:00Z",
+	};
 }
 
 describe("createGitLabAdapter: construction performs no network I/O", () => {
@@ -145,7 +159,16 @@ describe("createGitLabAdapter.listArtifacts / getArtifact", () => {
 	it("namespaces artifact paths by job ID so getArtifact can route back to the right job", async () => {
 		const fetchImpl: FetchLike = async (url) => {
 			if (url.includes("/jobs") && !url.includes("/artifacts")) {
-				return jsonResponse([{ id: 7, name: "build", stage: "build", status: "success", created_at: "2026-01-01T00:00:00Z", artifacts: [{ filename: "report.xml", size: 512 }] }]);
+				return jsonResponse([
+					{
+						id: 7,
+						name: "build",
+						stage: "build",
+						status: "success",
+						created_at: "2026-01-01T00:00:00Z",
+						artifacts: [{ filename: "report.xml", size: 512 }],
+					},
+				]);
 			}
 			throw new Error(`unexpected url: ${url}`);
 		};
@@ -205,8 +228,7 @@ describe("createGitLabAdapter.getDownstreamRuns", () => {
 	});
 
 	it("skips trigger jobs whose downstream pipeline hasn't been created yet", async () => {
-		const fetchImpl: FetchLike = async () =>
-			jsonResponse([{ downstream_pipeline: null }, { downstream_pipeline: glPipeline(503) }]);
+		const fetchImpl: FetchLike = async () => jsonResponse([{ downstream_pipeline: null }, { downstream_pipeline: glPipeline(503) }]);
 		const adapter = createGitLabAdapter({ name: "gl", baseUrl: "https://gitlab.example.com", projectId: "1", fetchImpl });
 
 		const runs = await adapter.getDownstreamRuns("ignored", "ignored", "100");

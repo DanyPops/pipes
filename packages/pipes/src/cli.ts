@@ -79,7 +79,9 @@ async function loginMain(backend: string | undefined, args: string[]): Promise<v
 		const baseUrl = process.env.GITLAB_URL;
 		const clientId = process.env.GITLAB_CLIENT_ID;
 		if (!baseUrl || !clientId) {
-			console.error("GITLAB_URL and GITLAB_CLIENT_ID are required — register a personal Application under your GitLab instance's User Settings > Applications");
+			console.error(
+				"GITLAB_URL and GITLAB_CLIENT_ID are required — register a personal Application under your GitLab instance's User Settings > Applications",
+			);
 			process.exit(1);
 		}
 		const token = await authenticateGitLab({
@@ -109,7 +111,9 @@ async function loginMain(backend: string | undefined, args: string[]): Promise<v
 	if (backend === "jenkins") {
 		const { JENKINS_URL: url, JENKINS_USER: username, JENKINS_API_TOKEN: apiToken } = process.env;
 		if (!url || !username || !apiToken) {
-			console.error("JENKINS_URL, JENKINS_USER, and JENKINS_API_TOKEN are required — generate an API token from your Jenkins user's Configure page");
+			console.error(
+				"JENKINS_URL, JENKINS_USER, and JENKINS_API_TOKEN are required — generate an API token from your Jenkins user's Configure page",
+			);
 			process.exit(1);
 		}
 		// Unlike github/gitlab's profile (a suffix on a shared default identity), a Jenkins
@@ -202,7 +206,7 @@ switch (command) {
 	}
 	default:
 		console.error(
-			"usage: pipes <serve|login|health|backends|credentials|call>\n  login <github|gitlab|jenkins> [--as <profile>]  authenticate and store credentials for a backend\n  credentials list                                list stored local credential profile names, never their contents\n  credentials remove <name>                       delete a stored local credential profile (e.g. \"github-work\")\n  call <op> [json-input]         invoke any ci.* operation, e.g. call ci.pool '{\"backend\":\"gh\",\"jobRef\":\"job\"}'",
+			'usage: pipes <serve|login|health|backends|credentials|call>\n  login <github|gitlab|jenkins> [--as <profile>]  authenticate and store credentials for a backend\n  credentials list                                list stored local credential profile names, never their contents\n  credentials remove <name>                       delete a stored local credential profile (e.g. "github-work")\n  call <op> [json-input]         invoke any ci.* operation, e.g. call ci.pool \'{"backend":"gh","jobRef":"job"}\'',
 		);
 		process.exit(1);
 }

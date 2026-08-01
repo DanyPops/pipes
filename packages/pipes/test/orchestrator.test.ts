@@ -157,7 +157,10 @@ describe("Orchestrator.getVerdict: the compact real-time result", () => {
 				capabilities: Capability.Stages,
 				run: { id: "9", name: "run", status: "failure", startedAt: new Date(0) },
 				log: "Step 1 ok\nError: connection refused\n",
-				stages: [{ id: "s1", name: "build", status: "success", startedAt: new Date(0) }, { id: "s2", name: "deploy", status: "failure", startedAt: new Date(0) }],
+				stages: [
+					{ id: "s1", name: "build", status: "success", startedAt: new Date(0) },
+					{ id: "s2", name: "deploy", status: "failure", startedAt: new Date(0) },
+				],
 			}),
 		);
 
@@ -170,7 +173,10 @@ describe("Orchestrator.getVerdict: the compact real-time result", () => {
 	it("carries the backend's web URL through onto the check, for both the latest and an explicit runId", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(
-			createStubCIBackend({ name: "gh", run: { id: "9", name: "run", status: "success", startedAt: new Date(0), url: "https://ci.example/gh/job/9" } }),
+			createStubCIBackend({
+				name: "gh",
+				run: { id: "9", name: "run", status: "success", startedAt: new Date(0), url: "https://ci.example/gh/job/9" },
+			}),
 		);
 
 		const latest = await orchestrator.getVerdict("gh", "job", undefined, {});
@@ -202,13 +208,25 @@ describe("Orchestrator.getVerdict: the compact real-time result", () => {
 describe("Orchestrator.ciListRepos / ciListWorkflows: discovery capability gating", () => {
 	it("delegates to the backend's listRepos when the Discover capability is present", async () => {
 		const orchestrator = new Orchestrator();
-		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Discover, repos: [{ name: "pipes", fullName: "DanyPops/pipes", private: false }] }));
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Discover,
+				repos: [{ name: "pipes", fullName: "DanyPops/pipes", private: false }],
+			}),
+		);
 		expect(await orchestrator.ciListRepos("gh")).toEqual([{ name: "pipes", fullName: "DanyPops/pipes", private: false }]);
 	});
 
 	it("delegates to the backend's listWorkflows when the Discover capability is present", async () => {
 		const orchestrator = new Orchestrator();
-		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Discover, workflows: [{ name: "CI", fileName: "ci.yml", state: "active" }] }));
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Discover,
+				workflows: [{ name: "CI", fileName: "ci.yml", state: "active" }],
+			}),
+		);
 		expect(await orchestrator.ciListWorkflows("gh", "pipes")).toEqual([{ name: "CI", fileName: "ci.yml", state: "active" }]);
 	});
 
@@ -376,7 +394,9 @@ describe("Orchestrator.ciParamsTruncated", () => {
 	it("truncates values over 500 chars and reports which keys were truncated", async () => {
 		const orchestrator = new Orchestrator();
 		const longValue = "x".repeat(600);
-		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.History, runParams: { SHORT: "ok", LONG: longValue } }));
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", capabilities: Capability.History, runParams: { SHORT: "ok", LONG: longValue } }),
+		);
 
 		const { params, truncatedKeys } = await orchestrator.ciParamsTruncated("gh", "job", "1");
 		expect(params.SHORT).toBe("ok");

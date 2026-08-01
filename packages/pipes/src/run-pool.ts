@@ -124,9 +124,12 @@ export function createRunPool(db: Database): RunPool {
 		},
 
 		upsertLog(backend: string, jobRef: string, runId: string, logText: string): void {
-			db.query(
-				"UPDATE run_snapshots SET log_text = ? WHERE backend = ? AND job_ref = ? AND run_id = ?",
-			).run(logText, backend, jobRef, runId);
+			db.query("UPDATE run_snapshots SET log_text = ? WHERE backend = ? AND job_ref = ? AND run_id = ?").run(
+				logText,
+				backend,
+				jobRef,
+				runId,
+			);
 		},
 
 		subscribeJob(backend: string, jobRef: string): void {

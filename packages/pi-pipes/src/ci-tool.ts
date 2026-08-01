@@ -38,37 +38,66 @@ const PARAMETERS = Type.Object({
 	jobRef: Type.Optional(
 		Type.String({
 			description:
-				"Job path. GitLab: a job name. Jenkins: a folder-nested job path (e.g. \"folder/job-name\"). GitHub: a workflow file name (e.g. \"publish.yml\") for a repo-pinned backend, or \"repo/workflow.yml\" for an account-scoped backend covering every repo under one owner. Unsure which repos/workflows exist under an account-scoped GitHub backend? Use ci(action=discover) first instead of guessing -- a repo-pinned GitHub call with a bare workflow name fails loudly rather than guessing which repo was meant.",
+				'Job path. GitLab: a job name. Jenkins: a folder-nested job path (e.g. "folder/job-name"). GitHub: a workflow file name (e.g. "publish.yml") for a repo-pinned backend, or "repo/workflow.yml" for an account-scoped backend covering every repo under one owner. Unsure which repos/workflows exist under an account-scoped GitHub backend? Use ci(action=discover) first instead of guessing -- a repo-pinned GitHub call with a bare workflow name fails loudly rather than guessing which repo was meant.',
 		}),
 	),
 	runId: Type.Optional(Type.String({ description: "Build/run number. Optional for status/log — omit to use the latest run." })),
-	opaqueRef: Type.Optional(Type.String({ description: "Opaque trigger reference returned by trigger. Pass to wait to resolve to a run ID without watching." })),
-	pipeline: Type.Optional(Type.String({ description: "Named preset (a bookmarked job template). Use instead of backend+jobRef for trigger/status/log. Also the preset name to save/remove for bookmark/unbookmark." })),
+	opaqueRef: Type.Optional(
+		Type.String({ description: "Opaque trigger reference returned by trigger. Pass to wait to resolve to a run ID without watching." }),
+	),
+	pipeline: Type.Optional(
+		Type.String({
+			description:
+				"Named preset (a bookmarked job template). Use instead of backend+jobRef for trigger/status/log. Also the preset name to save/remove for bookmark/unbookmark.",
+		}),
+	),
 	step: Type.Optional(Type.Integer({ description: "Step index for pipeline log (0-based). Use with pipeline." })),
-	params: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Build parameters for trigger, or an exact-match parameter filter for search. For trigger with pipeline set, merges onto every step's own baked-in params (this wins on key collision) -- overrides a value that legitimately changes between runs (a release image, a branch) without needing to re-bookmark the preset." })),
+	params: Type.Optional(
+		Type.Record(Type.String(), Type.String(), {
+			description:
+				"Build parameters for trigger, or an exact-match parameter filter for search. For trigger with pipeline set, merges onto every step's own baked-in params (this wins on key collision) -- overrides a value that legitimately changes between runs (a release image, a branch) without needing to re-bookmark the preset.",
+		}),
+	),
 	result: Type.Optional(Type.String({ description: "Filter by result for search: SUCCESS, FAILURE, ABORTED." })),
 	runner: Type.Optional(Type.String({ description: "Filter by triggering user for search." })),
 	since: Type.Optional(Type.String({ description: "RFC3339 lower bound on run start time for search." })),
 	limit: Type.Optional(Type.Integer({ description: "Max results for search." })),
 	tail: Type.Optional(Type.Integer({ description: "Lines from the end of a log (default 200, -1 = all). Applies to status and log." })),
-	grep: Type.Optional(Type.String({ description: "Return only log lines containing this (regexp, case-insensitive). Applies to status and log." })),
+	grep: Type.Optional(
+		Type.String({ description: "Return only log lines containing this (regexp, case-insensitive). Applies to status and log." }),
+	),
 	includeParams: Type.Optional(Type.Boolean({ description: "For status: also return the run's build parameters." })),
 	timeoutS: Type.Optional(Type.Integer({ description: "Blocking timeout in seconds for wait (default 3600)." })),
 	steps: Type.Optional(Type.Boolean({ description: "For stages: expand to step-level detail instead of a flat stage list." })),
 	includeFailedLog: Type.Optional(Type.Boolean({ description: "For stages: attach each failed step's log (requires steps=true)." })),
 	depth: Type.Optional(Type.Integer({ description: "Max recursion depth for chain (default 3, -1 = unlimited)." })),
 	artifacts: Type.Optional(Type.Boolean({ description: "For chain: attach each node's artifact list." })),
-	maxTokens: Type.Optional(Type.Integer({ description: "For tail, and for wait's streamed log preview: token budget for the returned log excerpt (default 2000). The full log is always cached server-side regardless of this." })),
-	repo: Type.Optional(Type.String({ description: "For discover against an account-scoped GitHub backend: a repo name to list its workflow files. Omit to list every repo under that backend's owner instead." })),
-	downstreamJob: Type.Optional(Type.String({ description: "For downstream: the specific downstream job name to check (required for Jenkins; ignored by GitLab, whose bridges are scoped to the pipeline already given by upstreamRunId)." })),
+	maxTokens: Type.Optional(
+		Type.Integer({
+			description:
+				"For tail, and for wait's streamed log preview: token budget for the returned log excerpt (default 2000). The full log is always cached server-side regardless of this.",
+		}),
+	),
+	repo: Type.Optional(
+		Type.String({
+			description:
+				"For discover against an account-scoped GitHub backend: a repo name to list its workflow files. Omit to list every repo under that backend's owner instead.",
+		}),
+	),
+	downstreamJob: Type.Optional(
+		Type.String({
+			description:
+				"For downstream: the specific downstream job name to check (required for Jenkins; ignored by GitLab, whose bridges are scoped to the pipeline already given by upstreamRunId).",
+		}),
+	),
 	upstreamJob: Type.Optional(Type.String({ description: "For downstream: the upstream job name that triggered it." })),
 	upstreamRunId: Type.Optional(Type.String({ description: "For downstream: the specific upstream run ID to match against." })),
 	// Named presetSteps, not steps -- "steps" is already the boolean flag for the stages action's own step-level-expand option.
 	presetSteps: Type.Optional(
-		Type.Array(
-			Type.Object({ jobName: Type.String(), params: Type.Optional(Type.Record(Type.String(), Type.String())) }),
-			{ description: "For bookmark: the preset's ordered steps, e.g. [{jobName: \"build\"}, {jobName: \"deploy\", params: {env: \"prod\"}}]. At least one step required." },
-		),
+		Type.Array(Type.Object({ jobName: Type.String(), params: Type.Optional(Type.Record(Type.String(), Type.String())) }), {
+			description:
+				'For bookmark: the preset\'s ordered steps, e.g. [{jobName: "build"}, {jobName: "deploy", params: {env: "prod"}}]. At least one step required.',
+		}),
 	),
 });
 
@@ -126,10 +155,22 @@ export function registerCiTool(pi: ExtensionAPI): void {
 			// The opaqueRef-resolve form has no run to tail yet, and a jobRef with no runId is an invalid
 			// combination the daemon itself rejects -- both fall through to the plain single-call path
 			// below so the daemon's own validation error surfaces unchanged.
-			if (action === "wait" && !rest.opaqueRef && typeof rest.backend === "string" && typeof rest.jobRef === "string" && typeof rest.runId === "string") {
+			if (
+				action === "wait" &&
+				!rest.opaqueRef &&
+				typeof rest.backend === "string" &&
+				typeof rest.jobRef === "string" &&
+				typeof rest.runId === "string"
+			) {
 				const result = await waitAndStreamTail(
 					client,
-					{ backend: rest.backend, jobRef: rest.jobRef, runId: rest.runId, timeoutS: rest.timeoutS as number | undefined, maxTokens: rest.maxTokens as number | undefined },
+					{
+						backend: rest.backend,
+						jobRef: rest.jobRef,
+						runId: rest.runId,
+						timeoutS: rest.timeoutS as number | undefined,
+						maxTokens: rest.maxTokens as number | undefined,
+					},
 					onUpdate,
 					signal,
 				);
@@ -140,7 +181,12 @@ export function registerCiTool(pi: ExtensionAPI): void {
 			// other operation's flat pass-through of the tool's own params -- reshaped here rather than
 			// asking the daemon to understand this tool's own pipeline/presetSteps naming.
 			if (action === "bookmark") {
-				if (typeof rest.pipeline !== "string" || typeof rest.backend !== "string" || !Array.isArray(rest.presetSteps) || rest.presetSteps.length === 0) {
+				if (
+					typeof rest.pipeline !== "string" ||
+					typeof rest.backend !== "string" ||
+					!Array.isArray(rest.presetSteps) ||
+					rest.presetSteps.length === 0
+				) {
 					throw new Error("bookmark requires pipeline (name), backend, and at least one presetSteps entry");
 				}
 				const preset = { name: rest.pipeline, backend: rest.backend, steps: rest.presetSteps };
@@ -163,12 +209,12 @@ export function registerCiTool(pi: ExtensionAPI): void {
 			const input = args as { action?: string; backend?: string; jobRef?: string; pipeline?: string; runId?: string };
 			let text = theme.fg("toolTitle", theme.bold("ci ")) + theme.fg("muted", input.action ?? "");
 			if (input.pipeline) {
-				text += " " + theme.fg("accent", input.pipeline);
+				text += ` ${theme.fg("accent", input.pipeline)}`;
 			} else {
 				const target = [input.backend, input.jobRef].filter(Boolean).join("/");
-				if (target) text += " " + theme.fg("accent", target);
+				if (target) text += ` ${theme.fg("accent", target)}`;
 			}
-			if (input.runId) text += " " + theme.fg("dim", `#${input.runId}`);
+			if (input.runId) text += ` ${theme.fg("dim", `#${input.runId}`)}`;
 			return new Text(text, 0, 0);
 		},
 
@@ -235,7 +281,11 @@ export function summarize(data: unknown, theme: ThemeLike): string {
 		const backends = d.backends as Array<{ name: string; capabilities: string }>;
 		const pipelines = Array.isArray(d.pipelines) ? (d.pipelines as string[]) : [];
 		const lines = backends.map((b) => `  ${theme.fg("accent", b.name)} ${theme.fg("dim", b.capabilities)}`);
-		return [theme.fg("muted", `${backends.length} backend(s):`), ...lines, pipelines.length > 0 ? theme.fg("muted", `Pipelines: ${pipelines.join(", ")}`) : undefined]
+		return [
+			theme.fg("muted", `${backends.length} backend(s):`),
+			...lines,
+			pipelines.length > 0 ? theme.fg("muted", `Pipelines: ${pipelines.join(", ")}`) : undefined,
+		]
 			.filter((line): line is string => line !== undefined)
 			.join("\n");
 	}
@@ -244,7 +294,9 @@ export function summarize(data: unknown, theme: ThemeLike): string {
 	if (Array.isArray(d.presets)) {
 		const presets = d.presets as Array<{ name: string; backend: string; steps: Array<{ jobName: string }> }>;
 		if (presets.length === 0) return theme.fg("muted", "No bookmarked presets yet.");
-		const lines = presets.map((p) => `  ${theme.fg("accent", p.name)} ${theme.fg("dim", `(${p.backend}: ${p.steps.map((s) => s.jobName).join(", ")})`)}`);
+		const lines = presets.map(
+			(p) => `  ${theme.fg("accent", p.name)} ${theme.fg("dim", `(${p.backend}: ${p.steps.map((s) => s.jobName).join(", ")})`)}`,
+		);
 		return [theme.fg("muted", `${presets.length} preset(s):`), ...lines].join("\n");
 	}
 
@@ -268,7 +320,10 @@ export function summarize(data: unknown, theme: ThemeLike): string {
 
 	// ci.status (direct backend/jobRef form): CIVerdict
 	if (d.verdict && typeof d.verdict === "object") {
-		const verdict = d.verdict as { check: { backend: string; jobRef: string; runId: string; status: string }; failure?: { classification: string; failedJob?: string } };
+		const verdict = d.verdict as {
+			check: { backend: string; jobRef: string; runId: string; status: string };
+			failure?: { classification: string; failedJob?: string };
+		};
 		const { check } = verdict;
 		let text = `${statusGlyph(check.status, theme)} ${theme.fg("accent", `${check.backend}/${check.jobRef}`)} ${theme.fg("dim", `#${check.runId}`)}`;
 		if (verdict.failure) {
@@ -287,7 +342,13 @@ export function summarize(data: unknown, theme: ThemeLike): string {
 
 	// ci.wait: WatchStatus, optionally with a streamed tail preview attached
 	if (typeof d.status === "string" && typeof d.buildNumber === "string" && "progressPercent" in d) {
-		const watch = d as { buildNumber: string; status: string; progressPercent: number; overdue: boolean; tail?: { text: string; truncated: boolean } };
+		const watch = d as {
+			buildNumber: string;
+			status: string;
+			progressPercent: number;
+			overdue: boolean;
+			tail?: { text: string; truncated: boolean };
+		};
 		let text = `${statusGlyph(watch.status, theme)} ${theme.fg("dim", `#${watch.buildNumber}`)} ${theme.fg("muted", `${Math.round(watch.progressPercent)}%`)}`;
 		if (watch.overdue) text += ` ${theme.fg("warning", "overdue")}`;
 		if (watch.tail?.text) {

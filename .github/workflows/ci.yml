@@ -1,0 +1,20 @@
+name: CI
+
+# Runs on every push/PR -- pipes previously had no pre-merge CI at all,
+# only publish.yml's tag-triggered per-package test+typecheck.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: npm run lint:ci
+      - run: npm run check
+      - run: npm run test

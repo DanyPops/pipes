@@ -1,7 +1,7 @@
+import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "bun:test";
 import { defaultRepoConfigPath, loadRepoConfig, saveRepoConfig } from "../src/repo-config.ts";
 
 let dir: string | undefined;

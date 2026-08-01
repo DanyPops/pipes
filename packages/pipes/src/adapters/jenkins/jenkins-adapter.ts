@@ -5,7 +5,16 @@
  */
 import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, CIStep } from "../../domain/ci-run.ts";
 import type { TriggerReceipt } from "../../domain/trigger.ts";
-import { Capability, type CapabilitySet, type CIArtifactStore, type CIBackend, type CIChainable, type CIHistorical, type CIPipeliner, type CITriggerable } from "../../ports/ci-backend.ts";
+import {
+	Capability,
+	type CapabilitySet,
+	type CIArtifactStore,
+	type CIBackend,
+	type CIChainable,
+	type CIHistorical,
+	type CIPipeliner,
+	type CITriggerable,
+} from "../../ports/ci-backend.ts";
 import type { FetchLike } from "../github/auth.ts";
 import { withTimeout } from "../http-timeout.ts";
 import { type CrumbCache, createCrumbCache, type JenkinsCredentials, withCrumbHeaders } from "./auth.ts";
@@ -159,7 +168,9 @@ export function createJenkinsAdapter(
 	 * sends as strings), so only the fields actually used are declared here.
 	 */
 	async function fetchStageSteps(jobRef: string, runId: string, stageId: string): Promise<CIStep[]> {
-		const node = await get<{ stageFlowNodes?: WfStageFlowNode[] }>(`${buildJobPath(jobRef)}/${buildSelector(runId)}/execution/node/${stageId}/wfapi/describe`);
+		const node = await get<{ stageFlowNodes?: WfStageFlowNode[] }>(
+			`${buildJobPath(jobRef)}/${buildSelector(runId)}/execution/node/${stageId}/wfapi/describe`,
+		);
 		return (node?.stageFlowNodes ?? []).map((step) => ({
 			id: step.id,
 			name: step.name,
@@ -191,7 +202,8 @@ export function createJenkinsAdapter(
 	return {
 		name: () => name,
 		type: () => "jenkins",
-		capabilities: (): CapabilitySet => Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Chain,
+		capabilities: (): CapabilitySet =>
+			Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Chain,
 
 		async getRun(jobRef: string, runId: string): Promise<CIRun> {
 			const path = `${buildJobPath(jobRef)}/${buildSelector(runId)}/api/json?tree=number,result,building,timestamp,duration,estimatedDuration,url,fullDisplayName,description`;
@@ -227,7 +239,9 @@ export function createJenkinsAdapter(
 
 		async trigger(jobRef: string, params: Record<string, string>): Promise<TriggerReceipt> {
 			const hasParams = Object.keys(params).length > 0;
-			const path = hasParams ? `${buildJobPath(jobRef)}/buildWithParameters?${new URLSearchParams(params)}` : `${buildJobPath(jobRef)}/build`;
+			const path = hasParams
+				? `${buildJobPath(jobRef)}/buildWithParameters?${new URLSearchParams(params)}`
+				: `${buildJobPath(jobRef)}/build`;
 			const response = await post(path);
 			if (!response.ok && response.status !== 201) {
 				throw new JenkinsApiError("POST", path, response.status, await response.text());
@@ -241,7 +255,9 @@ export function createJenkinsAdapter(
 		async resolveReceipt(receipt: TriggerReceipt): Promise<TriggerReceipt> {
 			if (!receipt.opaqueRef) return receipt;
 			const queueUrl = receipt.opaqueRef.replace(/\/$/, "");
-			const item = await get<{ cancelled?: boolean; executable?: { number: number } }>(`${queueUrl.replace(baseUrl, "").replace(/^\//, "")}/api/json`);
+			const item = await get<{ cancelled?: boolean; executable?: { number: number } }>(
+				`${queueUrl.replace(baseUrl, "").replace(/^\//, "")}/api/json`,
+			);
 			if (item?.cancelled) throw new Error(`Jenkins queue item was cancelled: ${receipt.opaqueRef}`);
 			if (item?.executable) return { ...receipt, runId: String(item.executable.number), needsResolve: false };
 			return receipt;
@@ -300,7 +316,10 @@ export function createJenkinsAdapter(
 			const page = await get<{ artifacts: JenkinsArtifact[] }>(
 				`${buildJobPath(jobRef)}/${buildSelector(runId)}/api/json?tree=artifacts[fileName,relativePath]`,
 			);
-			return (page?.artifacts ?? []).map((artifact) => ({ name: artifact.fileName, path: normalizeArtifactPath(artifact.relativePath, artifact.fileName) }));
+			return (page?.artifacts ?? []).map((artifact) => ({
+				name: artifact.fileName,
+				path: normalizeArtifactPath(artifact.relativePath, artifact.fileName),
+			}));
 		},
 
 		async getArtifact(jobRef: string, runId: string, path: string): Promise<Uint8Array> {
@@ -326,8 +345,7 @@ export function createJenkinsAdapter(
 			if (!Number.isInteger(upstreamBuildNumber)) throw new Error(`invalid upstream run id: ${upstreamRunId}`);
 
 			const treeParam =
-				"builds[number,result,fullDisplayName,timestamp,duration,url,building," +
-				"actions[causes[upstreamBuild,upstreamProject]]]{0,50}";
+				"builds[number,result,fullDisplayName,timestamp,duration,url,building," + "actions[causes[upstreamBuild,upstreamProject]]]{0,50}";
 			const page = await get<{ builds: JenkinsBuild[] }>(`${buildJobPath(downstreamJob)}/api/json?tree=${treeParam}`);
 
 			return (page?.builds ?? [])

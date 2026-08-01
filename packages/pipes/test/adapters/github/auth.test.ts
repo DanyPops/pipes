@@ -20,10 +20,22 @@ function jsonResponse(body: unknown, status = 200): Response {
 describe("requestDeviceCode", () => {
 	it("parses the device code response", async () => {
 		const fetchImpl = (async () =>
-			jsonResponse({ device_code: "dc", user_code: "ABCD-1234", verification_uri: "https://github.com/login/device", expires_in: 900, interval: 5 })) as FetchLike;
+			jsonResponse({
+				device_code: "dc",
+				user_code: "ABCD-1234",
+				verification_uri: "https://github.com/login/device",
+				expires_in: 900,
+				interval: 5,
+			})) as FetchLike;
 
 		const result = await requestDeviceCode({ clientId: "client-1", fetchImpl });
-		expect(result).toEqual({ deviceCode: "dc", userCode: "ABCD-1234", verificationUri: "https://github.com/login/device", expiresInS: 900, intervalS: 5 });
+		expect(result).toEqual({
+			deviceCode: "dc",
+			userCode: "ABCD-1234",
+			verificationUri: "https://github.com/login/device",
+			expiresInS: 900,
+			intervalS: 5,
+		});
 	});
 
 	it("throws on a non-ok response", async () => {
@@ -41,7 +53,8 @@ describe("pollDeviceAccessToken", () => {
 	});
 
 	it("computes an ISO expiresAt from expires_in when the app has token expiry enabled", async () => {
-		const fetchImpl = (async () => jsonResponse({ access_token: "gho_abc", token_type: "bearer", scope: "repo", expires_in: 3600 })) as FetchLike;
+		const fetchImpl = (async () =>
+			jsonResponse({ access_token: "gho_abc", token_type: "bearer", scope: "repo", expires_in: 3600 })) as FetchLike;
 		const before = Date.now();
 		const token = await pollDeviceAccessToken({ clientId: "client-1", fetchImpl }, "dc");
 		expect(token.expiresAt).toBeDefined();
@@ -61,7 +74,13 @@ describe("runDeviceFlow", () => {
 		const fetchImpl = (async (input: string) => {
 			const url = String(input);
 			if (url.includes("device/code")) {
-				return jsonResponse({ device_code: "dc", user_code: "ABCD-1234", verification_uri: "https://github.com/login/device", expires_in: 900, interval: 1 });
+				return jsonResponse({
+					device_code: "dc",
+					user_code: "ABCD-1234",
+					verification_uri: "https://github.com/login/device",
+					expires_in: 900,
+					interval: 1,
+				});
 			}
 			call++;
 			if (call === 1) return jsonResponse({ error: "authorization_pending" });
@@ -88,14 +107,20 @@ describe("runDeviceFlow", () => {
 		const fetchImpl = (async (input: string) => {
 			const url = String(input);
 			if (url.includes("device/code")) {
-				return jsonResponse({ device_code: "dc", user_code: "ABCD-1234", verification_uri: "https://github.com/login/device", expires_in: 0, interval: 1 });
+				return jsonResponse({
+					device_code: "dc",
+					user_code: "ABCD-1234",
+					verification_uri: "https://github.com/login/device",
+					expires_in: 0,
+					interval: 1,
+				});
 			}
 			return jsonResponse({ error: "authorization_pending" });
 		}) as FetchLike;
 
-		await expect(
-			runDeviceFlow({ clientId: "client-1", fetchImpl, sleepImpl: async () => {}, onPrompt: () => {} }),
-		).rejects.toThrow(DeviceFlowExpiredError);
+		await expect(runDeviceFlow({ clientId: "client-1", fetchImpl, sleepImpl: async () => {}, onPrompt: () => {} })).rejects.toThrow(
+			DeviceFlowExpiredError,
+		);
 	});
 });
 

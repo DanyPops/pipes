@@ -15,7 +15,16 @@ function fakeClient(statuses: string[]): PipesClient & { waitCalls: unknown[]; t
 			if (operation === "ci.wait") {
 				waitCalls.push(input);
 				const status = waitQueue.length > 1 ? waitQueue.shift() : (waitQueue[0] ?? "success");
-				return { buildNumber: input.runId, jobRef: input.jobRef, backend: input.backend, status, progressPercent: 50, elapsedMs: 1000, estimatedMs: 2000, overdue: false };
+				return {
+					buildNumber: input.runId,
+					jobRef: input.jobRef,
+					backend: input.backend,
+					status,
+					progressPercent: 50,
+					elapsedMs: 1000,
+					estimatedMs: 2000,
+					overdue: false,
+				};
 			}
 			if (operation === "ci.tail") {
 				tailCalls.push(input);
@@ -45,15 +54,31 @@ describe("waitAndStreamTail", () => {
 		const client = fakeClient(["running", "running", "success"]);
 		const updates: Array<AgentToolResult<{ result: Record<string, unknown> }>> = [];
 
-		const result = await waitAndStreamTail(client, { backend: "gh", jobRef: "job", runId: "1" }, (patch) => updates.push(patch as AgentToolResult<{ result: Record<string, unknown> }>), undefined);
+		const result = await waitAndStreamTail(
+			client,
+			{ backend: "gh", jobRef: "job", runId: "1" },
+			(patch) => updates.push(patch as AgentToolResult<{ result: Record<string, unknown> }>),
+			undefined,
+		);
 
 		expect(client.waitCalls).toHaveLength(3);
 		expect(client.tailCalls).toHaveLength(3);
 		expect(updates).toHaveLength(3);
 		expect(result.status).toBe("success");
 		// Each intermediate update carries that tick's own tail snapshot, not a stale first one.
-		expect((updates[0]?.details?.result as Record<string, unknown>).tail).toEqual({ text: "log line 1", truncated: false, totalTokens: 10, outputTokens: 10 });
-		expect((updates[2]?.details?.result as Record<string, unknown>).tail).toEqual({ text: "log line 3", truncated: false, totalTokens: 10, outputTokens: 10 });
+		// updates.length is already asserted above, so index access here is genuinely safe.
+		expect((updates[0]!.details.result as Record<string, unknown>).tail).toEqual({
+			text: "log line 1",
+			truncated: false,
+			totalTokens: 10,
+			outputTokens: 10,
+		});
+		expect((updates[2]!.details.result as Record<string, unknown>).tail).toEqual({
+			text: "log line 3",
+			truncated: false,
+			totalTokens: 10,
+			outputTokens: 10,
+		});
 	});
 
 	it("stops once the overall timeout elapses, even if never terminal", async () => {
@@ -70,7 +95,13 @@ describe("waitAndStreamTail", () => {
 			}) as PipesClient["call"],
 		};
 
-		const result = await waitAndStreamTail(advancingClient, { backend: "gh", jobRef: "job", runId: "1", timeoutS: 60 }, undefined, undefined, now);
+		const result = await waitAndStreamTail(
+			advancingClient,
+			{ backend: "gh", jobRef: "job", runId: "1", timeoutS: 60 },
+			undefined,
+			undefined,
+			now,
+		);
 
 		expect(result.status).toBe("running");
 		expect(client.waitCalls.length).toBeLessThan(5);

@@ -23,7 +23,11 @@ describe("summarize: ci.help", () => {
 
 describe("summarize: ci.presets (bookmarked job templates)", () => {
 	it("lists each preset's name, backend, and step job names", () => {
-		const data = { presets: [{ name: "deploy-prod", backend: "jenkins-ci", steps: [{ jobName: "build" }, { jobName: "deploy", params: { env: "prod" } }] }] };
+		const data = {
+			presets: [
+				{ name: "deploy-prod", backend: "jenkins-ci", steps: [{ jobName: "build" }, { jobName: "deploy", params: { env: "prod" } }] },
+			],
+		};
 		const text = summarize(data, theme);
 		expect(text).toContain("1 preset(s)");
 		expect(text).toContain("deploy-prod");
@@ -56,7 +60,16 @@ describe("summarize: ci.presets (bookmarked job templates)", () => {
 
 describe("summarize: ci.status", () => {
 	it("renders a pipelineRun with per-step status glyphs", () => {
-		const data = { pipelineRun: { pipeline: "deploy", status: "success", steps: [{ jobName: "build", status: "success" }, { jobName: "test", status: "running" }] } };
+		const data = {
+			pipelineRun: {
+				pipeline: "deploy",
+				status: "success",
+				steps: [
+					{ jobName: "build", status: "success" },
+					{ jobName: "test", status: "running" },
+				],
+			},
+		};
 		const text = summarize(data, theme);
 		expect(text).toContain("deploy");
 		expect(text).toContain("build");
@@ -64,7 +77,12 @@ describe("summarize: ci.status", () => {
 	});
 
 	it("renders a direct verdict with backend/jobRef/runId and failure classification", () => {
-		const data = { verdict: { check: { backend: "github", jobRef: "ci.yml", runId: "42", status: "failure" }, failure: { classification: "test_failure", failedJob: "unit-tests" } } };
+		const data = {
+			verdict: {
+				check: { backend: "github", jobRef: "ci.yml", runId: "42", status: "failure" },
+				failure: { classification: "test_failure", failedJob: "unit-tests" },
+			},
+		};
 		const text = summarize(data, theme);
 		expect(text).toContain("github/ci.yml");
 		expect(text).toContain("#42");
@@ -98,7 +116,16 @@ describe("summarize: ci.trigger", () => {
 
 describe("summarize: ci.wait", () => {
 	it("renders a WatchStatus with progress percent and overdue flag", () => {
-		const data = { buildNumber: "1", status: "running", progressPercent: 66.6, elapsedMs: 1000, estimatedMs: 1500, overdue: true, jobRef: "job", backend: "gh" };
+		const data = {
+			buildNumber: "1",
+			status: "running",
+			progressPercent: 66.6,
+			elapsedMs: 1000,
+			estimatedMs: 1500,
+			overdue: true,
+			jobRef: "job",
+			backend: "gh",
+		};
 		const text = summarize(data, theme);
 		expect(text).toContain("#1");
 		expect(text).toContain("67%");
@@ -128,7 +155,13 @@ describe("summarize: ci.wait", () => {
 	});
 
 	it("renders a short tail preview without a truncation marker when everything fits", () => {
-		const data = { buildNumber: "1", status: "success", progressPercent: 100, overdue: false, tail: { text: "only one line", truncated: false } };
+		const data = {
+			buildNumber: "1",
+			status: "success",
+			progressPercent: 100,
+			overdue: false,
+			tail: { text: "only one line", truncated: false },
+		};
 		const text = summarize(data, theme);
 		expect(text).toContain("only one line");
 		expect(text).not.toContain("...");
@@ -158,7 +191,10 @@ describe("summarize: ci.log / ci.tail", () => {
 	});
 
 	it("renders a tail result's status, run id, and token budget", () => {
-		const text = summarize({ runId: "3", status: "success", text: "log text", truncated: false, totalTokens: 500, outputTokens: 500 }, theme);
+		const text = summarize(
+			{ runId: "3", status: "success", text: "log text", truncated: false, totalTokens: 500, outputTokens: 500 },
+			theme,
+		);
 		expect(text).toContain("#3");
 		expect(text).toContain("500 tok");
 	});
@@ -176,7 +212,15 @@ describe("summarize: ci.search / ci.downstream / ci.pool", () => {
 
 describe("summarize: ci.discover", () => {
 	it("renders each repo, flagging private ones", () => {
-		const text = summarize({ repos: [{ name: "pipes", fullName: "DanyPops/pipes", private: false }, { name: "secrets-repo", fullName: "DanyPops/secrets-repo", private: true }] }, theme);
+		const text = summarize(
+			{
+				repos: [
+					{ name: "pipes", fullName: "DanyPops/pipes", private: false },
+					{ name: "secrets-repo", fullName: "DanyPops/secrets-repo", private: true },
+				],
+			},
+			theme,
+		);
 		expect(text).toContain("2 repo(s):");
 		expect(text).toContain("pipes");
 		expect(text).toContain("secrets-repo");
@@ -218,7 +262,10 @@ describe("summarize: ci.stages", () => {
 
 describe("summarize: ci.chain", () => {
 	it("renders a CIRunNode's own status/name plus a downstream child count", () => {
-		const text = summarize({ jobRef: "build", runId: "1", name: "build #1", status: "success", children: [{ jobRef: "deploy", runId: "2" }] }, theme);
+		const text = summarize(
+			{ jobRef: "build", runId: "1", name: "build #1", status: "success", children: [{ jobRef: "deploy", runId: "2" }] },
+			theme,
+		);
 		expect(text).toContain("build #1");
 		expect(text).toContain("1 downstream");
 	});

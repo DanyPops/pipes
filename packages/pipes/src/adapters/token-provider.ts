@@ -5,7 +5,11 @@
  * the one place pipes checks a running Enigma vault first, on every call,
  * before falling through to vehicle-server's own store/refresh/static chain.
  */
-import { createTokenProvider as createBaseTokenProvider, type RefreshableAccessToken, type TokenProviderOptions as BaseTokenProviderOptions } from "@danypops/vehicle-server/vault";
+import {
+	type TokenProviderOptions as BaseTokenProviderOptions,
+	createTokenProvider as createBaseTokenProvider,
+	type RefreshableAccessToken,
+} from "@danypops/vehicle-server/vault";
 
 export type { RefreshableAccessToken, TokenProviderStore } from "@danypops/vehicle-server/vault";
 

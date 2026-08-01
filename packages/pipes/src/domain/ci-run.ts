@@ -107,4 +107,3 @@ export interface LogResult {
 	filtered?: boolean;
 	truncated?: boolean;
 }
-

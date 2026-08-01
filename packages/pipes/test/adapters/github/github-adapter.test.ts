@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { FetchLike } from "../../../src/adapters/github/auth.ts";
 import { createGitHubAdapter, GitHubNotFoundError } from "../../../src/adapters/github/github-adapter.ts";
 import { RateLimitError } from "../../../src/adapters/http-rate-limit.ts";
-import { asArtifactStore, asHistorical, asPipeliner, asTriggerable, hasCapability, Capability } from "../../../src/ports/ci-backend.ts";
+import { asArtifactStore, asHistorical, asPipeliner, asTriggerable, Capability, hasCapability } from "../../../src/ports/ci-backend.ts";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 	return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" }, ...init });
@@ -258,7 +258,9 @@ describe("createGitHubAdapter: account-scoped (no repo given) -- repo comes from
 
 	it("a bare workflow name (no repo qualifier) fails loudly, never silently misrouting to some assumed repo", async () => {
 		const adapter = createGitHubAdapter({ name: "account-scoped", owner: "o", fetchImpl: async () => new Response("") });
-		await expect(adapter.getRun("ci.yml", "1")).rejects.toThrow('GitHub backend "account-scoped" is account-scoped -- jobRef must be "repo/workflow.yml"');
+		await expect(adapter.getRun("ci.yml", "1")).rejects.toThrow(
+			'GitHub backend "account-scoped" is account-scoped -- jobRef must be "repo/workflow.yml"',
+		);
 	});
 
 	it("a repo-pinned adapter (repo given) still treats the whole jobRef as the workflow name, unchanged from before this became optional", async () => {

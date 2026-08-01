@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
-import { runDetailText, showRunDetailView, type RunDetailData } from "../src/run-detail-view.ts";
+import { type RunDetailData, runDetailText, showRunDetailView } from "../src/run-detail-view.ts";
 
 const fakeTheme = {
 	fg: (_color: string, text: string) => text,
@@ -16,15 +16,26 @@ function data(overrides: Partial<RunDetailData> = {}): RunDetailData {
 	return { check: { backend: "gh", jobRef: "ci.yml", runId: "42", status: "success" }, ...overrides };
 }
 
-async function renderView(runData: RunDetailData, rows = 40): Promise<{ notifications: Array<{ message: string; level?: string }>; component?: { render(w: number): string[]; handleInput?(d: string): void } }> {
+async function renderView(
+	runData: RunDetailData,
+	rows = 40,
+): Promise<{
+	notifications: Array<{ message: string; level?: string }>;
+	component?: { render(w: number): string[]; handleInput?(d: string): void };
+}> {
 	const notifications: Array<{ message: string; level?: string }> = [];
 	let component: { render(w: number): string[]; handleInput?(d: string): void } | undefined;
 	const ctx = {
 		mode: "tui",
 		ui: {
-			notify(message: string, level?: string) { notifications.push({ message, level }); },
+			notify(message: string, level?: string) {
+				notifications.push({ message, level });
+			},
 			async custom(factory: (tui: TUI, theme: Theme, kb: unknown, done: () => void) => unknown) {
-				component = (await factory(fakeTui(rows), fakeTheme, {}, () => {})) as { render(w: number): string[]; handleInput?(d: string): void };
+				component = (await factory(fakeTui(rows), fakeTheme, {}, () => {})) as {
+					render(w: number): string[];
+					handleInput?(d: string): void;
+				};
 			},
 		},
 	} as unknown as ExtensionCommandContext;
@@ -47,7 +58,18 @@ describe("showRunDetailView", () => {
 	});
 
 	it("renders status, checkedAt, and url fields when present", async () => {
-		const { component } = await renderView(data({ check: { backend: "gh", jobRef: "ci.yml", runId: "42", status: "failure", checkedAt: "2026-01-01T00:00:00Z", url: "https://example.test/run/42" } }));
+		const { component } = await renderView(
+			data({
+				check: {
+					backend: "gh",
+					jobRef: "ci.yml",
+					runId: "42",
+					status: "failure",
+					checkedAt: "2026-01-01T00:00:00Z",
+					url: "https://example.test/run/42",
+				},
+			}),
+		);
 		const rendered = component!.render(100).join("\n");
 		expect(rendered).toContain("Status: failure");
 		expect(rendered).toContain("Checked: 2026-01-01T00:00:00Z");
@@ -100,7 +122,9 @@ describe("showRunDetailView", () => {
 			ui: {
 				notify() {},
 				async custom(factory: (tui: TUI, theme: Theme, kb: unknown, done: () => void) => unknown) {
-					const component = (await factory(fakeTui(), fakeTheme, {}, () => { closed = true; })) as { render(w: number): string[]; handleInput?(d: string): void };
+					const component = (await factory(fakeTui(), fakeTheme, {}, () => {
+						closed = true;
+					})) as { render(w: number): string[]; handleInput?(d: string): void };
 					component.render(80);
 					component.handleInput?.("\x1b");
 				},

@@ -6,7 +6,6 @@ import { classifyLog } from "./classify.ts";
 import { CHAIN_CRAWL_MAX_NODES } from "./constants.ts";
 import type { BackendInfo } from "./domain/backend.ts";
 import {
-	isTerminalStatus,
 	type BuildFilter,
 	type CIArtifact,
 	type CIArtifactDir,
@@ -14,6 +13,7 @@ import {
 	type CIRunNode,
 	type CIRunRef,
 	type CIStageNode,
+	isTerminalStatus,
 	type LogFilter,
 	type LogResult,
 } from "./domain/ci-run.ts";
@@ -426,7 +426,11 @@ export class Orchestrator {
 	}
 
 	/** Caps each parameter value at 500 chars so an embedded YAML/JSON blob can't flood agent context. */
-	async ciParamsTruncated(backendName: string, jobRef: string, runId: string): Promise<{ params: Record<string, string>; truncatedKeys: string[] }> {
+	async ciParamsTruncated(
+		backendName: string,
+		jobRef: string,
+		runId: string,
+	): Promise<{ params: Record<string, string>; truncatedKeys: string[] }> {
 		const params = await this.ciParams(backendName, jobRef, runId);
 		const MAX_VALUE_LENGTH = 500;
 		const truncatedKeys: string[] = [];
@@ -580,7 +584,8 @@ async function chainExpand(
 	if (chainable) {
 		try {
 			const downstream = await chainable.getDownstreamRuns("", jobRef, run.id);
-			for (const downstreamRun of downstream) childRefs.push({ jobRef: downstreamRun.name, runId: downstreamRun.id, displayName: downstreamRun.name });
+			for (const downstreamRun of downstream)
+				childRefs.push({ jobRef: downstreamRun.name, runId: downstreamRun.id, displayName: downstreamRun.name });
 		} catch {
 			// Downstream lookup is best-effort supplementary data; a failed lookup must not fail the whole tree.
 		}

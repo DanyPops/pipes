@@ -5,15 +5,15 @@ import type { CIRunNode, CIStageNode, LogResult, RunResult } from "./domain/ci-r
 import type { RepoInfo, WorkflowInfo } from "./domain/discovery.ts";
 import type { Pipeline, PipelineRun } from "./domain/pipeline.ts";
 import type { TriggerResult, WatchStatus } from "./domain/trigger.ts";
-import { defaultPresetsPath, savePresets } from "./presets.ts";
 import {
 	BackendNotFoundError,
 	CapabilityUnsupportedError,
 	NotOwnedError,
-	Orchestrator,
+	type Orchestrator,
 	PipelineNotFoundError,
 	StepOutOfRangeError,
 } from "./orchestrator.ts";
+import { defaultPresetsPath, savePresets } from "./presets.ts";
 import { isTerminalStatus, type RunPool, type RunSnapshot } from "./run-pool.ts";
 import { tailByTokenBudget } from "./truncate.ts";
 import { VERSION } from "./version.ts";
@@ -43,9 +43,25 @@ export type OperationName =
 
 export interface OperationInputs {
 	"ci.help": Record<string, never>;
-	"ci.status": { backend?: string; jobRef?: string; runId?: string; pipeline?: string; tail?: number; grep?: string; includeParams?: boolean };
+	"ci.status": {
+		backend?: string;
+		jobRef?: string;
+		runId?: string;
+		pipeline?: string;
+		tail?: number;
+		grep?: string;
+		includeParams?: boolean;
+	};
 	"ci.log": { backend?: string; jobRef?: string; runId?: string; pipeline?: string; step?: number; tail?: number; grep?: string };
-	"ci.search": { backend: string; jobRef: string; result?: RunResult; runner?: string; since?: string; limit?: number; params?: Record<string, string> };
+	"ci.search": {
+		backend: string;
+		jobRef: string;
+		result?: RunResult;
+		runner?: string;
+		since?: string;
+		limit?: number;
+		params?: Record<string, string>;
+	};
 	/** repo given lists workflows in it; omitted lists every repo the backend's credential can see under its owner. */
 	"ci.discover": { backend: string; repo?: string };
 	"ci.trigger": { backend?: string; jobRef?: string; pipeline?: string; params?: Record<string, string> };
@@ -291,7 +307,12 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 					return (await handleTail(input as OperationInputs["ci.tail"])) as OperationOutputs[Name];
 				case "ci.downstream": {
 					const downstream = input as OperationInputs["ci.downstream"];
-					const runs = await orchestrator.ciDownstream(downstream.backend, downstream.downstreamJob, downstream.upstreamJob, downstream.upstreamRunId);
+					const runs = await orchestrator.ciDownstream(
+						downstream.backend,
+						downstream.downstreamJob,
+						downstream.upstreamJob,
+						downstream.upstreamRunId,
+					);
 					return { runs } as OperationOutputs[Name];
 				}
 				case "ci.help":
@@ -313,7 +334,8 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 				}
 				case "ci.discover": {
 					const discover = input as OperationInputs["ci.discover"];
-					if (discover.repo) return { workflows: await orchestrator.ciListWorkflows(discover.backend, discover.repo) } as OperationOutputs[Name];
+					if (discover.repo)
+						return { workflows: await orchestrator.ciListWorkflows(discover.backend, discover.repo) } as OperationOutputs[Name];
 					return { repos: await orchestrator.ciListRepos(discover.backend) } as OperationOutputs[Name];
 				}
 				case "ci.trigger":
@@ -329,7 +351,13 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 					return (await handleStages(input as OperationInputs["ci.stages"])) as OperationOutputs[Name];
 				case "ci.chain": {
 					const chain = input as OperationInputs["ci.chain"];
-					return (await orchestrator.ciChain(chain.backend, chain.jobRef, chain.runId, chain.depth ?? 3, chain.artifacts ?? false)) as OperationOutputs[Name];
+					return (await orchestrator.ciChain(
+						chain.backend,
+						chain.jobRef,
+						chain.runId,
+						chain.depth ?? 3,
+						chain.artifacts ?? false,
+					)) as OperationOutputs[Name];
 				}
 				case "ci.presets.list":
 					return { presets: orchestrator.listPipelineDefinitions() } as OperationOutputs[Name];

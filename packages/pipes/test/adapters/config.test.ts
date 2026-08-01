@@ -2,8 +2,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildConfiguredAdapters } from "../../src/adapters/config.ts";
 import type { TryEnigmaAccessToken } from "@danypops/enigma-client";
+import { buildConfiguredAdapters } from "../../src/adapters/config.ts";
 
 function credentialPaths(dir: string) {
 	return { credentialsDir: dir };
@@ -105,19 +105,14 @@ describe("buildConfiguredAdapters > multi-repo config (repos.json)", () => {
 	it("registers one distinct GitHub backend per configured repo target instead of the single env-var-bound one", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
 		try {
-			const { adapters, unconfigured } = await buildConfiguredAdapters(
-				credentialPaths(dir),
-				{ GITHUB_TOKEN: "gh-token" },
-				noEnigma,
-				{
-					github: [
-						{ name: "github-a", owner: "octocat", repo: "repo-a" },
-						{ name: "github-b", owner: "octocat", repo: "repo-b" },
-					],
-					gitlab: [],
-					jenkins: [],
-				},
-			);
+			const { adapters, unconfigured } = await buildConfiguredAdapters(credentialPaths(dir), { GITHUB_TOKEN: "gh-token" }, noEnigma, {
+				github: [
+					{ name: "github-a", owner: "octocat", repo: "repo-a" },
+					{ name: "github-b", owner: "octocat", repo: "repo-b" },
+				],
+				gitlab: [],
+				jenkins: [],
+			});
 			expect(adapters.map((a) => a.name()).sort()).toEqual(["github-a", "github-b"]);
 			expect(adapters.every((a) => a.type() === "github")).toBe(true);
 			expect(unconfigured.map((b) => b.name).sort()).toEqual(["gitlab", "jenkins"]);
@@ -132,7 +127,14 @@ describe("buildConfiguredAdapters > multi-repo config (repos.json)", () => {
 		const requestedUrls: string[] = [];
 		globalThis.fetch = (async (url: string) => {
 			requestedUrls.push(String(url));
-			const run = { id: 1, name: "run", status: "completed", conclusion: "success", html_url: "https://example.com", created_at: new Date().toISOString() };
+			const run = {
+				id: 1,
+				name: "run",
+				status: "completed",
+				conclusion: "success",
+				html_url: "https://example.com",
+				created_at: new Date().toISOString(),
+			};
 			return new Response(JSON.stringify({ workflow_runs: [run] }), { status: 200 });
 		}) as typeof fetch;
 		try {
@@ -163,7 +165,14 @@ describe("buildConfiguredAdapters > multi-repo config (repos.json)", () => {
 		const requestedUrls: string[] = [];
 		globalThis.fetch = (async (url: string) => {
 			requestedUrls.push(String(url));
-			const run = { id: 1, name: "run", status: "completed", conclusion: "success", html_url: "https://example.com", created_at: new Date().toISOString() };
+			const run = {
+				id: 1,
+				name: "run",
+				status: "completed",
+				conclusion: "success",
+				html_url: "https://example.com",
+				created_at: new Date().toISOString(),
+			};
 			return new Response(JSON.stringify({ workflow_runs: [run] }), { status: 200 });
 		}) as typeof fetch;
 		try {
@@ -195,7 +204,14 @@ describe("buildConfiguredAdapters > multi-repo config (repos.json)", () => {
 				credentialPaths(dir),
 				{ GITLAB_URL: "https://gitlab.example.com", GITLAB_TOKEN: "gl-token" },
 				noEnigma,
-				{ github: [], gitlab: [{ name: "gitlab-a", projectId: "42" }, { name: "gitlab-b", projectId: "99" }], jenkins: [] },
+				{
+					github: [],
+					gitlab: [
+						{ name: "gitlab-a", projectId: "42" },
+						{ name: "gitlab-b", projectId: "99" },
+					],
+					jenkins: [],
+				},
 			);
 			expect(adapters.map((a) => a.name()).sort()).toEqual(["gitlab-a", "gitlab-b"]);
 			expect(adapters.every((a) => a.type() === "gitlab")).toBe(true);
@@ -263,8 +279,16 @@ describe("buildConfiguredAdapters > multi-repo config (repos.json)", () => {
 		try {
 			const { createFileCredentialStore } = await import("../../src/adapters/jenkins/auth.ts");
 			// Saved under profile-qualified names matching each target's own `name` (no explicit `profile` given).
-			createFileCredentialStore(dir, "jenkins-a").save({ baseUrl: "https://jenkins-a.example.com", username: "a-bot", apiToken: "a-token" });
-			createFileCredentialStore(dir, "jenkins-b").save({ baseUrl: "https://jenkins-b.example.com", username: "b-bot", apiToken: "b-token" });
+			createFileCredentialStore(dir, "jenkins-a").save({
+				baseUrl: "https://jenkins-a.example.com",
+				username: "a-bot",
+				apiToken: "a-token",
+			});
+			createFileCredentialStore(dir, "jenkins-b").save({
+				baseUrl: "https://jenkins-b.example.com",
+				username: "b-bot",
+				apiToken: "b-token",
+			});
 
 			const { adapters } = await buildConfiguredAdapters(credentialPaths(dir), {}, noEnigma, {
 				github: [],
@@ -336,13 +360,20 @@ describe("buildConfiguredAdapters > Enigma as an optional, additive credential s
 		}
 	});
 
-	it("asks Enigma for a profiled target's own profile-qualified name (e.g. \"github-work\"), not the bare backend type", async () => {
+	it('asks Enigma for a profiled target\'s own profile-qualified name (e.g. "github-work"), not the bare backend type', async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
 		const originalFetch = globalThis.fetch;
 		const seenAuthHeaders: (string | null)[] = [];
 		globalThis.fetch = (async (_url: string, init?: RequestInit) => {
 			seenAuthHeaders.push(new Headers(init?.headers).get("authorization"));
-			const run = { id: 1, name: "run", status: "completed", conclusion: "success", html_url: "https://example.com", created_at: new Date().toISOString() };
+			const run = {
+				id: 1,
+				name: "run",
+				status: "completed",
+				conclusion: "success",
+				html_url: "https://example.com",
+				created_at: new Date().toISOString(),
+			};
 			return new Response(JSON.stringify({ workflow_runs: [run] }), { status: 200 });
 		}) as typeof fetch;
 		try {

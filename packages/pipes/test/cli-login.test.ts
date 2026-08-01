@@ -27,7 +27,9 @@ function fakeGhOnPath(dir: string, behavior: { exitCode: number; stdout?: string
 	const binDir = join(dir, "bin");
 	mkdirSync(binDir, { recursive: true });
 	const ghPath = join(binDir, "gh");
-	writeFileSync(ghPath, `#!/bin/sh\n${behavior.stdout ? `printf '%s' "${behavior.stdout}"\n` : ""}exit ${behavior.exitCode}\n`, { mode: 0o755 });
+	writeFileSync(ghPath, `#!/bin/sh\n${behavior.stdout ? `printf '%s' "${behavior.stdout}"\n` : ""}exit ${behavior.exitCode}\n`, {
+		mode: 0o755,
+	});
 	chmodSync(ghPath, 0o755);
 	return `${binDir}:${process.env.PATH ?? ""}`;
 }
@@ -80,10 +82,12 @@ describe("pipes login (real subprocess)", () => {
 	it("saves real Jenkins credentials to the state directory on success — no network involved for this backend", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pipes-login-"));
 		try {
-			const { code, stdout } = await runCli(
-				["login", "jenkins"],
-				{ ...tempXdgEnv(dir), JENKINS_URL: "https://jenkins.example.com", JENKINS_USER: "bot", JENKINS_API_TOKEN: "tok-123" },
-			);
+			const { code, stdout } = await runCli(["login", "jenkins"], {
+				...tempXdgEnv(dir),
+				JENKINS_URL: "https://jenkins.example.com",
+				JENKINS_USER: "bot",
+				JENKINS_API_TOKEN: "tok-123",
+			});
 			expect(code).toBe(0);
 			expect(stdout).toContain("Jenkins credentials saved");
 
@@ -102,10 +106,12 @@ describe("pipes login (real subprocess)", () => {
 	it("--as <profile> stores credentials under a separate, profile-qualified file instead of the plain backend name", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pipes-login-"));
 		try {
-			const { code, stdout } = await runCli(
-				["login", "jenkins", "--as", "jenkins-b"],
-				{ ...tempXdgEnv(dir), JENKINS_URL: "https://jenkins-b.example.com", JENKINS_USER: "bot", JENKINS_API_TOKEN: "tok-b" },
-			);
+			const { code, stdout } = await runCli(["login", "jenkins", "--as", "jenkins-b"], {
+				...tempXdgEnv(dir),
+				JENKINS_URL: "https://jenkins-b.example.com",
+				JENKINS_USER: "bot",
+				JENKINS_API_TOKEN: "tok-b",
+			});
 			expect(code).toBe(0);
 			expect(stdout).toContain('stored as "jenkins-b"');
 
@@ -138,7 +144,10 @@ describe("pipes login (real subprocess)", () => {
 		const dir = mkdtempSync(join(tmpdir(), "pipes-login-"));
 		try {
 			const path = fakeGhOnPath(dir, { exitCode: 0, stdout: "gho_danypops" });
-			const { code, stdout } = await runCli(["login", "github", "--gh-cli", "DanyPops", "--as", "personal"], { XDG_STATE_HOME: dir, PATH: path });
+			const { code, stdout } = await runCli(["login", "github", "--gh-cli", "DanyPops", "--as", "personal"], {
+				XDG_STATE_HOME: dir,
+				PATH: path,
+			});
 			expect(code).toBe(0);
 			expect(stdout).toContain('stored as "personal"');
 

@@ -10,13 +10,21 @@ describe("PipesClient.call: bounded against a wedged daemon", () => {
 	});
 
 	it("resolves normally when the daemon responds before the deadline", async () => {
-		const client = new PipesClient("http://127.0.0.1:1", "token", async () => new Response(JSON.stringify({ result: { ok: true } }), { status: 200 }));
+		const client = new PipesClient(
+			"http://127.0.0.1:1",
+			"token",
+			async () => new Response(JSON.stringify({ result: { ok: true } }), { status: 200 }),
+		);
 
 		await expect(client.call("ci.status", {}, 5_000)).resolves.toEqual({ ok: true });
 	});
 
 	it("uses a sane default deadline when none is given, without requiring every call site to pass one", async () => {
-		const client = new PipesClient("http://127.0.0.1:1", "token", async () => new Response(JSON.stringify({ result: { ok: true } }), { status: 200 }));
+		const client = new PipesClient(
+			"http://127.0.0.1:1",
+			"token",
+			async () => new Response(JSON.stringify({ result: { ok: true } }), { status: 200 }),
+		);
 
 		await expect(client.call("ci.status", {})).resolves.toEqual({ ok: true });
 	});

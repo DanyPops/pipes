@@ -1,5 +1,4 @@
-import type { FailureClassification, RunStatus } from "./ci-run.ts";
-import type { LogResult } from "./ci-run.ts";
+import type { FailureClassification, LogResult, RunStatus } from "./ci-run.ts";
 
 /** Lightweight snapshot — the input to a CIVerdict, not the answer itself. */
 export interface CICheck {
