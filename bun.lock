@@ -16,7 +16,7 @@
         "@danypops/pipes": "^0.11.2",
         "@danypops/vehicle-client-pi": "^0.1.1",
         "@danypops/vehicle-server": "^0.1.1",
-        "malevich-tui-components": "^0.5.0",
+        "malevich-tui-components": "^0.16.1",
       },
       "devDependencies": {
         "@earendil-works/pi-ai": "^0.82.1",
@@ -33,7 +33,7 @@
     },
     "packages/pipes": {
       "name": "@danypops/pipes",
-      "version": "0.11.2",
+      "version": "0.11.4",
       "bin": {
         "pipes": "src/cli.ts",
       },
@@ -301,7 +301,7 @@
 
     "lru-cache": ["lru-cache@11.4.0", "", {}, "sha512-W+R+kFL4HgVxONq2bhXPi3bGpzGe/yEhVOp233qw9wCRtgncJ15P3bC+e4zZMu4Cq7d+WAJjXGW0uUkifhcatA=="],
 
-    "malevich-tui-components": ["malevich-tui-components@0.5.0", "", {}, "sha512-Bg8KMGGrmQf2lXAGz6GOJMhliC7UUJL23WndTiKg5xhH+5kblAiRoh76UcZRdS7Q2GOaHtdmlhqnNmfD6Gb8Ug=="],
+    "malevich-tui-components": ["malevich-tui-components@0.16.1", "", {}, "sha512-2P/EWPEYBWnSOqKejmTSejSuNMYL7kgIiL9Gi2cJmmZBJaHEb36YQIcCT4Qvqqj5g85VjPG4b0MCQL4X8kIiOg=="],
 
     "marked": ["marked@18.0.5", "", { "bin": "bin/marked.js" }, "sha512-S6GcvALHg6K4ohtu4E7x0a1AqhAjp6cV8KhLSyN9qVapnzJkusVBxZRcIU9AeYsbe6P1hKDusSbEOzGyyuce6w=="],
 
