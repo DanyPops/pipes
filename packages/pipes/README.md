@@ -1,10 +1,23 @@
 # @danypops/pipes
 
-Supervised Bun daemon (built on `@danypops/daemon-kit`) that owns CI
+Supervised Bun daemon (built on `@danypops/vehicle-server`) that owns CI
 credentials, real GitHub Actions/GitLab CI/Jenkins adapters, an
 orchestration layer with named pipeline presets, and a local SQLite pool of
 run status and cached logs — the standalone-adapter shape: the pool syncs on
 its own schedule regardless of whether any client is connected.
+
+## Service (systemd --user)
+
+```bash
+pipes service install   # write a systemd user unit, enable, and start it
+pipes service status
+pipes service restart
+pipes service stop
+```
+
+`pipes serve` also works as a one-off foreground run. The daemon enforces a
+single-instance lock either way, so an ad hoc `serve` and the installed
+service can never both hold the port at once.
 
 ## Operations
 

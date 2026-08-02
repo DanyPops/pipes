@@ -1,11 +1,15 @@
 #!/usr/bin/env bun
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createNodeServiceInstallDeps, installUserService, type ServiceSpec } from "@danypops/vehicle-server/service";
 import { openInBrowser } from "../auth/browser.ts";
 import { readGhCliToken } from "../auth/gh-cli.ts";
 import { createGitHubTokenStore, runDeviceFlow as runGitHubDeviceFlow } from "../auth/github-auth.ts";
 import { authenticate as authenticateGitLab, createGitLabTokenStore } from "../auth/gitlab-auth.ts";
 import { createFileCredentialStore } from "../auth/jenkins-auth.ts";
+import { SYSTEMD_UNIT_NAME } from "../constants.ts";
 import { profiledBackend, resolvePipesCredentialPaths, resolvePipesPaths } from "../paths.ts";
 import { serveMain } from "../process/daemon.ts";
 import { connectPipesClient } from "./client.ts";
@@ -170,43 +174,109 @@ function credentialsMain(subcommand: string | undefined, name: string | undefine
 	process.exit(1);
 }
 
-switch (command) {
-	case "serve":
-		await serveMain();
-		break;
-	case "login":
-		await loginMain(process.argv[3], process.argv.slice(4));
-		break;
-	case "health": {
-		const client = connectPipesClient();
-		const health = await client.health();
-		console.log(JSON.stringify(health));
-		break;
-	}
-	case "backends": {
-		const client = connectPipesClient();
-		const { backends, pipelines } = await client.call("ci.help", {});
-		console.log(JSON.stringify({ backends, pipelines }));
-		break;
-	}
-	case "credentials":
-		credentialsMain(process.argv[3], process.argv[4]);
-		break;
-	case "call": {
-		const [, , , op, inputJson] = process.argv;
-		if (!op) {
-			console.error("usage: pipes call <op> [json-input]");
-			process.exit(1);
-		}
-		const client = connectPipesClient();
-		const input = inputJson ? JSON.parse(inputJson) : {};
-		const result = await client.call(op as Parameters<typeof client.call>[0], input);
-		console.log(JSON.stringify(result));
-		break;
-	}
-	default:
-		console.error(
-			'usage: pipes <serve|login|health|backends|credentials|call>\n  login <github|gitlab|jenkins> [--as <profile>]  authenticate and store credentials for a backend\n  credentials list                                list stored local credential profile names, never their contents\n  credentials remove <name>                       delete a stored local credential profile (e.g. "github-work")\n  call <op> [json-input]         invoke any ci.* operation, e.g. call ci.pool \'{"backend":"gh","jobRef":"job"}\'',
-		);
+/**
+ * Same pattern as Lector's own service install: unit generation and
+ * install/enable delegate to vehicle-server's shared installUserService,
+ * which projects this into Armada's fleet rather than writing a systemd
+ * unit directly. restartOnFailure:true because Pipes' own client never
+ * auto-spawns the daemon -- systemd's own supervision is the only
+ * recovery path for a crash.
+ */
+export function pipesServiceSpec(): ServiceSpec {
+	return {
+		name: "pipes",
+		displayName: "Pipes CI daemon",
+		binPath: process.execPath,
+		args: [fileURLToPath(import.meta.url), "serve"],
+		descriptorPath: resolvePipesPaths().serviceDescriptor,
+		restartOnFailure: true,
+		restartSec: 2,
+	};
+}
+
+function systemctl(...args: string[]): void {
+	execFileSync("systemctl", ["--user", ...args], { stdio: "inherit" });
+}
+
+function installService(): void {
+	const result = installUserService(pipesServiceSpec(), createNodeServiceInstallDeps());
+	if (!result.installed) {
+		console.error(`failed to install the Pipes service: ${result.reason}`);
 		process.exit(1);
+	}
+	// An explicit restart on top of installUserService's own enable/start ensures a re-install
+	// after a Pipes upgrade actually picks up the freshly-generated unit's new ExecStart path.
+	systemctl("restart", SYSTEMD_UNIT_NAME);
+}
+
+function serviceMain(action: string | undefined): void {
+	switch (action) {
+		case "install":
+			installService();
+			return;
+		case "start":
+			systemctl("start", SYSTEMD_UNIT_NAME);
+			return;
+		case "stop":
+			systemctl("stop", SYSTEMD_UNIT_NAME);
+			return;
+		case "restart":
+			systemctl("restart", SYSTEMD_UNIT_NAME);
+			return;
+		case "status":
+			systemctl("status", SYSTEMD_UNIT_NAME);
+			return;
+		default:
+			console.error("usage: pipes service <install|start|stop|restart|status>");
+			process.exit(1);
+	}
+}
+
+// Guarded so this file can be imported for its exports (e.g. pipesServiceSpec, tested against
+// generateSystemdUnit directly) without also running the CLI's own top-level command dispatch --
+// matches Lector's own cli.ts convention.
+if (import.meta.main) {
+	switch (command) {
+		case "serve":
+			await serveMain();
+			break;
+		case "login":
+			await loginMain(process.argv[3], process.argv.slice(4));
+			break;
+		case "health": {
+			const client = connectPipesClient();
+			const health = await client.health();
+			console.log(JSON.stringify(health));
+			break;
+		}
+		case "backends": {
+			const client = connectPipesClient();
+			const { backends, pipelines } = await client.call("ci.help", {});
+			console.log(JSON.stringify({ backends, pipelines }));
+			break;
+		}
+		case "credentials":
+			credentialsMain(process.argv[3], process.argv[4]);
+			break;
+		case "service":
+			serviceMain(process.argv[3]);
+			break;
+		case "call": {
+			const [, , , op, inputJson] = process.argv;
+			if (!op) {
+				console.error("usage: pipes call <op> [json-input]");
+				process.exit(1);
+			}
+			const client = connectPipesClient();
+			const input = inputJson ? JSON.parse(inputJson) : {};
+			const result = await client.call(op as Parameters<typeof client.call>[0], input);
+			console.log(JSON.stringify(result));
+			break;
+		}
+		default:
+			console.error(
+				'usage: pipes <serve|login|health|backends|credentials|call|service>\n  login <github|gitlab|jenkins> [--as <profile>]  authenticate and store credentials for a backend\n  credentials list                                list stored local credential profile names, never their contents\n  credentials remove <name>                       delete a stored local credential profile (e.g. "github-work")\n  call <op> [json-input]         invoke any ci.* operation, e.g. call ci.pool \'{"backend":"gh","jobRef":"job"}\'\n  service <install|start|stop|restart|status>     manage the systemd --user unit',
+			);
+			process.exit(1);
+	}
 }
