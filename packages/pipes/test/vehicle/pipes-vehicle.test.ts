@@ -1,0 +1,98 @@
+import { describe, expect, it } from "bun:test";
+import { Orchestrator } from "../../src/orchestrator.ts";
+import { createPipesService, OPERATION_NAMES, type PipesService } from "../../src/rpc/service.ts";
+import { Capability } from "../../src/run/ci-backend.ts";
+import { createStubCIBackend } from "../fixtures/stub-ci-backend.ts";
+
+const PERMS = { permissions: ["pipes:read", "pipes:write"] };
+
+function harness(): { service: PipesService; orchestrator: Orchestrator } {
+	const orchestrator = new Orchestrator();
+	orchestrator.addAdapter(
+		createStubCIBackend({
+			name: "gh",
+			capabilities: Capability.Trigger | Capability.History,
+			run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+		}),
+	);
+	const service = createPipesService(orchestrator);
+	return { service, orchestrator };
+}
+
+describe("createPipesVehicleRegistry (via PipesService.vehicle)", () => {
+	it("registers every real ci.* operation, dotted names preserved, daemon-only ops excluded", () => {
+		const { service } = harness();
+		const names = service.vehicle
+			.manifest()
+			.operations.map((op) => op.name)
+			.sort();
+		expect(names).toEqual([...OPERATION_NAMES].sort());
+	});
+
+	it("no operation's own schema is itself an action-dispatch blob", () => {
+		const { service } = harness();
+		for (const op of service.vehicle.manifest().operations) {
+			const properties = (op.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+			expect(Object.keys(properties)).not.toContain("action");
+		}
+	});
+
+	it("gives each action its own honest effect: external-write for a real trigger/cancel, local-write for local daemon state, read otherwise", () => {
+		const { service } = harness();
+		const effectOf = (name: string) => service.vehicle.manifest().operations.find((op) => op.name === name)?.effect;
+		expect(effectOf("ci.status")).toBe("read");
+		expect(effectOf("ci.trigger")).toBe("external-write");
+		expect(effectOf("ci.cancel")).toBe("external-write");
+		expect(effectOf("ci.subscribe")).toBe("local-write");
+		expect(effectOf("ci.presets.set")).toBe("local-write");
+	});
+
+	it("marks ci.wait streaming and long-running", () => {
+		const { service } = harness();
+		const wait = service.vehicle.manifest().operations.find((op) => op.name === "ci.wait");
+		expect(wait?.streaming).toBe(true);
+		expect(wait?.longRunning).toBe(true);
+	});
+
+	it("invoke() delegates to the exact same service.execute() the legacy /api/v1/ops dispatch uses", async () => {
+		const { service } = harness();
+		const result = (await service.vehicle.invoke("ci.status", 1, { backend: "gh", jobRef: "job" }, PERMS)) as {
+			verdict?: unknown;
+		};
+		expect(result.verdict).toBeDefined();
+	});
+
+	it("returns the same registry instance on repeated access -- built once, not rebuilt per call", () => {
+		const { service } = harness();
+		expect(service.vehicle).toBe(service.vehicle);
+	});
+
+	it("ci.wait streams a progress tick per poll for the jobRef+runId watch form, then resolves with the final status+tail", async () => {
+		const { service } = harness();
+		const progress: unknown[] = [];
+		const result = (await service.vehicle.invoke(
+			"ci.wait",
+			1,
+			{ backend: "gh", jobRef: "job", runId: "1", timeoutS: 5 },
+			{ ...PERMS, onProgress: (value: unknown) => progress.push(value) },
+		)) as { status: string; tail: unknown };
+		expect(result.status).toBe("success");
+		expect(result.tail).toBeDefined();
+		expect(progress.length).toBeGreaterThan(0);
+		expect((progress[0] as { status: string }).status).toBe("success");
+	});
+
+	it("ci.wait does not stream progress for the opaqueRef-resolve form -- nothing to tail yet", async () => {
+		const { service, orchestrator } = harness();
+		const receipt = await orchestrator.ciTrigger("gh", "job", {});
+		const progress: unknown[] = [];
+		const opaqueRef = (receipt as { queueId?: string }).queueId ?? (receipt as { buildNumber?: string }).buildNumber ?? "1";
+		await service.vehicle.invoke(
+			"ci.wait",
+			1,
+			{ backend: "gh", opaqueRef },
+			{ ...PERMS, onProgress: (value: unknown) => progress.push(value) },
+		);
+		expect(progress).toHaveLength(0);
+	});
+});

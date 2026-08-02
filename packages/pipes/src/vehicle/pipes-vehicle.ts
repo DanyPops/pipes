@@ -1,0 +1,286 @@
+/**
+ * Every real ci.* daemon operation projected as its own VehicleRegistry
+ * entry, replacing pi-pipes' hand-rolled `ci(action=X)` mega-tool. Delegates
+ * to the exact same PipesService.execute() the legacy /api/v1/ops dispatch
+ * already calls (see ../rpc/service.ts) -- a projection layer on top of the
+ * existing application logic, not a second copy of it.
+ *
+ * ci.wait is the one exception: its handler here runs the same short-tick
+ * poll loop pi-pipes' client used to run itself (waitAndStreamTail), but
+ * server-side, reporting each tick via context.reportProgress() -- Vehicle's
+ * own SSE-on-invoke progress mechanism streams that to the calling Pi tool's
+ * onUpdate generically, with no client-side polling code needed at all.
+ */
+import {
+	bindVehicleOperation,
+	defineLooseObjectSchema,
+	defineVehicleOperation,
+	type LooseObjectProperty,
+	passthroughVehicleSchema,
+	type VehicleEffect,
+} from "@danypops/vehicle-core";
+import { VehicleRegistry } from "@danypops/vehicle-server";
+import type { OperationInputs, OperationName, PipesService } from "../rpc/service.ts";
+
+const OWNER = "pipes";
+
+const LIMITS = { defaultTimeoutMs: 10_000, maxTimeoutMs: 30_000, maxRequestBytes: 65_536, maxResponseBytes: 262_144 };
+
+const stringProp: LooseObjectProperty = { type: "string" };
+const numberProp: LooseObjectProperty = { type: "number" };
+const booleanProp: LooseObjectProperty = { type: "boolean" };
+const objectProp: LooseObjectProperty = { type: "object" };
+
+interface OperationSpec {
+	readonly action: OperationName;
+	readonly description: string;
+	readonly effect: VehicleEffect;
+	readonly properties: Record<string, LooseObjectProperty>;
+	readonly required: readonly string[];
+	readonly streaming?: boolean;
+	readonly longRunning?: boolean;
+}
+
+const OPERATIONS: readonly OperationSpec[] = [
+	{
+		action: "ci.help",
+		description: "Lists every configured backend and every bookmarked pipeline preset.",
+		effect: "read",
+		properties: {},
+		required: [],
+	},
+	{
+		action: "ci.status",
+		description:
+			'A run\'s current verdict: status plus, on failure, a classified cause and log excerpt in one call. Call with pipeline for a bookmarked preset, or backend+jobRef directly (GitLab: a job name; Jenkins: a folder-nested job path; GitHub: a workflow file name, or "repo/workflow.yml" for an account-scoped backend -- use ci_discover if unsure). runId is optional -- omit it for the latest run.',
+		effect: "read",
+		properties: {
+			backend: stringProp,
+			jobRef: { ...stringProp },
+			runId: { ...stringProp, type: "string" },
+			pipeline: stringProp,
+			tail: numberProp,
+			grep: stringProp,
+			includeParams: booleanProp,
+		},
+		required: [],
+	},
+	{
+		action: "ci.log",
+		description: "Raw (optionally filtered) log text for one run or preset step.",
+		effect: "read",
+		properties: {
+			backend: stringProp,
+			jobRef: stringProp,
+			runId: stringProp,
+			pipeline: stringProp,
+			step: numberProp,
+			tail: numberProp,
+			grep: stringProp,
+		},
+		required: [],
+	},
+	{
+		action: "ci.search",
+		description: "Searches a job's run history by result/runner/date/params.",
+		effect: "read",
+		properties: {
+			backend: stringProp,
+			jobRef: stringProp,
+			result: stringProp,
+			runner: stringProp,
+			since: stringProp,
+			limit: numberProp,
+			params: objectProp,
+		},
+		required: ["backend", "jobRef"],
+	},
+	{
+		action: "ci.discover",
+		description:
+			"Lists every repo an account-scoped GitHub backend's credential can see, or (with repo) that repo's workflow files -- the way to build a real jobRef instead of guessing it. Fails clearly against a backend without discovery support (GitLab/Jenkins today).",
+		effect: "read",
+		properties: { backend: stringProp, repo: stringProp },
+		required: ["backend"],
+	},
+	{
+		action: "ci.trigger",
+		description:
+			"Starts a new run -- a real, externally visible CI trigger. Call with pipeline for a bookmarked preset (params override its own baked-in ones), or backend+jobRef directly.",
+		effect: "external-write",
+		properties: { backend: stringProp, jobRef: stringProp, pipeline: stringProp, params: objectProp },
+		required: [],
+	},
+	{
+		action: "ci.wait",
+		description:
+			"Blocks until a run reaches a terminal status or timeoutS elapses. Given backend+jobRef+runId (watching a real run), streams a live status+log-tail snapshot every ~20s while it waits. Given opaqueRef instead (resolving a fresh trigger's receipt to a real run id), returns once resolved with no streaming.",
+		effect: "read",
+		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, opaqueRef: stringProp, timeoutS: numberProp },
+		required: ["backend"],
+		streaming: true,
+		longRunning: true,
+	},
+	{
+		action: "ci.cancel",
+		description: "Cancels a running job -- a real, externally visible action.",
+		effect: "external-write",
+		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp },
+		required: ["backend", "jobRef", "runId"],
+	},
+	{
+		action: "ci.stages",
+		description: "A run's stage/step breakdown, optionally with each failed step's own log attached.",
+		effect: "read",
+		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, steps: booleanProp, includeFailedLog: booleanProp },
+		required: ["backend", "jobRef", "runId"],
+	},
+	{
+		action: "ci.chain",
+		description:
+			"A run's downstream tree, automatically, where the backend supports it (GitLab). Jenkins needs ci.downstream instead, since its bridges can't be discovered without already knowing the downstream job name.",
+		effect: "read",
+		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, depth: numberProp, artifacts: booleanProp },
+		required: ["backend", "jobRef", "runId"],
+	},
+	{
+		action: "ci.pool",
+		description: "Reads only the daemon's own locally pooled run history -- never a live backend call, cheap to call frequently.",
+		effect: "read",
+		properties: { backend: stringProp, jobRef: stringProp, limit: numberProp },
+		required: ["backend", "jobRef"],
+	},
+	{
+		action: "ci.subscribe",
+		description:
+			"Has the daemon keep following a job's latest run in the background -- auto-refocuses onto a new run if one supersedes the last, auto-unsubscribes once terminal. Idempotent. ci.trigger already subscribes automatically.",
+		effect: "local-write",
+		properties: { backend: stringProp, jobRef: stringProp },
+		required: ["backend", "jobRef"],
+	},
+	{
+		action: "ci.unsubscribe",
+		description: "Stops the daemon following a job's runs in the background. Idempotent -- no error if it wasn't subscribed.",
+		effect: "local-write",
+		properties: { backend: stringProp, jobRef: stringProp },
+		required: ["backend", "jobRef"],
+	},
+	{
+		action: "ci.tail",
+		description:
+			'A subscribed job\'s most recent cached log output, token-budgeted -- cheaper than ci.log for repeated polling. Explicit runId reuses a cached terminal log; omitted always re-resolves "latest" live.',
+		effect: "read",
+		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, maxTokens: numberProp },
+		required: ["backend", "jobRef"],
+	},
+	{
+		action: "ci.downstream",
+		description:
+			"Targeted downstream-job lookup for a backend (Jenkins) where ci.chain's automatic tree crawl can't discover children without already knowing the downstream job name.",
+		effect: "read",
+		properties: { backend: stringProp, downstreamJob: stringProp, upstreamJob: stringProp, upstreamRunId: stringProp },
+		required: ["backend", "downstreamJob", "upstreamJob", "upstreamRunId"],
+	},
+	{
+		action: "ci.presets.list",
+		description: "Lists every bookmarked pipeline preset (name -> backend + ordered steps).",
+		effect: "read",
+		properties: {},
+		required: [],
+	},
+	{
+		action: "ci.presets.set",
+		description:
+			'Saves or overwrites a named pipeline preset, e.g. {name: "deploy", backend: "github", steps: [{jobName: "build"}, {jobName: "deploy", params: {env: "prod"}}]} -- once saved, ci.trigger/ci.status/ci.log can use it by name alone via the pipeline parameter.',
+		effect: "local-write",
+		properties: { preset: objectProp },
+		required: ["preset"],
+	},
+	{
+		action: "ci.presets.remove",
+		description: "Removes a bookmarked preset by name.",
+		effect: "local-write",
+		properties: { name: stringProp },
+		required: ["name"],
+	},
+];
+
+const WAIT_TICK_TIMEOUT_S = 20;
+const WAIT_DEFAULT_TOTAL_TIMEOUT_S = 3_600;
+/** Mirrors packages/pipes's own RunStatus terminal set (isTerminalStatus in run/ci-run.ts). */
+const TERMINAL_STATUSES = new Set(["success", "failure", "aborted", "not_found"]);
+
+/**
+ * The "watch an existing run" form (jobRef+runId given, not opaqueRef): ticks
+ * ci.wait with a short per-tick timeout budget, pairs each tick with ci.tail
+ * for the log text ci.wait's own shape doesn't carry, and reports the
+ * combined snapshot via reportProgress on every tick. The opaqueRef-resolve
+ * form (turning a fresh trigger's receipt into a real run id) has no run to
+ * tail yet, so it falls through to a single plain ci.wait call below instead.
+ */
+async function waitWithProgress(
+	service: PipesService,
+	input: OperationInputs["ci.wait"],
+	reportProgress: (progress: unknown) => void,
+	signal: AbortSignal,
+): Promise<unknown> {
+	if (!input.backend || !input.jobRef || !input.runId || input.opaqueRef) return service.execute("ci.wait", input);
+
+	const backend = input.backend;
+	const jobRef = input.jobRef;
+	const runId = input.runId;
+	const deadline = Date.now() + (input.timeoutS ?? WAIT_DEFAULT_TOTAL_TIMEOUT_S) * 1_000;
+	let result: Record<string, unknown> = {};
+
+	for (;;) {
+		if (signal.aborted || Date.now() >= deadline) break;
+
+		const remainingS = Math.max(1, Math.ceil((deadline - Date.now()) / 1_000));
+		const tickTimeoutS = Math.min(WAIT_TICK_TIMEOUT_S, remainingS);
+
+		const status = await service.execute("ci.wait", { backend, jobRef, runId, timeoutS: tickTimeoutS });
+		const tail = await service.execute("ci.tail", { backend, jobRef, runId });
+		result = { ...status, tail };
+		reportProgress(result);
+
+		const runStatus = (status as { status?: unknown }).status;
+		if (typeof runStatus === "string" && TERMINAL_STATUSES.has(runStatus)) break;
+	}
+
+	return result;
+}
+
+export function createPipesVehicleRegistry(service: PipesService): VehicleRegistry {
+	const registry = new VehicleRegistry({
+		name: "pipes",
+		version: "1.0.0",
+		description: "Cross-platform CI operations across GitHub Actions, GitLab CI, Jenkins, and Prow.",
+	});
+
+	for (const spec of OPERATIONS) {
+		const operation = defineVehicleOperation({
+			name: spec.action,
+			version: 1,
+			description: spec.description,
+			input: defineLooseObjectSchema(spec.properties, spec.required),
+			output: passthroughVehicleSchema,
+			permissions: ["pipes:read", "pipes:write"],
+			effect: spec.effect,
+			idempotency: { mode: spec.effect === "read" ? "safe" : "unsafe" },
+			streaming: spec.streaming,
+			longRunning: spec.longRunning,
+			limits: LIMITS,
+		});
+		registry.register(
+			OWNER,
+			bindVehicleOperation(operation, () => async (context) => {
+				if (spec.action === "ci.wait") {
+					return waitWithProgress(service, context.input as OperationInputs["ci.wait"], context.reportProgress, context.signal);
+				}
+				return service.execute(spec.action, context.input as never);
+			}),
+		);
+	}
+
+	return registry;
+}

@@ -91,4 +91,36 @@ describe("syncRunPool", () => {
 		const pool = createRunPool(openPipesDb(":memory:"));
 		await expect(syncRunPool(orchestrator, pool)).resolves.toBeUndefined();
 	});
+
+	it("calls onStatusChange when a run's status differs from what the pool had previously recorded for it", async () => {
+		const orchestrator = new Orchestrator();
+		const runsById: Record<string, CIRun> = { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } };
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById }));
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job");
+
+		const transitions: unknown[] = [];
+		await syncRunPool(orchestrator, pool, undefined, (t) => transitions.push(t));
+		expect(transitions).toEqual([{ backend: "gh", jobRef: "job", runId: "1", status: "running", url: "" }]);
+
+		runsById.latest = { id: "1", name: "job", status: "success", startedAt: new Date(0) };
+		await syncRunPool(orchestrator, pool, undefined, (t) => transitions.push(t));
+		expect(transitions).toHaveLength(2);
+		expect(transitions[1]).toEqual({ backend: "gh", jobRef: "job", runId: "1", status: "success", url: "" });
+	});
+
+	it("does not call onStatusChange when a tick re-fetches the exact same status", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } } }),
+		);
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job");
+
+		const transitions: unknown[] = [];
+		await syncRunPool(orchestrator, pool, undefined, (t) => transitions.push(t));
+		await syncRunPool(orchestrator, pool, undefined, (t) => transitions.push(t));
+
+		expect(transitions).toHaveLength(1);
+	});
 });

@@ -16,12 +16,27 @@
  */
 import type { Logger } from "@danypops/vehicle-server/logging";
 import type { Orchestrator } from "../orchestrator.ts";
+import type { RunStatus } from "../run/ci-run.ts";
 import { isTerminalStatus } from "../run/ci-run.ts";
 import type { RunPool } from "../sqlite/run-pool.ts";
 
 const NOOP_LOGGER: Logger = { debug() {}, info() {}, warn() {}, error() {} };
 
-export async function syncRunPool(orchestrator: Orchestrator, pool: RunPool, logger: Logger = NOOP_LOGGER): Promise<void> {
+export interface RunStatusTransition {
+	backend: string;
+	jobRef: string;
+	runId: string;
+	status: RunStatus;
+	url: string;
+}
+
+export async function syncRunPool(
+	orchestrator: Orchestrator,
+	pool: RunPool,
+	logger: Logger = NOOP_LOGGER,
+	/** Called once per job whose fetched status differs from what the pool had previously recorded for that run -- e.g. wired to PushChannel.publish() so a subscribed client sees a live queued -> running -> success/failure transition instead of polling. Never called for an unchanged status (including the fresh-fetch tick that lands the same terminal status a second time). */
+	onStatusChange?: (transition: RunStatusTransition) => void,
+): Promise<void> {
 	const jobs = pool.watchedJobs();
 	await Promise.all(
 		jobs.map(async ({ backend, jobRef }) => {
@@ -29,6 +44,7 @@ export async function syncRunPool(orchestrator: Orchestrator, pool: RunPool, log
 				const run = await orchestrator.ciGetRun(backend, jobRef, "latest");
 				const log = await orchestrator.ciGetRawLog(backend, jobRef, run.id);
 				const fetchedAt = new Date();
+				const previous = pool.get(backend, jobRef, run.id);
 				pool.upsert({
 					backend,
 					jobRef,
@@ -42,6 +58,9 @@ export async function syncRunPool(orchestrator: Orchestrator, pool: RunPool, log
 					watched: !isTerminalStatus(run.status),
 				});
 				pool.upsertLog(backend, jobRef, run.id, log);
+				if (previous?.status !== run.status) {
+					onStatusChange?.({ backend, jobRef, runId: run.id, status: run.status, url: run.url ?? "" });
+				}
 
 				if (isTerminalStatus(run.status)) pool.unsubscribeJob(backend, jobRef);
 			} catch (error) {

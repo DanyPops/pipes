@@ -1,4 +1,13 @@
-/** Operation registry + fetch handler: bearer auth, /health, /ready, /api/v1/ops. */
+/**
+ * Operation registry + fetch handler: bearer auth, /health, /ready,
+ * /api/v1/ops, and a VehicleRegistry (see ../vehicle/pipes-vehicle.ts)
+ * mounted at /vehicle/* -- same daemon, same auth, same port, not a second
+ * service to stand up. Every operation here has a CLI command
+ * (cli/index.ts) and a pi-pipes Vehicle-projected tool -- no operation
+ * exists only for one caller.
+ */
+import type { VehicleRegistry } from "@danypops/vehicle-server";
+import { createVehicleHttpApp } from "@danypops/vehicle-server/http";
 import { errorResponse, healthResponse, jsonResponse, readyResponse, requireBearerToken } from "@danypops/vehicle-server/rpc-http";
 import { defaultPresetsPath, savePresets } from "../config/presets.ts";
 import { DEFAULT_LOG_TAIL_TOKENS } from "../constants.ts";
@@ -16,6 +25,7 @@ import type { Pipeline, PipelineRun } from "../run/pipeline.ts";
 import type { TriggerResult, WatchStatus } from "../run/trigger.ts";
 import { isTerminalStatus, type RunPool, type RunSnapshot } from "../sqlite/run-pool.ts";
 import { tailByTokenBudget } from "../truncate.ts";
+import { createPipesVehicleRegistry } from "../vehicle/pipes-vehicle.ts";
 import { VERSION } from "../version.ts";
 
 const DEFAULT_WAIT_TIMEOUT_S = 3600;
@@ -116,9 +126,15 @@ export class UnknownOperationError extends Error {
 export interface PipesService {
 	operationNames(): OperationName[];
 	execute<Name extends OperationName>(op: Name, input: OperationInputs[Name]): Promise<OperationOutputs[Name]>;
+	/**
+	 * Every ci.* operation projected onto Vehicle (see ../vehicle/pipes-vehicle.ts),
+	 * replacing pi-pipes' old `ci(action=X)` mega-tool with one real Pi tool per
+	 * operation.
+	 */
+	readonly vehicle: VehicleRegistry;
 }
 
-const OPERATION_NAMES: OperationName[] = [
+export const OPERATION_NAMES: OperationName[] = [
 	"ci.help",
 	"ci.status",
 	"ci.log",
@@ -152,6 +168,8 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 	const pollIntervalMs = options.waitPollIntervalMs ?? DEFAULT_WAIT_POLL_MS;
 	const pool = options.runPool;
 	const presetsPath = options.presetsPath ?? defaultPresetsPath();
+	let service!: PipesService;
+	let cachedVehicleRegistry: VehicleRegistry | undefined;
 
 	async function handleStatus(input: OperationInputs["ci.status"]): Promise<OperationOutputs["ci.status"]> {
 		if (input.pipeline) {
@@ -289,9 +307,17 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 		return { stages: nodes.map((node) => ({ id: node.id, name: node.name, status: node.status, durationMs: node.durationMs })) };
 	}
 
-	return {
+	service = {
 		operationNames(): OperationName[] {
 			return OPERATION_NAMES;
+		},
+		get vehicle(): VehicleRegistry {
+			// Built lazily, once, on first access -- createPipesVehicleRegistry(service) needs
+			// this same service object, which doesn't exist yet at the point this literal is
+			// being constructed. A dynamic import would be async for no reason; a plain
+			// deferred require-once cache keeps this a plain synchronous getter.
+			if (!cachedVehicleRegistry) cachedVehicleRegistry = createPipesVehicleRegistry(service);
+			return cachedVehicleRegistry;
 		},
 		async execute<Name extends OperationName>(op: Name, input: OperationInputs[Name]): Promise<OperationOutputs[Name]> {
 			switch (op) {
@@ -378,6 +404,7 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 			}
 		},
 	};
+	return service;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -426,12 +453,15 @@ function statusForError(error: unknown): number {
 }
 
 export function createApp(deps: { service: PipesService; token: string }): { fetch(request: Request): Promise<Response> } {
+	// Same Bearer token, daemon, and port as the rest of this API.
+	const vehicleApp = createVehicleHttpApp({ registry: deps.service.vehicle, token: deps.token });
 	return {
 		async fetch(request: Request): Promise<Response> {
 			if (!requireBearerToken(request, deps.token)) {
 				return errorResponse("missing or invalid bearer token", 401);
 			}
 			const url = new URL(request.url);
+			if (url.pathname.startsWith("/vehicle/")) return vehicleApp.fetch(request);
 			if (request.method === "GET" && url.pathname === "/health") {
 				return healthResponse(VERSION);
 			}
