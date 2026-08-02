@@ -1,6 +1,6 @@
 {
 	"name": "@danypops/pipes",
-	"version": "0.12.0",
+	"version": "0.12.1",
 	"license": "MIT",
 	"description": "Supervised Bun daemon for pi-pipes: authenticated loopback CI status/trigger/log operations across GitHub, GitLab, and Jenkins",
 	"type": "module",
@@ -18,9 +18,9 @@
 		"check": "bun x tsc --noEmit"
 	},
 	"dependencies": {
-		"@danypops/vehicle-core": "^0.1.1",
-		"@danypops/vehicle-server": "^0.2.1",
-		"@danypops/vehicle-client": "^0.1.1",
+		"@danypops/vehicle-core": "^0.10.0",
+		"@danypops/vehicle-server": "^0.13.0",
+		"@danypops/vehicle-client": "^0.5.0",
 		"@danypops/enigma-client": "^0.5.0",
 		"open": "^11.0.0"
 	},
