@@ -2,20 +2,19 @@
  * /pipes: human-driven TUI menu, mirroring pi-enigma's /secrets structure --
  * a backend/preset picker -> job picker -> action picker for manual
  * trigger/cancel/log-viewing and preset management, distinct from the
- * agent-facing ci tool (ci-tool.ts). No LLM involvement here at all: this is
- * a registerCommand handler, never a registerTool.
+ * agent-facing ci_* tools (vehicle-client.ts). No LLM involvement here at
+ * all: this is a registerCommand handler, never a registerTool.
  *
- * Reuses ci-tool.ts's summarize()/ci-render.ts's findFirstUrl()/openLine()
- * so a human reading a result here sees the exact same compact, colored
- * rendering (and the same clickable URL) the ci tool's own TUI row shows.
+ * Reuses ci-render.ts's summarize()/findFirstUrl()/openLine() so a human
+ * reading a result here sees the exact same compact, colored rendering
+ * (and the same clickable URL) a ci_* tool's own TUI row shows.
  */
+import type { OperationName, PipesClient } from "@danypops/pipes";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder, getSelectListTheme } from "@earendil-works/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
 import { BorderedSelectPanel } from "malevich-tui-components";
-import { findFirstUrl, openLine } from "./ci-render.ts";
-import { summarize } from "./ci-tool.ts";
-import type { PipesClient } from "./daemon-client.ts";
+import { findFirstUrl, openLine, summarize } from "./ci-render.ts";
 import { type RunDetailData, showRunDetailView } from "./run-detail-view.ts";
 
 interface BackendInfo {
@@ -136,12 +135,16 @@ async function runOperation(
 	ctx: ExtensionCommandContext,
 	client: PipesClient,
 	title: string,
-	operation: string,
+	operation: OperationName,
 	input: Record<string, unknown>,
 	show: ShowScreen,
 ): Promise<void> {
 	try {
-		const result = await client.call(operation, input);
+		// This dispatch is genuinely dynamic (one runOperation() shared by every flow below, called
+		// with whichever operation/input pair that flow needs) -- `as never` widens the input to
+		// satisfy whichever Inputs[Name] the real operation expects, the same cast
+		// pipes-vehicle.ts's own dynamic dispatch already uses for the identical reason.
+		const result = await client.call(operation, input as never);
 		await show(ctx, title, result);
 	} catch (error) {
 		ctx.ui.notify(`${title} failed: ${error instanceof Error ? error.message : String(error)}`, "error");
@@ -211,10 +214,14 @@ interface RawCIVerdict {
 }
 
 async function fetchRunDetail(client: PipesClient, backend: string, jobRef: string, runId: string | undefined): Promise<RunDetailData> {
-	const { verdict } = await client.call<{ verdict: RawCIVerdict }>("ci.status", { backend, jobRef, runId });
+	const { verdict } = (await client.call("ci.status", { backend, jobRef, runId })) as { verdict: RawCIVerdict };
 	let log: RunDetailData["log"];
 	try {
-		const logResult = await client.call<{ lines: string[]; totalLines: number; truncated?: boolean }>("ci.log", { backend, jobRef, runId });
+		const logResult = (await client.call("ci.log", { backend, jobRef, runId })) as {
+			lines: string[];
+			totalLines: number;
+			truncated?: boolean;
+		};
 		log = { lines: logResult.lines, totalLines: logResult.totalLines, truncated: logResult.truncated };
 	} catch {
 		// A run with no log yet (queued, or the backend has none) -- the view works fine without one.
@@ -356,7 +363,7 @@ async function managePresetsFlow(
 	show: ShowScreen,
 ): Promise<void> {
 	for (;;) {
-		const { presets } = await client.call<{ presets: PresetInfo[] }>("ci.presets.list", {});
+		const { presets } = (await client.call("ci.presets.list", {})) as { presets: PresetInfo[] };
 		const items: SelectItem[] = [
 			...presets.map((p) => ({ value: `${ACTION_VIEW_PRESET_PREFIX}${p.name}`, label: p.name, description: describePreset(p) })),
 			{ value: ACTION_ADD_PRESET, label: "+ Add new preset" },
@@ -408,9 +415,9 @@ export async function runPipesCommand(
 		let backends: BackendInfo[];
 		let presets: PresetInfo[];
 		try {
-			const help = await client.call<{ backends: BackendInfo[]; pipelines: string[] }>("ci.help", {});
+			const help = (await client.call("ci.help", {})) as { backends: BackendInfo[]; pipelines: string[] };
 			backends = help.backends;
-			presets = (await client.call<{ presets: PresetInfo[] }>("ci.presets.list", {})).presets;
+			presets = ((await client.call("ci.presets.list", {})) as { presets: PresetInfo[] }).presets;
 		} catch (error) {
 			ctx.ui.notify(`Could not reach the Pipes daemon: ${error instanceof Error ? error.message : String(error)}`, "error");
 			return;

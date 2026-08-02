@@ -4,10 +4,6 @@
  * to (github/gitlab/jenkins profiles, including the gh-CLI-sourced ones),
  * plus the two static-token env vars pipes' adapters fall back to.
  *
- * Deliberately reuses resolvePipesPaths() from daemon-client.ts, itself a
- * duplicate of @danypops/pipes's own paths.ts by design (see that file's
- * header) -- this module inherits the same "no raw-source import across
- * the Node/tsc boundary" constraint, not a new one.
  *
  * Not registered as its own top-level `/secrets` Pi command: pi-enigma
  * already owns that command name, and Pi has no per-extension command
@@ -15,10 +11,10 @@
  * Exposed instead as a "Secrets" entry inside pipes' own `/pipes` menu.
  */
 import { dirname } from "node:path";
+import { resolvePipesPaths } from "@danypops/pipes";
 import type { SecretsBackend } from "@danypops/vehicle-client-pi/secrets-backend";
 import { createEnvSecretsBackend } from "@danypops/vehicle-client-pi/secrets-backend-env";
 import { createLocalSecretsBackend } from "@danypops/vehicle-client-pi/secrets-backend-local";
-import { resolvePipesPaths } from "./daemon-client.ts";
 
 export interface BuildPipesSecretsBackendsOptions {
 	env?: Record<string, string | undefined>;

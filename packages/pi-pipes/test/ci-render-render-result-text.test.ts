@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { renderResultText } from "../src/ci-tool.ts";
+import { renderResultText } from "../src/ci-render.ts";
 
 /** A no-op theme: wraps text with [color:...] markers so assertions can check both text and color choice. bold is a passthrough. */
 const theme = { fg: (color: string, text: string) => `[${color}:${text}]`, bold: (text: string) => text };

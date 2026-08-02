@@ -1,0 +1,172 @@
+import { describe, expect, it } from "bun:test";
+import type { VehicleClient, VehicleInvocationOptions, VehicleManifest, VehicleManifestOperation } from "@danypops/vehicle-core";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { isPipesVehicleTool, type PipesVehicleDeps, registerPipesVehicle } from "../src/vehicle-client.ts";
+
+type FakeEventHandler = (event: unknown, ctx: unknown) => Promise<void> | void;
+
+const limits = { defaultTimeoutMs: 1_000, maxTimeoutMs: 5_000, maxRequestBytes: 1_024, maxResponseBytes: 1_024 };
+
+function operation(name: string, overrides: Partial<VehicleManifestOperation> = {}): VehicleManifestOperation {
+	return {
+		name,
+		version: 1,
+		description: `Run ${name}.`,
+		inputSchema: { type: "object", properties: { backend: { type: "string" } }, required: [] },
+		outputSchema: { type: "object" },
+		permissions: [],
+		effect: "read",
+		idempotency: { mode: "safe" },
+		streaming: false,
+		longRunning: false,
+		limits,
+		errors: [],
+		available: true,
+		...overrides,
+	};
+}
+
+class FakeClient implements VehicleClient {
+	closed = false;
+	result: unknown = { ok: true };
+
+	constructor(private value: VehicleManifest) {}
+
+	setManifest(value: VehicleManifest): void {
+		this.value = value;
+	}
+
+	manifest(): Promise<VehicleManifest> {
+		return Promise.resolve(this.value);
+	}
+
+	async invoke<Output = unknown>(_name: string, _version: number, _input: unknown, _options?: VehicleInvocationOptions): Promise<Output> {
+		return this.result as Output;
+	}
+
+	close(): Promise<void> {
+		this.closed = true;
+		return Promise.resolve();
+	}
+}
+
+function manifest(operations: VehicleManifestOperation[]): VehicleManifest {
+	return { name: "pipes", version: "1.0.0", description: "Pipes.", operations };
+}
+
+function fakePi() {
+	const tools: ToolDefinition[] = [];
+	let active: string[] = [];
+	const handlers: Record<string, FakeEventHandler[]> = {};
+	const pi = {
+		registerTool: (tool: ToolDefinition) => {
+			tools.push(tool);
+			active.push(tool.name);
+		},
+		getAllTools: () => tools,
+		getActiveTools: () => active,
+		setActiveTools: (names: string[]) => {
+			active = names;
+		},
+		on: (event: string, handler: FakeEventHandler) => {
+			if (!handlers[event]) handlers[event] = [];
+			handlers[event].push(handler);
+		},
+	} as unknown as ExtensionAPI;
+	const fire = async (event: string, toolName?: string) => {
+		for (const handler of handlers[event] ?? []) await handler({ toolName }, {});
+	};
+	return { pi, tools, active: () => active, fire };
+}
+
+describe("registerPipesVehicle", () => {
+	it("does nothing when the daemon has never started (no target resolves)", async () => {
+		const { pi, tools } = fakePi();
+		const deps: PipesVehicleDeps = { resolveTarget: () => undefined };
+		const result = await registerPipesVehicle(pi, deps);
+		expect(result).toBeUndefined();
+		expect(tools).toHaveLength(0);
+	});
+
+	it("degrades silently when the client construction or manifest fetch throws", async () => {
+		const { pi } = fakePi();
+		const deps: PipesVehicleDeps = {
+			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:1", token: "t" }),
+			createClient: () => {
+				throw new Error("connection refused");
+			},
+		};
+		const result = await registerPipesVehicle(pi, deps);
+		expect(result).toBeUndefined();
+	});
+
+	it("registers one Pi tool per real operation when a target resolves, using the dotted-to-underscore projection", async () => {
+		const { pi, tools } = fakePi();
+		const client = new FakeClient(manifest([operation("ci.status"), operation("ci.presets.list")]));
+		const deps: PipesVehicleDeps = {
+			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "t" }),
+			createClient: () => client,
+		};
+		const result = await registerPipesVehicle(pi, deps);
+		expect(result?.tools.map((t) => t.toolName).sort()).toEqual(["ci_presets_list", "ci_status"]);
+		expect(tools.map((t) => t.name).sort()).toEqual(["ci_presets_list", "ci_status"]);
+	});
+
+	it("wires renderCall/renderResult for every registered operation, using ci-render.ts's shape-driven rendering", async () => {
+		const { pi, tools } = fakePi();
+		const client = new FakeClient(manifest([operation("ci.trigger")]));
+		const deps: PipesVehicleDeps = {
+			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "t" }),
+			createClient: () => client,
+		};
+		await registerPipesVehicle(pi, deps);
+		const tool = tools[0];
+		expect(tool?.renderCall).toBeDefined();
+		expect(tool?.renderResult).toBeDefined();
+	});
+});
+
+describe("registerPipesVehicle's availability refresh", () => {
+	it("re-syncs tool availability after one of its own tools runs, picking up a newly-unavailable operation", async () => {
+		const { pi, active, fire } = fakePi();
+		const client = new FakeClient(manifest([operation("ci.status"), operation("ci.discover")]));
+		const deps: PipesVehicleDeps = {
+			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "t" }),
+			createClient: () => client,
+		};
+		await registerPipesVehicle(pi, deps);
+		expect(active().sort()).toEqual(["ci_discover", "ci_status"]);
+
+		client.setManifest(manifest([operation("ci.status"), operation("ci.discover", { available: false })]));
+		await fire("tool_execution_end", "ci_status");
+
+		expect(active().sort()).toEqual(["ci_status"]);
+	});
+
+	it("does not refresh for a tool call outside the pipes namespace", async () => {
+		const { pi, active, fire } = fakePi();
+		const client = new FakeClient(manifest([operation("ci.discover")]));
+		const deps: PipesVehicleDeps = {
+			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "t" }),
+			createClient: () => client,
+		};
+		await registerPipesVehicle(pi, deps);
+
+		client.setManifest(manifest([operation("ci.discover", { available: false })]));
+		await fire("tool_execution_end", "read");
+
+		expect(active()).toEqual(["ci_discover"]);
+	});
+});
+
+describe("isPipesVehicleTool", () => {
+	it("recognizes every real projected tool namespace", () => {
+		expect(isPipesVehicleTool("ci_status")).toBe(true);
+		expect(isPipesVehicleTool("ci_presets_list")).toBe(true);
+	});
+
+	it("rejects an unrelated tool name", () => {
+		expect(isPipesVehicleTool("read")).toBe(false);
+		expect(isPipesVehicleTool("bash")).toBe(false);
+	});
+});
