@@ -2,9 +2,17 @@
  * Ports conty's app/service.go orchestrator: the one place every caller
  * routes through, so nothing talks to a CIBackend adapter directly.
  */
-import { classifyLog } from "./classify.ts";
 import { CHAIN_CRAWL_MAX_NODES } from "./constants.ts";
-import type { BackendInfo } from "./domain/backend.ts";
+import type { BackendInfo } from "./run/backend.ts";
+import {
+	asArtifactStore,
+	asChainable,
+	asDiscoverable,
+	asHistorical,
+	asPipeliner,
+	asTriggerable,
+	type CIBackend,
+} from "./run/ci-backend.ts";
 import {
 	type BuildFilter,
 	type CIArtifact,
@@ -16,20 +24,12 @@ import {
 	isTerminalStatus,
 	type LogFilter,
 	type LogResult,
-} from "./domain/ci-run.ts";
-import type { RepoInfo, WorkflowInfo } from "./domain/discovery.ts";
-import type { CICheck, CIVerdict, FailureContext } from "./domain/monitor.ts";
-import type { Pipeline, PipelineRun, StepResult } from "./domain/pipeline.ts";
-import type { OwnedRun, TriggerReceipt, TriggerResult, WatchStatus } from "./domain/trigger.ts";
-import {
-	asArtifactStore,
-	asChainable,
-	asDiscoverable,
-	asHistorical,
-	asPipeliner,
-	asTriggerable,
-	type CIBackend,
-} from "./ports/ci-backend.ts";
+} from "./run/ci-run.ts";
+import { classifyLog } from "./run/classify.ts";
+import type { RepoInfo, WorkflowInfo } from "./run/discovery.ts";
+import type { CICheck, CIVerdict, FailureContext } from "./run/monitor.ts";
+import type { Pipeline, PipelineRun, StepResult } from "./run/pipeline.ts";
+import type { OwnedRun, TriggerReceipt, TriggerResult, WatchStatus } from "./run/trigger.ts";
 
 export class BackendNotFoundError extends Error {
 	constructor(name: string) {

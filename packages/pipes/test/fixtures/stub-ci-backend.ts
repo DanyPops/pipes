@@ -1,7 +1,5 @@
 /** Configurable fake CIBackend for tests, mirroring conty's driventest.StubCIAdapter. */
-import type { CIArtifact, CIJob, CIRun, CIStageNode } from "../../src/domain/ci-run.ts";
-import type { RepoInfo, WorkflowInfo } from "../../src/domain/discovery.ts";
-import type { TriggerReceipt } from "../../src/domain/trigger.ts";
+
 import {
 	Capability,
 	type CapabilitySet,
@@ -12,7 +10,10 @@ import {
 	type CIHistorical,
 	type CIPipeliner,
 	type CITriggerable,
-} from "../../src/ports/ci-backend.ts";
+} from "../../src/run/ci-backend.ts";
+import type { CIArtifact, CIJob, CIRun, CIStageNode } from "../../src/run/ci-run.ts";
+import type { RepoInfo, WorkflowInfo } from "../../src/run/discovery.ts";
+import type { TriggerReceipt } from "../../src/run/trigger.ts";
 
 export interface StubCIBackendOptions {
 	name?: string;

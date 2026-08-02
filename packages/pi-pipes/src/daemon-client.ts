@@ -131,25 +131,25 @@ export function connectPipesClient(paths: PipesPaths = resolvePipesPaths()): Pip
 }
 
 /**
- * Resolves @danypops/pipes's cli.ts on disk — no code import, path only.
- * Prefers the real monorepo sibling (../pipes/src/cli.ts relative to this
- * file) over node_modules resolution: a workspace install (bun or npm) can
- * leave a stale materialized copy of a sibling workspace package nested
- * under this package's own node_modules, shadowing the root workspace
- * symlink and silently serving whatever the last install snapshotted —
- * confirmed live, twice, in local dev (once via npm install, once via a
- * bun install that didn't even refresh its own cached copy). The sibling
- * path is always the live source in this repo's own layout, and doesn't
- * exist at all for a real external consumer who installed the npm package,
- * so require.resolve remains the correct fallback for that case.
+ * Resolves @danypops/pipes's cli entry point on disk — no code import, path
+ * only. Prefers the real monorepo sibling (../pipes/src/cli/index.ts
+ * relative to this file) over node_modules resolution: a workspace install
+ * (bun or npm) can leave a stale materialized copy of a sibling workspace
+ * package nested under this package's own node_modules, shadowing the root
+ * workspace symlink and silently serving whatever the last install
+ * snapshotted — confirmed live, twice, in local dev (once via npm install,
+ * once via a bun install that didn't even refresh its own cached copy). The
+ * sibling path is always the live source in this repo's own layout, and
+ * doesn't exist at all for a real external consumer who installed the npm
+ * package, so require.resolve remains the correct fallback for that case.
  */
 function resolveDaemonCliPath(): string {
-	const siblingCliPath = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "pipes", "src", "cli.ts");
+	const siblingCliPath = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "pipes", "src", "cli", "index.ts");
 	if (existsSync(siblingCliPath)) return siblingCliPath;
 
 	const require = createRequire(import.meta.url);
 	const packageJsonPath = require.resolve("@danypops/pipes/package.json");
-	return join(dirname(packageJsonPath), "src", "cli.ts");
+	return join(dirname(packageJsonPath), "src", "cli", "index.ts");
 }
 
 async function waitForHandle(paths: PipesPaths, timeoutMs: number): Promise<boolean> {

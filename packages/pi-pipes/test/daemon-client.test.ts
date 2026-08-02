@@ -103,9 +103,9 @@ describe("connectOrStartPipesClient: real subprocess", () => {
 	 * or npm) can leave a stale materialized copy of @danypops/pipes nested
 	 * under this package's own node_modules, shadowing the live workspace
 	 * sibling. resolveDaemonCliPath() must always spawn the real sibling
-	 * packages/pipes/src/cli.ts, never a node_modules copy that can go stale.
+	 * packages/pipes/src/cli/index.ts, never a node_modules copy that can go stale.
 	 */
-	it("spawns the live monorepo sibling packages/pipes/src/cli.ts, not a node_modules copy", async () => {
+	it("spawns the live monorepo sibling packages/pipes/src/cli/index.ts, not a node_modules copy", async () => {
 		const { root, paths, env } = tempPaths();
 		tempRoot = root;
 
@@ -115,8 +115,8 @@ describe("connectOrStartPipesClient: real subprocess", () => {
 		spawnedPid = handle?.pid;
 
 		const cmdline = readFileSync(`/proc/${handle?.pid}/cmdline`, "utf8").split("\0").filter(Boolean);
-		const cliArg = cmdline.find((part) => part.endsWith("cli.ts"));
-		expect(cliArg).toContain(join("packages", "pipes", "src", "cli.ts"));
+		const cliArg = cmdline.find((part) => part.endsWith(join("cli", "index.ts")));
+		expect(cliArg).toContain(join("packages", "pipes", "src", "cli", "index.ts"));
 		expect(cliArg).not.toContain("node_modules");
 
 		const health = await client.health();

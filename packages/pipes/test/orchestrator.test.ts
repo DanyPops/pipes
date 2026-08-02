@@ -1,6 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import type { CIRun } from "../src/domain/ci-run.ts";
-import type { Pipeline } from "../src/domain/pipeline.ts";
 import {
 	applyLogFilter,
 	BackendNotFoundError,
@@ -9,7 +7,9 @@ import {
 	Orchestrator,
 	PipelineNotFoundError,
 } from "../src/orchestrator.ts";
-import { Capability } from "../src/ports/ci-backend.ts";
+import { Capability } from "../src/run/ci-backend.ts";
+import type { CIRun } from "../src/run/ci-run.ts";
+import type { Pipeline } from "../src/run/pipeline.ts";
 import { createStubCIBackend } from "./fixtures/stub-ci-backend.ts";
 
 describe("Orchestrator: backends and pipelines registry", () => {

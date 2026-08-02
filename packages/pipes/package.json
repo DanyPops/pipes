@@ -6,7 +6,7 @@
 	"type": "module",
 	"files": ["src", "package.json"],
 	"bin": {
-		"pipes": "src/cli.ts"
+		"pipes": "src/cli/index.ts"
 	},
 	"scripts": {
 		"test": "bun test",

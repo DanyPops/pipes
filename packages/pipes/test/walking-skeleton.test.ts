@@ -2,7 +2,7 @@
 import { describe, expect, it } from "bun:test";
 import { AuthenticatedRpcClient } from "@danypops/vehicle-client/rpc-client";
 import { Orchestrator } from "../src/orchestrator.ts";
-import { createApp, createPipesService, type OperationInputs, type OperationName, type OperationOutputs } from "../src/service.ts";
+import { createApp, createPipesService, type OperationInputs, type OperationName, type OperationOutputs } from "../src/rpc/service.ts";
 
 const TOKEN = "test-token";
 

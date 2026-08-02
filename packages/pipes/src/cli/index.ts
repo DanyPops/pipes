@@ -1,0 +1,212 @@
+#!/usr/bin/env bun
+import { existsSync, readdirSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { openInBrowser } from "../auth/browser.ts";
+import { readGhCliToken } from "../auth/gh-cli.ts";
+import { createGitHubTokenStore, runDeviceFlow as runGitHubDeviceFlow } from "../auth/github-auth.ts";
+import { authenticate as authenticateGitLab, createGitLabTokenStore } from "../auth/gitlab-auth.ts";
+import { createFileCredentialStore } from "../auth/jenkins-auth.ts";
+import { profiledBackend, resolvePipesCredentialPaths, resolvePipesPaths } from "../paths.ts";
+import { serveMain } from "../process/daemon.ts";
+import { connectPipesClient } from "./client.ts";
+
+const [, , command] = process.argv;
+
+/** Reads "--as <profile>" from a login command's trailing args, e.g. `pipes login jenkins --as auto`. */
+function parseAsFlag(args: string[]): string | undefined {
+	const index = args.indexOf("--as");
+	return index === -1 ? undefined : args[index + 1];
+}
+
+/** Reads "--gh-cli [account]" -- an already-authenticated gh CLI account name, or true for gh's own active account. */
+function parseGhCliFlag(args: string[]): string | true | undefined {
+	const index = args.indexOf("--gh-cli");
+	if (index === -1) return undefined;
+	const next = args[index + 1];
+	return next && !next.startsWith("--") ? next : true;
+}
+
+/**
+ * Runs entirely client-side against the backend's own OAuth endpoints, not
+ * through the daemon's RPC — a device-flow poll can run for minutes, which
+ * doesn't fit a request/response daemon call, and login must also work
+ * before a daemon has ever been started. Writes land in the same credential
+ * files the daemon's token provider re-reads on every request, so a running
+ * daemon picks up a fresh login on its very next call, no restart needed.
+ */
+async function loginMain(backend: string | undefined, args: string[]): Promise<void> {
+	const credentialPaths = resolvePipesCredentialPaths(resolvePipesPaths());
+	const profile = parseAsFlag(args);
+
+	if (backend === "github") {
+		const ghCli = parseGhCliFlag(args);
+		if (ghCli !== undefined) {
+			const result = await readGhCliToken(ghCli === true ? undefined : ghCli);
+			if (!result.ok) {
+				console.error(result.reason);
+				process.exit(1);
+			}
+			createGitHubTokenStore(credentialPaths.credentialsDir, profiledBackend("github", profile)).save({ accessToken: result.token });
+			console.log(profile ? `GitHub login complete via gh CLI (stored as "${profile}").` : "GitHub login complete via gh CLI.");
+			return;
+		}
+
+		const clientId = process.env.GITHUB_CLIENT_ID;
+		if (!clientId) {
+			console.error(
+				"GITHUB_CLIENT_ID is required — register a personal OAuth App with Device Flow enabled at github.com/settings/developers, " +
+					"or pass --gh-cli [account] to reuse an already-authenticated gh CLI session instead.",
+			);
+			process.exit(1);
+		}
+		const token = await runGitHubDeviceFlow({
+			clientId,
+			scope: process.env.GITHUB_SCOPES,
+			onPrompt: (info) => {
+				console.log(`Visit ${info.verificationUri} and enter code: ${info.userCode}`);
+				console.log("Waiting for authorization...");
+				void openInBrowser(info.verificationUri).then((opened) => {
+					if (!opened) console.log("Could not open a browser automatically -- open the URL above manually.");
+				});
+			},
+		});
+		createGitHubTokenStore(credentialPaths.credentialsDir, profiledBackend("github", profile)).save(token);
+		console.log(profile ? `GitHub login complete (stored as "${profile}").` : "GitHub login complete.");
+		return;
+	}
+
+	if (backend === "gitlab") {
+		const baseUrl = process.env.GITLAB_URL;
+		const clientId = process.env.GITLAB_CLIENT_ID;
+		if (!baseUrl || !clientId) {
+			console.error(
+				"GITLAB_URL and GITLAB_CLIENT_ID are required — register a personal Application under your GitLab instance's User Settings > Applications",
+			);
+			process.exit(1);
+		}
+		const token = await authenticateGitLab({
+			baseUrl,
+			clientId,
+			scope: process.env.GITLAB_SCOPES,
+			onDevicePrompt: (info) => {
+				console.log(`Visit ${info.verificationUri} and enter code: ${info.userCode}`);
+				console.log("Waiting for authorization...");
+				void openInBrowser(info.verificationUri).then((opened) => {
+					if (!opened) console.log("Could not open a browser automatically -- open the URL above manually.");
+				});
+			},
+			onPkcePrompt: (authorizationUrl) => {
+				console.log(`Visit ${authorizationUrl} to authorize (this GitLab instance doesn't advertise device flow).`);
+				console.log("Waiting for the browser redirect...");
+				void openInBrowser(authorizationUrl).then((opened) => {
+					if (!opened) console.log("Could not open a browser automatically -- open the URL above manually.");
+				});
+			},
+		});
+		createGitLabTokenStore(credentialPaths.credentialsDir, profiledBackend("gitlab", profile)).save(token);
+		console.log(profile ? `GitLab login complete (stored as "${profile}").` : "GitLab login complete.");
+		return;
+	}
+
+	if (backend === "jenkins") {
+		const { JENKINS_URL: url, JENKINS_USER: username, JENKINS_API_TOKEN: apiToken } = process.env;
+		if (!url || !username || !apiToken) {
+			console.error(
+				"JENKINS_URL, JENKINS_USER, and JENKINS_API_TOKEN are required — generate an API token from your Jenkins user's Configure page",
+			);
+			process.exit(1);
+		}
+		// Unlike github/gitlab's profile (a suffix on a shared default identity), a Jenkins
+		// profile IS the final backend name directly -- matches config.ts's own repos.json
+		// wiring, where a target's stored-credential file is named after its own profile
+		// (defaulting to the target's own name) with no "jenkins-" prefix added on top.
+		createFileCredentialStore(credentialPaths.credentialsDir, profile ?? "jenkins").save({ baseUrl: url, username, apiToken });
+		console.log(profile ? `Jenkins credentials saved (stored as "${profile}").` : "Jenkins credentials saved.");
+		return;
+	}
+
+	console.error("usage: pipes login <github|gitlab|jenkins> [--as <profile>] [--gh-cli [account]] (github only)");
+	process.exit(1);
+}
+
+/**
+ * Local filesystem introspection only, same as loginMain -- never routed through the daemon's
+ * RPC. Lists/removes the profile-qualified store files a profile is (see paths.ts's
+ * profiledBackend()), never their contents: a stored credential's own accessToken/extra fields
+ * are never printed. A running daemon re-reads its token provider's store fresh on every
+ * request, so a remove here takes effect on the daemon's very next call, no restart needed --
+ * same live-pickup guarantee login already documents above.
+ */
+function credentialsMain(subcommand: string | undefined, name: string | undefined): void {
+	const dir = resolvePipesCredentialPaths(resolvePipesPaths()).credentialsDir;
+
+	if (subcommand === "list") {
+		const names = existsSync(dir)
+			? readdirSync(dir)
+					.filter((file) => file.endsWith(".json"))
+					.map((file) => file.slice(0, -".json".length))
+					.sort()
+			: [];
+		console.log(JSON.stringify(names));
+		return;
+	}
+
+	if (subcommand === "remove") {
+		if (!name) {
+			console.error("usage: pipes credentials remove <name>");
+			process.exit(1);
+		}
+		const path = join(dir, `${name}.json`);
+		if (!existsSync(path)) {
+			console.error(`no stored credential named "${name}"`);
+			process.exit(1);
+		}
+		unlinkSync(path);
+		console.log(`Removed "${name}".`);
+		return;
+	}
+
+	console.error("usage: pipes credentials <list|remove> [name]");
+	process.exit(1);
+}
+
+switch (command) {
+	case "serve":
+		await serveMain();
+		break;
+	case "login":
+		await loginMain(process.argv[3], process.argv.slice(4));
+		break;
+	case "health": {
+		const client = connectPipesClient();
+		const health = await client.health();
+		console.log(JSON.stringify(health));
+		break;
+	}
+	case "backends": {
+		const client = connectPipesClient();
+		const { backends, pipelines } = await client.call("ci.help", {});
+		console.log(JSON.stringify({ backends, pipelines }));
+		break;
+	}
+	case "credentials":
+		credentialsMain(process.argv[3], process.argv[4]);
+		break;
+	case "call": {
+		const [, , , op, inputJson] = process.argv;
+		if (!op) {
+			console.error("usage: pipes call <op> [json-input]");
+			process.exit(1);
+		}
+		const client = connectPipesClient();
+		const input = inputJson ? JSON.parse(inputJson) : {};
+		const result = await client.call(op as Parameters<typeof client.call>[0], input);
+		console.log(JSON.stringify(result));
+		break;
+	}
+	default:
+		console.error(
+			'usage: pipes <serve|login|health|backends|credentials|call>\n  login <github|gitlab|jenkins> [--as <profile>]  authenticate and store credentials for a backend\n  credentials list                                list stored local credential profile names, never their contents\n  credentials remove <name>                       delete a stored local credential profile (e.g. "github-work")\n  call <op> [json-input]         invoke any ci.* operation, e.g. call ci.pool \'{"backend":"gh","jobRef":"job"}\'',
+		);
+		process.exit(1);
+}
