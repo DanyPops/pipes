@@ -6,6 +6,7 @@
       "name": "pipes-workspace",
       "devDependencies": {
         "@biomejs/biome": "^2.5.6",
+        "@danypops/pi-tui-harness": "file:../pi-integral/packages/pi-tui-harness",
         "eslint": "^10.8.0",
         "eslint-import-resolver-typescript": "^4.4.5",
         "eslint-plugin-import-x": "^4.17.1",
@@ -28,7 +29,6 @@
         "malevich-tui-components": "^0.16.1",
       },
       "devDependencies": {
-        "@danypops/pi-tui-harness": "file:../../../pi-integral/packages/pi-tui-harness",
         "@earendil-works/pi-ai": "^0.82.1",
         "@earendil-works/pi-coding-agent": "^0.82.1",
         "@earendil-works/pi-tui": "^0.82.1",
@@ -142,6 +142,8 @@
     "@danypops/enigma-client": ["@danypops/enigma-client@0.5.2", "", { "dependencies": { "@danypops/daemon-kit": "^0.22.1" } }, "sha512-3q+A5YSbRlPf4IhMhnDkEg1B+RCCSfVAV86L2S23AHp8fYSZQhjjjn4iZZD65mB80q7q7s5M3Wxp+D+f+HBkuw=="],
 
     "@danypops/pi-pipes": ["@danypops/pi-pipes@workspace:packages/pi-pipes"],
+
+    "@danypops/pi-tui-harness": ["@danypops/pi-tui-harness@file:../pi-integral/packages/pi-tui-harness", { "dependencies": { "@xterm/headless": "^6.0.0" }, "devDependencies": { "@biomejs/biome": "^2.5.6", "@earendil-works/pi-tui": "*", "@types/node": "^22.0.0", "bun-types": "latest", "typescript": "^5.9.2" }, "peerDependencies": { "@earendil-works/pi-tui": "*" } }],
 
     "@danypops/pipes": ["@danypops/pipes@workspace:packages/pipes"],
 
@@ -650,8 +652,6 @@
     "zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 
     "zod-to-json-schema": ["zod-to-json-schema@3.25.2", "", { "peerDependencies": { "zod": "^3.25.28 || ^4" } }, "sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA=="],
-
-    "@danypops/pi-pipes/@danypops/pi-tui-harness": ["@danypops/pi-tui-harness@file:../pi-integral/packages/pi-tui-harness", { "dependencies": { "@xterm/headless": "^6.0.0" }, "devDependencies": { "@biomejs/biome": "^2.5.6", "@earendil-works/pi-tui": "*", "@types/node": "^22.0.0", "bun-types": "latest", "typescript": "^5.9.2" }, "peerDependencies": { "@earendil-works/pi-tui": "*" } }],
 
     "@danypops/vehicle-client/@danypops/vehicle-server": ["@danypops/vehicle-server@0.11.0", "", { "dependencies": { "@danypops/vehicle-core": "^0.10.0", "pino": "^10.3.1" } }, "sha512-queeW7oAG+YW4ktB+Sm1xAd+NsGmbhQzoJNbDalBxJX+gRATOUTWZqnFFkSc75H0YLQfBUHNLAZv0traYoni2A=="],
 
