@@ -59,7 +59,7 @@ function renderCiCall(operationName: string, args: unknown, theme: Theme) {
 
 function renderCiResult(result: AgentToolResult<unknown>, isPartial: boolean, isError: boolean, theme: Theme) {
 	let text = renderResultText(result, isPartial, isError, theme);
-	const data = (result.details as { result?: unknown } | undefined)?.result;
+	const data = (result.details as { output?: unknown } | undefined)?.output;
 	if (data !== undefined) {
 		const url = findFirstUrl(data);
 		if (url) text += `\n${openLine(url, theme)}`;

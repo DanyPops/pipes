@@ -19,7 +19,7 @@
     },
     "packages/pi-pipes": {
       "name": "@danypops/pi-pipes",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "dependencies": {
         "@danypops/pipes": "^0.12.0",
         "@danypops/vehicle-client": "^0.5.0",
@@ -28,6 +28,7 @@
         "malevich-tui-components": "^0.16.1",
       },
       "devDependencies": {
+        "@danypops/pi-tui-harness": "file:../../../pi-integral/packages/pi-tui-harness",
         "@earendil-works/pi-ai": "^0.82.1",
         "@earendil-works/pi-coding-agent": "^0.82.1",
         "@earendil-works/pi-tui": "^0.82.1",
@@ -42,7 +43,7 @@
     },
     "packages/pipes": {
       "name": "@danypops/pipes",
-      "version": "0.12.0",
+      "version": "0.12.1",
       "bin": {
         "pipes": "src/cli/index.ts",
       },
@@ -339,6 +340,8 @@
     "@unrs/resolver-binding-win32-ia32-msvc": ["@unrs/resolver-binding-win32-ia32-msvc@1.12.2", "", { "os": "win32", "cpu": "ia32" }, "sha512-WD9sY00OfpHVGfsnHZoA8jVT+esS/Bg8z8jzxp5BnDCjjwsuKsPQrzswwpFy4J1AUJbXPRfkpcX0mXrzeXW79g=="],
 
     "@unrs/resolver-binding-win32-x64-msvc": ["@unrs/resolver-binding-win32-x64-msvc@1.12.2", "", { "os": "win32", "cpu": "x64" }, "sha512-nAB74NfSNKknqQ1RrYj6uz8FcXEomu/MATJZxh/x+BArzN2U3JbOYC0APYzUIGhVY3m5hRxA8VPNdPBoG8txlA=="],
+
+    "@xterm/headless": ["@xterm/headless@6.0.0", "", {}, "sha512-5Yj1QINYCyzrZtf8OFIHi47iQtI+0qYFPHmouEfG8dHNxbZ9Tb9YGSuLcsEwj9Z+OL75GJqPyJbyoFer80a2Hw=="],
 
     "acorn": ["acorn@8.18.0", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-lGq+9yr1/GuAWaVYIHRjvvySG5/4VfKIvC8EWxStPdcDh/Ka7FG3twP6v4d5BkravUilhIAsG4Qj83t02LWUPQ=="],
 
@@ -647,6 +650,8 @@
     "zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 
     "zod-to-json-schema": ["zod-to-json-schema@3.25.2", "", { "peerDependencies": { "zod": "^3.25.28 || ^4" } }, "sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA=="],
+
+    "@danypops/pi-pipes/@danypops/pi-tui-harness": ["@danypops/pi-tui-harness@file:../pi-integral/packages/pi-tui-harness", { "dependencies": { "@xterm/headless": "^6.0.0" }, "devDependencies": { "@biomejs/biome": "^2.5.6", "@earendil-works/pi-tui": "*", "@types/node": "^22.0.0", "bun-types": "latest", "typescript": "^5.9.2" }, "peerDependencies": { "@earendil-works/pi-tui": "*" } }],
 
     "@danypops/vehicle-client/@danypops/vehicle-server": ["@danypops/vehicle-server@0.11.0", "", { "dependencies": { "@danypops/vehicle-core": "^0.10.0", "pino": "^10.3.1" } }, "sha512-queeW7oAG+YW4ktB+Sm1xAd+NsGmbhQzoJNbDalBxJX+gRATOUTWZqnFFkSc75H0YLQfBUHNLAZv0traYoni2A=="],
 

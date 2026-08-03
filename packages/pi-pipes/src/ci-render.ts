@@ -78,8 +78,8 @@ export function renderResultText(
 	isError: boolean,
 	theme: ThemeLike,
 ): string {
-	const details = result.details as { result?: unknown } | undefined;
-	const data = details?.result;
+	const details = result.details as { output?: unknown } | undefined;
+	const data = details?.output;
 
 	if (isPartial && data === undefined) return theme.fg("warning", "Running...");
 

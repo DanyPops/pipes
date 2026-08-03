@@ -15,7 +15,7 @@ describe("renderResultText: still-in-flight ci wait (isPartial)", () => {
 		const result = {
 			content: [{ type: "text" as const, text: "" }],
 			details: {
-				result: {
+				output: {
 					status: "running",
 					buildNumber: "9176",
 					progressPercent: 42,
@@ -53,7 +53,7 @@ describe("renderResultText: final result", () => {
 	it("renders the final structured result through summarize, without a Running prefix", () => {
 		const result = {
 			content: [{ type: "text" as const, text: "" }],
-			details: { result: { status: "success", buildNumber: "9176", progressPercent: 100, overdue: false } },
+			details: { output: { status: "success", buildNumber: "9176", progressPercent: 100, overdue: false } },
 		};
 		const text = renderResultText(result, false, false, theme);
 		expect(text).not.toContain("Running...");
