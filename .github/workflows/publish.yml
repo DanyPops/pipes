@@ -45,6 +45,8 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      - run: cd ../pi-integral && bun install --frozen-lockfile
+      - run: cd ../pi-integral/packages/pi-tui-harness && bun run build
       - run: bun install
       - run: npm run lint:ci
 
