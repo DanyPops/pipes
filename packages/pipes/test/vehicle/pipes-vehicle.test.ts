@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { Orchestrator } from "../../src/orchestrator.ts";
 import { createPipesService, OPERATION_NAMES, type PipesService } from "../../src/rpc/service.ts";
 import { Capability } from "../../src/run/ci-backend.ts";
+import { VERSION } from "../../src/version.ts";
 import { createStubCIBackend } from "../fixtures/stub-ci-backend.ts";
 
 const PERMS = { permissions: ["pipes:read", "pipes:write"] };
@@ -20,6 +21,11 @@ function harness(): { service: PipesService; orchestrator: Orchestrator } {
 }
 
 describe("createPipesVehicleRegistry (via PipesService.vehicle)", () => {
+	it("reports the real package version in the manifest identity, not a hardcoded placeholder", () => {
+		const { service } = harness();
+		expect(service.vehicle.manifest().version).toBe(VERSION);
+	});
+
 	it("registers every real ci.* operation, dotted names preserved, daemon-only ops excluded", () => {
 		const { service } = harness();
 		const names = service.vehicle

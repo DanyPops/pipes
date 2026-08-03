@@ -21,6 +21,7 @@ import {
 } from "@danypops/vehicle-core";
 import { VehicleRegistry } from "@danypops/vehicle-server";
 import type { OperationInputs, OperationName, PipesService } from "../rpc/service.ts";
+import { VERSION } from "../version.ts";
 
 const OWNER = "pipes";
 
@@ -253,9 +254,13 @@ async function waitWithProgress(
 export function createPipesVehicleRegistry(service: PipesService): VehicleRegistry {
 	const registry = new VehicleRegistry({
 		name: "pipes",
-		version: "1.0.0",
+		version: VERSION,
 		description: "Cross-platform CI operations across GitHub Actions, GitLab CI, Jenkins, and Prow.",
 	});
+	// setExposeHandlerFailureDetails left off: GitHubApiError/GitLabApiError/JenkinsApiError embed the
+	// raw HTTP response body, untrusted external content that could contain something unexpected.
+	// No error-parity wrapper here either, unlike jittor -- service.execute()'s real errors reach the
+	// registry's own catch-all as-is.
 
 	for (const spec of OPERATIONS) {
 		const operation = defineVehicleOperation({
