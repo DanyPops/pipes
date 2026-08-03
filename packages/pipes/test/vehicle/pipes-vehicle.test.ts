@@ -68,6 +68,16 @@ describe("createPipesVehicleRegistry (via PipesService.vehicle)", () => {
 		expect(result.verdict).toBeDefined();
 	});
 
+	it("maps a missing backend to not_found instead of a generic internal failure", async () => {
+		const { service } = harness();
+		const failure = await service.vehicle
+			.invoke("ci.status", 1, { backend: "missing", jobRef: "job" }, PERMS)
+			.catch((error: unknown) => error);
+		expect((failure as { category?: string }).category).toBe("not_found");
+		expect((failure as { code?: string }).code).toBe("operation-rejected");
+		expect((failure as Error).message).toContain("missing");
+	});
+
 	it("returns the same registry instance on repeated access -- built once, not rebuilt per call", () => {
 		const { service } = harness();
 		expect(service.vehicle).toBe(service.vehicle);

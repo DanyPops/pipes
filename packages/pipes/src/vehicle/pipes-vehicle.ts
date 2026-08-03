@@ -13,6 +13,7 @@
  */
 import {
 	bindVehicleOperation,
+	defineErrorMapping,
 	defineLooseObjectSchema,
 	defineVehicleOperation,
 	type LooseObjectProperty,
@@ -20,10 +21,19 @@ import {
 	type VehicleEffect,
 } from "@danypops/vehicle-core";
 import { VehicleRegistry } from "@danypops/vehicle-server";
+import { statusForKnownPipesError } from "../rpc/error-status.ts";
 import type { OperationInputs, OperationName, PipesService } from "../rpc/service.ts";
-import { VERSION } from "../version.ts";
 
 const OWNER = "pipes";
+
+const withPipesErrorParity = defineErrorMapping(
+	[
+		{ matches: (error) => statusForKnownPipesError(error) === 404, category: "not_found" },
+		{ matches: (error) => statusForKnownPipesError(error) === 403, category: "authorization" },
+		{ matches: (error) => statusForKnownPipesError(error) === 400, category: "validation" },
+	],
+	{ fallbackCategory: "internal", fallbackCode: "handler-failed", fallbackMessage: "Pipes operation failed" },
+);
 
 const LIMITS = { defaultTimeoutMs: 10_000, maxTimeoutMs: 30_000, maxRequestBytes: 65_536, maxResponseBytes: 262_144 };
 
@@ -254,13 +264,11 @@ async function waitWithProgress(
 export function createPipesVehicleRegistry(service: PipesService): VehicleRegistry {
 	const registry = new VehicleRegistry({
 		name: "pipes",
-		version: VERSION,
+		packageJsonUrl: new URL("../../package.json", import.meta.url),
 		description: "Cross-platform CI operations across GitHub Actions, GitLab CI, Jenkins, and Prow.",
 	});
-	// setExposeHandlerFailureDetails left off: GitHubApiError/GitLabApiError/JenkinsApiError embed the
-	// raw HTTP response body, untrusted external content that could contain something unexpected.
-	// No error-parity wrapper here either, unlike jittor -- service.execute()'s real errors reach the
-	// registry's own catch-all as-is.
+	// Every handler passes through the reviewed mapper above; unmatched failures stay redacted.
+	registry.setExposeHandlerFailureDetails(true);
 
 	for (const spec of OPERATIONS) {
 		const operation = defineVehicleOperation({
@@ -278,12 +286,16 @@ export function createPipesVehicleRegistry(service: PipesService): VehicleRegist
 		});
 		registry.register(
 			OWNER,
-			bindVehicleOperation(operation, () => async (context) => {
-				if (spec.action === "ci.wait") {
-					return waitWithProgress(service, context.input as OperationInputs["ci.wait"], context.reportProgress, context.signal);
-				}
-				return service.execute(spec.action, context.input as never);
-			}),
+			bindVehicleOperation(
+				operation,
+				() => async (context) =>
+					withPipesErrorParity(() => {
+						if (spec.action === "ci.wait") {
+							return waitWithProgress(service, context.input as OperationInputs["ci.wait"], context.reportProgress, context.signal);
+						}
+						return service.execute(spec.action, context.input as never);
+					}),
+			),
 		);
 	}
 

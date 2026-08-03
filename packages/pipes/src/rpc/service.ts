@@ -11,14 +11,7 @@ import { createVehicleHttpApp } from "@danypops/vehicle-server/http";
 import { errorResponse, healthResponse, jsonResponse, readyResponse, requireBearerToken } from "@danypops/vehicle-server/rpc-http";
 import { defaultPresetsPath, savePresets } from "../config/presets.ts";
 import { DEFAULT_LOG_TAIL_TOKENS } from "../constants.ts";
-import {
-	BackendNotFoundError,
-	CapabilityUnsupportedError,
-	NotOwnedError,
-	type Orchestrator,
-	PipelineNotFoundError,
-	StepOutOfRangeError,
-} from "../orchestrator.ts";
+import type { Orchestrator } from "../orchestrator.ts";
 import type { CIRunNode, CIStageNode, LogResult, RunResult } from "../run/ci-run.ts";
 import type { RepoInfo, WorkflowInfo } from "../run/discovery.ts";
 import type { Pipeline, PipelineRun } from "../run/pipeline.ts";
@@ -27,6 +20,7 @@ import { isTerminalStatus, type RunPool, type RunSnapshot } from "../sqlite/run-
 import { tailByTokenBudget } from "../truncate.ts";
 import { createPipesVehicleRegistry } from "../vehicle/pipes-vehicle.ts";
 import { VERSION } from "../version.ts";
+import { statusForKnownPipesError } from "./error-status.ts";
 
 const DEFAULT_WAIT_TIMEOUT_S = 3600;
 const DEFAULT_WAIT_POLL_MS = 15_000;
@@ -445,11 +439,8 @@ async function readOperationBody(request: Request): Promise<{ op?: unknown; inpu
 }
 
 function statusForError(error: unknown): number {
-	if (error instanceof BackendNotFoundError || error instanceof PipelineNotFoundError) return 404;
 	if (error instanceof UnknownOperationError) return 404;
-	if (error instanceof NotOwnedError) return 403;
-	if (error instanceof CapabilityUnsupportedError || error instanceof StepOutOfRangeError) return 400;
-	return 400;
+	return statusForKnownPipesError(error) ?? 400;
 }
 
 export function createApp(deps: { service: PipesService; token: string }): { fetch(request: Request): Promise<Response> } {

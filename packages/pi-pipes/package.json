@@ -1,6 +1,6 @@
 {
 	"name": "@danypops/pi-pipes",
-	"version": "0.9.5",
+	"version": "0.9.6",
 	"license": "MIT",
 	"description": "Pi extension: agent-facing CI tool for cross-platform CI (GitHub Actions, GitLab CI, Jenkins)",
 	"keywords": ["pi-package"],
@@ -12,9 +12,9 @@
 	"dependencies": {
 		"@danypops/vehicle-client": "^0.5.0",
 		"@danypops/vehicle-client-pi": "^0.16.0",
-		"@danypops/vehicle-core": "^0.11.0",
-		"@danypops/vehicle-server": "^0.16.0",
-		"@danypops/pipes": "^0.12.0",
+		"@danypops/vehicle-core": "^0.12.1",
+		"@danypops/vehicle-server": "^0.17.0",
+		"@danypops/pipes": "^0.13.1",
 		"malevich-tui-components": "^0.16.1"
 	},
 	"peerDependencies": {
