@@ -1,7 +1,48 @@
 import { describe, expect, it } from "bun:test";
-import type { VehicleClient, VehicleInvocationOptions, VehicleManifest, VehicleManifestOperation } from "@danypops/vehicle-core";
+import type {
+	AtomicJsonFsAdapter,
+	VehicleClient,
+	VehicleInvocationOptions,
+	VehicleManifest,
+	VehicleManifestOperation,
+} from "@danypops/vehicle-core";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { isPipesVehicleTool, type PipesVehicleDeps, registerPipesVehicle } from "../src/vehicle-client.ts";
+
+/** An in-memory AtomicJsonFsAdapter -- registerPipesVehicle now touches a manifest cache file by default; every test must inject one of these instead of the real on-disk default. */
+function fakeFs(): AtomicJsonFsAdapter {
+	const files = new Map<string, string>();
+	return {
+		writeFile(path, data) {
+			files.set(path, data);
+			return Promise.resolve();
+		},
+		rename(oldPath, newPath) {
+			const data = files.get(oldPath);
+			if (data === undefined) return Promise.reject(new Error(`ENOENT: ${oldPath}`));
+			files.delete(oldPath);
+			files.set(newPath, data);
+			return Promise.resolve();
+		},
+		unlink(path) {
+			files.delete(path);
+			return Promise.resolve();
+		},
+		readFile(path) {
+			const data = files.get(path);
+			if (data === undefined) {
+				const error = new Error(`ENOENT: ${path}`) as NodeJS.ErrnoException;
+				error.code = "ENOENT";
+				return Promise.reject(error);
+			}
+			return Promise.resolve(data);
+		},
+	};
+}
+
+function fakeManifestCache(): { filePath: string; fs: AtomicJsonFsAdapter } {
+	return { filePath: "/fake/vehicle-manifest-cache.json", fs: fakeFs() };
+}
 
 type FakeEventHandler = (event: unknown, ctx: unknown) => Promise<void> | void;
 
@@ -88,16 +129,40 @@ describe("registerPipesVehicle", () => {
 		expect(tools).toHaveLength(0);
 	});
 
-	it("degrades silently when the client construction or manifest fetch throws", async () => {
+	it("degrades silently when the client construction or manifest fetch throws, and nothing was ever cached", async () => {
 		const { pi } = fakePi();
 		const deps: PipesVehicleDeps = {
 			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:1", token: "t" }),
 			createClient: () => {
 				throw new Error("connection refused");
 			},
+			manifestCache: fakeManifestCache(),
 		};
 		const result = await registerPipesVehicle(pi, deps);
 		expect(result).toBeUndefined();
+	});
+
+	it("falls back to a previously-cached manifest instead of degrading to undefined, when the daemon is unreachable but a prior registration succeeded", async () => {
+		const manifestCache = fakeManifestCache();
+		const warmClient = new FakeClient(manifest([operation("ci.status")]));
+		await registerPipesVehicle(fakePi().pi, {
+			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "t" }),
+			createClient: () => warmClient,
+			manifestCache,
+		});
+
+		const { pi, tools } = fakePi();
+		const deps: PipesVehicleDeps = {
+			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:1", token: "t" }),
+			createClient: () => {
+				throw new Error("connection refused");
+			},
+			manifestCache,
+		};
+		const result = await registerPipesVehicle(pi, deps);
+		expect(result?.stale).toBe(true);
+		expect(result?.tools.map((t) => t.toolName)).toEqual(["ci_status"]);
+		expect(tools.map((t) => t.name)).toEqual(["ci_status"]);
 	});
 
 	it("registers one Pi tool per real operation when a target resolves, using the dotted-to-underscore projection", async () => {
@@ -106,6 +171,7 @@ describe("registerPipesVehicle", () => {
 		const deps: PipesVehicleDeps = {
 			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "t" }),
 			createClient: () => client,
+			manifestCache: fakeManifestCache(),
 		};
 		const result = await registerPipesVehicle(pi, deps);
 		expect(result?.tools.map((t) => t.toolName).sort()).toEqual(["ci_presets_list", "ci_status"]);
@@ -118,6 +184,7 @@ describe("registerPipesVehicle", () => {
 		const deps: PipesVehicleDeps = {
 			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "t" }),
 			createClient: () => client,
+			manifestCache: fakeManifestCache(),
 		};
 		await registerPipesVehicle(pi, deps);
 		const tool = tools[0];
@@ -133,6 +200,7 @@ describe("registerPipesVehicle's availability refresh", () => {
 		const deps: PipesVehicleDeps = {
 			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "t" }),
 			createClient: () => client,
+			manifestCache: fakeManifestCache(),
 		};
 		await registerPipesVehicle(pi, deps);
 		expect(active().sort()).toEqual(["ci_discover", "ci_status"]);
@@ -149,6 +217,7 @@ describe("registerPipesVehicle's availability refresh", () => {
 		const deps: PipesVehicleDeps = {
 			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "t" }),
 			createClient: () => client,
+			manifestCache: fakeManifestCache(),
 		};
 		await registerPipesVehicle(pi, deps);
 

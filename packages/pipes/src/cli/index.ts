@@ -12,6 +12,7 @@ import { createFileCredentialStore } from "../auth/jenkins-auth.ts";
 import { SYSTEMD_UNIT_NAME } from "../constants.ts";
 import { profiledBackend, resolvePipesCredentialPaths, resolvePipesPaths } from "../paths.ts";
 import { serveMain } from "../process/daemon.ts";
+import { VERSION } from "../version.ts";
 import { connectPipesClient } from "./client.ts";
 
 const [, , command] = process.argv;
@@ -186,9 +187,10 @@ export function pipesServiceSpec(): ServiceSpec {
 	return {
 		name: "pipes",
 		displayName: "Pipes CI daemon",
+		version: VERSION,
 		binPath: process.execPath,
 		args: [fileURLToPath(import.meta.url), "serve"],
-		descriptorPath: resolvePipesPaths().serviceDescriptor,
+		handlePath: resolvePipesPaths().handle,
 		restartOnFailure: true,
 		restartSec: 2,
 	};

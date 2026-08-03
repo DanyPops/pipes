@@ -21,7 +21,8 @@
  * view via the per-operation renderers option, so this migration keeps the
  * exact same hand-tuned rendering the mega-tool already had.
  */
-import { resolveVehicleClientTarget, type VehicleClientTarget } from "@danypops/pipes";
+import { join } from "node:path";
+import { resolvePipesCredentialPaths, resolvePipesPaths, resolveVehicleClientTarget, type VehicleClientTarget } from "@danypops/pipes";
 import { createReconnectingVehicleClient } from "@danypops/vehicle-client/daemon-client";
 import { RemoteVehicleClient } from "@danypops/vehicle-client/http";
 import {
@@ -31,7 +32,21 @@ import {
 	registerVehicleTools,
 } from "@danypops/vehicle-client-pi";
 import { registerVehicleStatusRefresh } from "@danypops/vehicle-client-pi/pi-status-refresh";
-import type { VehicleClient } from "@danypops/vehicle-core";
+import type { AtomicJsonFsAdapter, VehicleClient } from "@danypops/vehicle-core";
+import { createNodeAtomicJsonFsAdapter } from "@danypops/vehicle-server/atomic-json";
+
+/**
+ * Same directory pipes' own credential files already live in (resolvePipesCredentialPaths) --
+ * one extra small JSON file, not a new storage location. Lets registerVehicleTools() register
+ * ci_* tools and their renderers from the last successfully-fetched manifest when the daemon
+ * is unreachable at factory time (a crash-loop, a slow restart after a reload) instead of
+ * throwing and silently registering nothing for the rest of the session -- see the
+ * manifestCache option on RegisterVehicleToolsOptions.
+ */
+function resolveManifestCachePath(): string {
+	return join(resolvePipesCredentialPaths(resolvePipesPaths()).credentialsDir, "vehicle-manifest-cache.json");
+}
+
 import type { AgentToolResult, ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { findFirstUrl, openLine, renderResultText } from "./ci-render.ts";
@@ -72,6 +87,8 @@ export interface PipesVehicleDeps {
 	resolveTarget?: () => VehicleClientTarget | undefined;
 	/** Overridden in tests instead of constructing a real HTTP client. */
 	createClient?: (target: VehicleClientTarget) => VehicleClient;
+	/** Overridden in tests instead of touching the real on-disk manifest cache -- see resolveManifestCachePath's own doc comment. Omit at the call site (not here) to disable manifest caching entirely; this default is only for hermetic tests. */
+	manifestCache?: { filePath: string; fs: AtomicJsonFsAdapter };
 }
 
 export async function registerPipesVehicle(pi: ExtensionAPI, deps: PipesVehicleDeps = {}): Promise<RegisteredPiVehicle | undefined> {
@@ -80,6 +97,7 @@ export async function registerPipesVehicle(pi: ExtensionAPI, deps: PipesVehicleD
 	if (!target) return undefined;
 
 	const createClient = deps.createClient ?? ((t: VehicleClientTarget) => new RemoteVehicleClient({ baseUrl: t.baseUrl, token: t.token }));
+	const manifestCache = deps.manifestCache ?? { filePath: resolveManifestCachePath(), fs: createNodeAtomicJsonFsAdapter() };
 	try {
 		// Re-resolves resolveTarget()/createClient fresh on every reconnect attempt rather than
 		// closing over the `target` captured above: the daemon rebinds a new random port on every
@@ -97,6 +115,10 @@ export async function registerPipesVehicle(pi: ExtensionAPI, deps: PipesVehicleD
 				renderResult: (result, resultOptions, theme, context) =>
 					renderCiResult(result as AgentToolResult<unknown>, resultOptions.isPartial, context.isError, theme),
 			}),
+			// A crash-loop or slow restart at factory time (Pi awaits this before transcript replay)
+			// used to leave every ci_* tool unregistered for the rest of the session -- see the
+			// manifestCache doc comment on RegisterVehicleToolsOptions.
+			manifestCache,
 		};
 		let registered = await registerVehicleTools(pi, client, options);
 

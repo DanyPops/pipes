@@ -1,8 +1,40 @@
 import { describe, expect, it } from "bun:test";
 import { renderToTerminal } from "@danypops/pi-tui-harness";
-import type { VehicleClient, VehicleInvocationOptions, VehicleManifest } from "@danypops/vehicle-core";
+import type { AtomicJsonFsAdapter, VehicleClient, VehicleInvocationOptions, VehicleManifest } from "@danypops/vehicle-core";
 import type { ExtensionAPI, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { registerPipesVehicle } from "../src/vehicle-client.ts";
+
+/** An in-memory AtomicJsonFsAdapter -- registerPipesVehicle now touches a manifest cache file by default; this suite injects one instead of the real on-disk default. */
+function fakeManifestCache(): { filePath: string; fs: AtomicJsonFsAdapter } {
+	const files = new Map<string, string>();
+	const fs: AtomicJsonFsAdapter = {
+		writeFile(path, data) {
+			files.set(path, data);
+			return Promise.resolve();
+		},
+		rename(oldPath, newPath) {
+			const data = files.get(oldPath);
+			if (data === undefined) return Promise.reject(new Error(`ENOENT: ${oldPath}`));
+			files.delete(oldPath);
+			files.set(newPath, data);
+			return Promise.resolve();
+		},
+		unlink(path) {
+			files.delete(path);
+			return Promise.resolve();
+		},
+		readFile(path) {
+			const data = files.get(path);
+			if (data === undefined) {
+				const error = new Error(`ENOENT: ${path}`) as NodeJS.ErrnoException;
+				error.code = "ENOENT";
+				return Promise.reject(error);
+			}
+			return Promise.resolve(data);
+		},
+	};
+	return { filePath: "/fake/vehicle-manifest-cache.json", fs };
+}
 
 const verdict = {
 	verdict: {
@@ -95,6 +127,7 @@ describe("registerPipesVehicle real result wiring", () => {
 		await registerPipesVehicle(pi, {
 			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "test" }),
 			createClient: () => new FakeClient(),
+			manifestCache: fakeManifestCache(),
 		});
 
 		expect(tools[0]?.renderResult).toBeDefined();
@@ -107,6 +140,7 @@ describe("registerPipesVehicle real result wiring", () => {
 		await registerPipesVehicle(pi, {
 			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "test" }),
 			createClient: () => new FakeClient(),
+			manifestCache: fakeManifestCache(),
 		});
 
 		const tool = tools[0];

@@ -22,10 +22,11 @@ describe("Pipes systemd service", () => {
 		expect(unit).toContain("RestartSec=2");
 	});
 
-	it("names the unit and descriptor after pipes, matching constants.ts's SYSTEMD_UNIT_NAME", () => {
+	it("names the service after pipes, with a real handlePath for Armada's own readiness check", () => {
 		const spec = pipesServiceSpec();
 		expect(spec.name).toBe("pipes");
-		expect(spec.descriptorPath).toContain("pipes");
+		expect(spec.handlePath).toContain("pipes");
+		expect(spec.version).toBeTruthy();
 	});
 });
 
