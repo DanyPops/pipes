@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Check out the Pi TUI test harness
+        run: git clone --depth 1 https://github.com/DanyPops/pi-integral.git ../pi-integral
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: npm run lint:ci
