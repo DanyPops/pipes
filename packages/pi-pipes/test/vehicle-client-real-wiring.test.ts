@@ -72,6 +72,36 @@ const theme = {
 } as Theme;
 
 describe("registerPipesVehicle real result wiring", () => {
+	it("registers its renderer while Pi is still loading, before persisted tool rows are replayed", async () => {
+		const tools: ToolDefinition[] = [];
+		const sessionStartHandlers: Array<() => Promise<void> | void> = [];
+		let loading = true;
+		const actionMethod = <T>(value: T): T => {
+			if (loading) throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
+			return value;
+		};
+		const pi = {
+			registerTool(tool: ToolDefinition) {
+				tools.push(tool);
+			},
+			getAllTools: () => actionMethod(tools),
+			getActiveTools: () => actionMethod(tools.map((tool) => tool.name)),
+			setActiveTools: () => actionMethod(undefined),
+			on(name: string, handler: () => Promise<void> | void) {
+				if (name === "session_start") sessionStartHandlers.push(handler);
+			},
+		} as unknown as ExtensionAPI;
+
+		await registerPipesVehicle(pi, {
+			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "test" }),
+			createClient: () => new FakeClient(),
+		});
+
+		expect(tools[0]?.renderResult).toBeDefined();
+		loading = false;
+		for (const handler of sessionStartHandlers) await handler();
+	});
+
 	it("renders execute() output as the compact CI summary instead of raw JSON", async () => {
 		const { pi, tools } = captureTools();
 		await registerPipesVehicle(pi, {

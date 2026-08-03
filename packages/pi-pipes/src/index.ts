@@ -20,17 +20,8 @@ export interface PiPipesDeps {
 	registerVehicle?: typeof registerPipesVehicle;
 }
 
-export default function pipesExtension(pi: ExtensionAPI, deps: PiPipesDeps = {}) {
+export default async function pipesExtension(pi: ExtensionAPI, deps: PiPipesDeps = {}) {
 	const registerVehicle = deps.registerVehicle ?? registerPipesVehicle;
-	// registerVehicleTools() (which registerPipesVehicle wraps) needs
-	// pi.getAllTools()/getActiveTools()/setActiveTools() -- Pi's extension
-	// runtime only finishes initializing after every extension's top-level
-	// factory (this one included) has resolved, so calling it directly from
-	// here throws "Extension runtime not initialized". session_start fires
-	// only after that initialization completes.
-	pi.on("session_start", async () => {
-		await registerVehicle(pi);
-	});
 
 	pi.registerCommand("pipes", {
 		description: "Cross-platform CI: GitHub Actions, GitLab CI, Jenkins, Prow — trigger, cancel, view logs, manage presets",
@@ -44,4 +35,8 @@ export default function pipesExtension(pi: ExtensionAPI, deps: PiPipesDeps = {})
 	// claiming the real command registration, and all three still show up
 	// in it regardless of load order.
 	registerSharedSecretsCommand(pi, { source: "pipes", resolve: () => ({ backends: buildPipesSecretsBackends() }) });
+
+	// Pi awaits async extension factories before replaying the transcript, so
+	// Vehicle renderers must be registered here rather than in session_start.
+	await registerVehicle(pi);
 }

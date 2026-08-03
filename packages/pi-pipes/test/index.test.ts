@@ -31,9 +31,9 @@ function fakePi(): { pi: ExtensionAPI; commands: string[]; tools: string[]; fire
 }
 
 describe("pipesExtension", () => {
-	it("registers the /pipes and /secrets commands synchronously, deferring registerPipesVehicle to session_start", async () => {
+	it("awaits Vehicle registration in the extension factory so renderers exist before transcript replay", async () => {
 		__resetSecretsRegistryForTests();
-		const { pi, commands, fire } = fakePi();
+		const { pi, commands } = fakePi();
 		let vehicleCalled = false;
 		const deps: PiPipesDeps = {
 			registerVehicle: async () => {
@@ -41,12 +41,10 @@ describe("pipesExtension", () => {
 				return undefined;
 			},
 		};
-		pipesExtension(pi, deps);
+
+		await pipesExtension(pi, deps);
 
 		expect(commands).toContain("pipes");
-		expect(vehicleCalled).toBe(false);
-
-		await fire("session_start");
 		expect(vehicleCalled).toBe(true);
 	});
 
