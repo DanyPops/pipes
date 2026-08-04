@@ -12,8 +12,8 @@
     "format": "biome format --write .",
     "lint": "biome check --write . && eslint packages --max-warnings 0",
     "lint:ci": "biome ci . && eslint packages --max-warnings 0",
-    "lint:deps": "bunx sherif@1.13.0",
-    "lint:vendored-deps": "node scripts/check-vendored-internal-deps.mjs"
+    "lint:deps": "bunx sherif@1.13.0 --fail-on-warnings",
+    "policy": "packed-policy"
   },
   "pi": {
     "extensions": ["packages/pi-pipes/src/index.ts"]
@@ -29,6 +29,7 @@
   "license": "MIT",
   "devDependencies": {
     "@biomejs/biome": "^2.5.6",
+    "@danypops/packed": "^0.7.0",
     "@danypops/pi-tui-harness": "^0.0.2",
     "eslint": "^10.8.0",
     "eslint-import-resolver-typescript": "^4.4.5",
