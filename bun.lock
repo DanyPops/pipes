@@ -50,7 +50,7 @@
         "pipes": "src/cli/index.ts",
       },
       "dependencies": {
-        "@danypops/enigma-client": "^0.5.0",
+        "@danypops/enigma-client": "^0.6.1",
         "@danypops/vehicle-client": "^0.5.3",
         "@danypops/vehicle-core": "^0.12.3",
         "@danypops/vehicle-server": "^0.17.2",
@@ -141,9 +141,7 @@
 
     "@danypops/armada": ["@danypops/armada@0.3.1", "", { "dependencies": { "typebox": "^1.3.6" }, "bin": { "armada": "dist/cli.js" } }, "sha512-AxfFTJnsSbZXibgeHgPs97mt670AYqogKthI6sGNsNiFCNFqy7iXFdKt3ZusboN/SUKHtFCd+0j/B8jryi8EnQ=="],
 
-    "@danypops/daemon-kit": ["@danypops/daemon-kit@0.22.1", "", { "dependencies": { "pino": "^10.3.1" }, "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typescript": "^5" } }, "sha512-DM/NQQznBfwRoapERNwvfQsBt2zSkSWJBOEq3hnpnT6HduTCzlFElgLFJzzKcz/S5GceoiYe+zAAssEmGCyAtw=="],
-
-    "@danypops/enigma-client": ["@danypops/enigma-client@0.5.2", "", { "dependencies": { "@danypops/daemon-kit": "^0.22.1" } }, "sha512-3q+A5YSbRlPf4IhMhnDkEg1B+RCCSfVAV86L2S23AHp8fYSZQhjjjn4iZZD65mB80q7q7s5M3Wxp+D+f+HBkuw=="],
+    "@danypops/enigma-client": ["@danypops/enigma-client@0.6.1", "", { "dependencies": { "@danypops/vehicle-client": "^0.5.3", "@danypops/vehicle-server": "^0.17.2" } }, "sha512-HhITCq6rI4uz7qiuXT4v8yW3c868IsmDZBgS9JPsryUt+Dgn8k7Z34bqQKjB3wzPKkUEp/IYo9q0B14QZp+Byg=="],
 
     "@danypops/packed": ["@danypops/packed@0.7.0", "", { "bin": { "packed-policy": "dist/repository-policy-cli.js" } }, "sha512-9P56MZEuxd6SmnfXSVNlb0dePNTwVU+3zBvlScZRejChL7VvfNx3XyWUIRVZOubL+n4XtZUCw+VhwrXnd7TXaQ=="],
 
