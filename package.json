@@ -1,6 +1,7 @@
 {
   "name": "pipes-workspace",
   "private": true,
+  "packageManager": "bun@1.3.14",
   "type": "module",
   "workspaces": ["packages/*"],
   "keywords": ["pi-package"],
@@ -10,7 +11,9 @@
     "check": "npm run check --workspaces --if-present",
     "format": "biome format --write .",
     "lint": "biome check --write . && eslint packages --max-warnings 0",
-    "lint:ci": "biome ci . && eslint packages --max-warnings 0"
+    "lint:ci": "biome ci . && eslint packages --max-warnings 0",
+    "lint:deps": "bunx sherif@1.13.0",
+    "lint:vendored-deps": "node scripts/check-vendored-internal-deps.mjs"
   },
   "pi": {
     "extensions": ["packages/pi-pipes/src/index.ts"]
