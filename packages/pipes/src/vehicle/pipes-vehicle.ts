@@ -37,6 +37,21 @@ const withPipesErrorParity = defineErrorMapping(
 
 const LIMITS = { defaultTimeoutMs: 10_000, maxTimeoutMs: 30_000, maxRequestBytes: 65_536, maxResponseBytes: 262_144 };
 
+// ci.wait is the one operation that must genuinely run long: VehicleRegistry.invoke()'s own
+// deadline clamp (effectiveDeadline = min(requested, now + limits.maxTimeoutMs)) reads
+// limits.maxTimeoutMs unconditionally -- longRunning: true is descriptor metadata only, never
+// consulted there. Sharing the generic read-operation LIMITS above meant ci.wait was aborted at
+// 30s regardless of the timeoutS a caller requested, even though waitWithProgress's own tick loop
+// budgets for up to WAIT_DEFAULT_TOTAL_TIMEOUT_S. maxTimeoutMs here covers that full budget plus
+// one tick of slack so the loop's last in-flight tick isn't cut off right at the boundary.
+const WAIT_TICK_TIMEOUT_S = 20;
+const WAIT_DEFAULT_TOTAL_TIMEOUT_S = 3_600;
+const WAIT_LIMITS = {
+	...LIMITS,
+	defaultTimeoutMs: WAIT_DEFAULT_TOTAL_TIMEOUT_S * 1_000,
+	maxTimeoutMs: (WAIT_DEFAULT_TOTAL_TIMEOUT_S + WAIT_TICK_TIMEOUT_S) * 1_000,
+};
+
 const stringProp: LooseObjectProperty = { type: "string" };
 const numberProp: LooseObjectProperty = { type: "number" };
 const booleanProp: LooseObjectProperty = { type: "boolean" };
@@ -50,6 +65,8 @@ interface OperationSpec {
 	readonly required: readonly string[];
 	readonly streaming?: boolean;
 	readonly longRunning?: boolean;
+	/** Overrides the shared LIMITS for this one operation -- see WAIT_LIMITS's own doc comment. */
+	readonly limits?: typeof LIMITS;
 }
 
 const OPERATIONS: readonly OperationSpec[] = [
@@ -131,6 +148,7 @@ const OPERATIONS: readonly OperationSpec[] = [
 		required: ["backend"],
 		streaming: true,
 		longRunning: true,
+		limits: WAIT_LIMITS,
 	},
 	{
 		action: "ci.cancel",
@@ -216,8 +234,6 @@ const OPERATIONS: readonly OperationSpec[] = [
 	},
 ];
 
-const WAIT_TICK_TIMEOUT_S = 20;
-const WAIT_DEFAULT_TOTAL_TIMEOUT_S = 3_600;
 /** Mirrors packages/pipes's own RunStatus terminal set (isTerminalStatus in run/ci-run.ts). */
 const TERMINAL_STATUSES = new Set(["success", "failure", "aborted", "not_found"]);
 
@@ -282,7 +298,7 @@ export function createPipesVehicleRegistry(service: PipesService): VehicleRegist
 			idempotency: { mode: spec.effect === "read" ? "safe" : "unsafe" },
 			streaming: spec.streaming,
 			longRunning: spec.longRunning,
-			limits: LIMITS,
+			limits: spec.limits ?? LIMITS,
 		});
 		registry.register(
 			OWNER,

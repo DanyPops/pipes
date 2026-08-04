@@ -60,6 +60,22 @@ describe("createPipesVehicleRegistry (via PipesService.vehicle)", () => {
 		expect(wait?.longRunning).toBe(true);
 	});
 
+	it("gives ci.wait its own limits wide enough to cover a real long wait, distinct from every other operation's tight cap", () => {
+		const { service } = harness();
+		const operations = service.vehicle.manifest().operations;
+		const wait = operations.find((op) => op.name === "ci.wait");
+		// Regression guard for the real bug: ci.wait(timeoutS: 900) against a genuinely still-running
+		// GitHub Actions run failed after ~30s with deadline-exceeded, because VehicleRegistry.invoke()'s
+		// effectiveDeadline() clamps to limits.maxTimeoutMs regardless of longRunning -- and ci.wait was
+		// sharing the generic read-operation LIMITS (30s) that every other operation still uses below.
+		expect(wait?.limits.maxTimeoutMs).toBeGreaterThan(30_000);
+		expect(wait?.limits.maxTimeoutMs).toBeGreaterThanOrEqual(3_600_000);
+		for (const op of operations) {
+			if (op.name === "ci.wait") continue;
+			expect(op.limits.maxTimeoutMs).toBe(30_000);
+		}
+	});
+
 	it("invoke() delegates to the exact same service.execute() the legacy /api/v1/ops dispatch uses", async () => {
 		const { service } = harness();
 		const result = (await service.vehicle.invoke("ci.status", 1, { backend: "gh", jobRef: "job" }, PERMS)) as {
