@@ -20,13 +20,13 @@
     },
     "packages/pi-pipes": {
       "name": "@danypops/pi-pipes",
-      "version": "0.9.6",
+      "version": "0.9.7",
       "dependencies": {
-        "@danypops/pipes": "^0.13.1",
+        "@danypops/pipes": "^0.13.2",
         "@danypops/vehicle-client": "^0.5.0",
         "@danypops/vehicle-client-pi": "^0.16.0",
-        "@danypops/vehicle-core": "^0.12.1",
-        "@danypops/vehicle-server": "^0.17.0",
+        "@danypops/vehicle-core": "^0.12.3",
+        "@danypops/vehicle-server": "^0.17.1",
         "malevich-tui-components": "^0.16.1",
       },
       "devDependencies": {
@@ -44,15 +44,15 @@
     },
     "packages/pipes": {
       "name": "@danypops/pipes",
-      "version": "0.13.1",
+      "version": "0.13.2",
       "bin": {
         "pipes": "src/cli/index.ts",
       },
       "dependencies": {
         "@danypops/enigma-client": "^0.5.0",
         "@danypops/vehicle-client": "^0.5.0",
-        "@danypops/vehicle-core": "^0.12.1",
-        "@danypops/vehicle-server": "^0.17.0",
+        "@danypops/vehicle-core": "^0.12.3",
+        "@danypops/vehicle-server": "^0.17.1",
         "open": "^11.0.0",
       },
       "devDependencies": {
