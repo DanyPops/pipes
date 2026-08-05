@@ -13,11 +13,13 @@ import {
 	type CIArtifactStore,
 	type CIBackend,
 	type CIChainable,
+	type CIDiscoverable,
 	type CIHistorical,
 	type CIPipeliner,
 	type CITriggerable,
 } from "../run/ci-backend.ts";
 import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, CIStep } from "../run/ci-run.ts";
+import type { RepoInfo, WorkflowInfo } from "../run/discovery.ts";
 import type { TriggerReceipt } from "../run/trigger.ts";
 
 export class JenkinsNotFoundError extends Error {
@@ -51,6 +53,22 @@ function buildJobPath(jobRef: string): string {
 /** "latest" is an explicit sentinel mapped to Jenkins' own lastBuild alias; any other runId is used verbatim, never substituted. */
 function buildSelector(runId: string): string {
 	return runId === "latest" ? "lastBuild" : runId;
+}
+
+/**
+ * Jenkins' own `api/json?tree=jobs[...]` never sends a `color` field for a folder
+ * (`com.cloudbees.hudson.plugins.folder.Folder`, an organization folder, a multibranch
+ * project, ...) -- only a real buildable job has one (blue/red/yellow/grey/notbuilt, each
+ * optionally suffixed "_anime" while building). Cheaper and more robust than switching on
+ * `_class`, which varies across plugins/versions for what is functionally the same "this is
+ * a container, not a job" fact.
+ */
+function isJenkinsFolder(item: JenkinsJobSummary): boolean {
+	return item.color === undefined;
+}
+
+function jenkinsJobState(item: JenkinsJobSummary): string {
+	return item.color ?? "folder";
 }
 
 function mapBuildStatus(building: boolean, result: string | null): CIRun["status"] {
@@ -105,7 +123,7 @@ function mapPipelineStatus(status: string): CIRun["status"] {
 
 export function createJenkinsAdapter(
 	options: JenkinsAdapterOptions,
-): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIChainable {
+): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIChainable & CIDiscoverable {
 	const { name, credentials } = options;
 	// A caller-supplied fetchImpl (tests, or a future custom transport) is used as-is; the real
 	// default fetch is wrapped so a stalled connection to Jenkins can't hang ci.wait's poll loop forever.
@@ -204,7 +222,7 @@ export function createJenkinsAdapter(
 		name: () => name,
 		type: () => "jenkins",
 		capabilities: (): CapabilitySet =>
-			Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Chain,
+			Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Chain | Capability.Discover,
 
 		async getRun(jobRef: string, runId: string): Promise<CIRun> {
 			const path = `${buildJobPath(jobRef)}/${buildSelector(runId)}/api/json?tree=number,result,building,timestamp,duration,estimatedDuration,url,fullDisplayName,description`;
@@ -359,6 +377,34 @@ export function createJenkinsAdapter(
 				)
 				.map((build) => toCIRun(downstreamJob, build));
 		},
+
+		/**
+		 * Top-level items only (folders and root jobs alike) -- Jenkins' own `api/json?tree=jobs[...]`
+		 * response for the instance root. "private" has no Jenkins equivalent (no per-job visibility
+		 * concept the way a GitHub repo has); always false.
+		 */
+		async listRepos(): Promise<RepoInfo[]> {
+			const page = await get<{ jobs?: JenkinsJobSummary[] }>("api/json?tree=jobs[name,url,color]");
+			return (page?.jobs ?? []).map((job) => ({ name: job.name, fullName: job.name, private: false }));
+		},
+
+		/**
+		 * `repo` is a folder-nested path exactly like a jobRef (buildJobPath handles "CI/sub" the same
+		 * way either caller uses it). Jenkins has no structural distinction between "a repo" and "a
+		 * workflow within it" the way GitHub does -- a folder contains more jobs/folders, a real job
+		 * contains none (its own `api/json?tree=jobs[...]` omits the `jobs` key entirely, distinct
+		 * from an empty array for a genuinely empty folder). When `repo` already names a leaf job,
+		 * return it as its own single, immediately-invokable "workflow" -- fileName is the exact
+		 * jobRef to hand back into every other ci.* operation, whether that's this leaf job itself or
+		 * `${repo}/${child}` one level down.
+		 */
+		async listWorkflows(repo: string): Promise<WorkflowInfo[]> {
+			const path = buildJobPath(repo);
+			const page = await get<{ name?: string; jobs?: JenkinsJobSummary[] }>(`${path}/api/json?tree=name,jobs[name,url,color]`);
+			if (!page) throw new JenkinsNotFoundError(path);
+			if (!page.jobs) return [{ name: page.name ?? repo, fileName: repo, state: "job" }];
+			return page.jobs.map((job) => ({ name: job.name, fileName: `${repo}/${job.name}`, state: jenkinsJobState(job) }));
+		},
 	};
 }
 
@@ -410,6 +456,14 @@ interface JenkinsBuildWithActions {
 interface JenkinsArtifact {
 	fileName: string;
 	relativePath: string;
+}
+
+/** One entry from Jenkins' own `api/json?tree=jobs[name,url,color]` -- shared shape for both a folder's children and the instance root's top-level items. */
+interface JenkinsJobSummary {
+	name: string;
+	url: string;
+	/** Absent for a folder/organization-folder/multibranch container -- only present on a real buildable job. See isJenkinsFolder(). */
+	color?: string;
 }
 
 interface WfStage {

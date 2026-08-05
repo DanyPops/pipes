@@ -126,7 +126,7 @@ const OPERATIONS: readonly OperationSpec[] = [
 	{
 		action: "ci.discover",
 		description:
-			"Lists every repo an account-scoped GitHub backend's credential can see, or (with repo) that repo's workflow files -- the way to build a real jobRef instead of guessing it. Fails clearly against a backend without discovery support (GitLab/Jenkins today).",
+			"Lists every repo an account-scoped GitHub backend's credential can see, or (with repo) that repo's workflow files. For Jenkins: lists top-level jobs/folders, or (with repo) one folder's child jobs -- a returned workflow's fileName is a real, immediately-usable jobRef (folder-nested where applicable). The way to build a real jobRef instead of guessing it. Fails clearly against a backend without discovery support (GitLab today).",
 		effect: "read",
 		properties: { backend: stringProp, repo: stringProp },
 		required: ["backend"],

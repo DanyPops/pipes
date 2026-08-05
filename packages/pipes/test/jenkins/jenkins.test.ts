@@ -4,6 +4,7 @@ import { createJenkinsAdapter, JenkinsNotFoundError } from "../../src/jenkins/je
 import {
 	asArtifactStore,
 	asChainable,
+	asDiscoverable,
 	asHistorical,
 	asPipeliner,
 	asTriggerable,
@@ -219,7 +220,7 @@ describe("createJenkinsAdapter.listArtifacts", () => {
 });
 
 describe("createJenkinsAdapter: capabilities", () => {
-	it("advertises trigger, history, stages, artifacts, and chain", () => {
+	it("advertises trigger, history, stages, artifacts, chain, and discover", () => {
 		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS });
 		const caps = adapter.capabilities();
 		expect(hasCapability(caps, Capability.Trigger)).toBe(true);
@@ -227,12 +228,92 @@ describe("createJenkinsAdapter: capabilities", () => {
 		expect(hasCapability(caps, Capability.Stages)).toBe(true);
 		expect(hasCapability(caps, Capability.Artifacts)).toBe(true);
 		expect(hasCapability(caps, Capability.Chain)).toBe(true);
+		expect(hasCapability(caps, Capability.Discover)).toBe(true);
 
 		expect(asTriggerable(adapter)).toBeDefined();
 		expect(asHistorical(adapter)).toBeDefined();
 		expect(asPipeliner(adapter)).toBeDefined();
 		expect(asArtifactStore(adapter)).toBeDefined();
 		expect(asChainable(adapter)).toBeDefined();
+		expect(asDiscoverable(adapter)).toBeDefined();
+	});
+});
+
+describe("createJenkinsAdapter.listRepos", () => {
+	it("maps the instance root's top-level jobs/folders to RepoInfo, both foldered and buildable", async () => {
+		const fetchImpl: FetchLike = async (url) => {
+			expect(url).toContain("/api/json?tree=jobs[name,url,color]");
+			return jsonResponse({
+				jobs: [
+					{ name: "CI", url: "u/CI/" }, // a folder: no color field at all
+					{ name: "deploy", url: "u/deploy/", color: "blue" },
+				],
+			});
+		};
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl });
+
+		const repos = await adapter.listRepos();
+		expect(repos).toEqual([
+			{ name: "CI", fullName: "CI", private: false },
+			{ name: "deploy", fullName: "deploy", private: false },
+		]);
+	});
+
+	it("returns an empty list, not an error, for an instance with zero jobs", async () => {
+		const fetchImpl: FetchLike = async () => jsonResponse({ jobs: [] });
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl });
+		expect(await adapter.listRepos()).toEqual([]);
+	});
+});
+
+describe("createJenkinsAdapter.listWorkflows", () => {
+	it("lists a folder's child jobs as real, immediately-usable folder-nested jobRefs", async () => {
+		let requestedUrl = "";
+		const fetchImpl: FetchLike = async (url) => {
+			requestedUrl = url;
+			return jsonResponse({
+				name: "CI",
+				jobs: [
+					{ name: "deploy", url: "u", color: "blue" },
+					{ name: "sub", url: "u" }, // a nested folder
+				],
+			});
+		};
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl });
+
+		const workflows = await adapter.listWorkflows("CI");
+		expect(requestedUrl).toContain("/job/CI/api/json");
+		expect(workflows).toEqual([
+			{ name: "deploy", fileName: "CI/deploy", state: "blue" },
+			{ name: "sub", fileName: "CI/sub", state: "folder" },
+		]);
+	});
+
+	it("returns the job itself as a single workflow when repo already names a leaf job, not a folder", async () => {
+		const fetchImpl: FetchLike = async () => jsonResponse({ name: "deploy", color: "blue" }); // no `jobs` key -- a real, non-folder job
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl });
+
+		const workflows = await adapter.listWorkflows("deploy");
+		expect(workflows).toEqual([{ name: "deploy", fileName: "deploy", state: "job" }]);
+	});
+
+	it("builds correct nested jobRefs for a folder several levels deep", async () => {
+		let requestedUrl = "";
+		const fetchImpl: FetchLike = async (url) => {
+			requestedUrl = url;
+			return jsonResponse({ name: "sub", jobs: [{ name: "deploy", url: "u", color: "red" }] });
+		};
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl });
+
+		const workflows = await adapter.listWorkflows("CI/sub");
+		expect(requestedUrl).toContain("/job/CI/job/sub/api/json");
+		expect(workflows).toEqual([{ name: "deploy", fileName: "CI/sub/deploy", state: "red" }]);
+	});
+
+	it("throws JenkinsNotFoundError, not a silent empty result, for a repo that doesn't exist", async () => {
+		const fetchImpl: FetchLike = async () => new Response("", { status: 404 });
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl });
+		await expect(adapter.listWorkflows("missing")).rejects.toThrow(JenkinsNotFoundError);
 	});
 });
 

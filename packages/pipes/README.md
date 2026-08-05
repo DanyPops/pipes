@@ -172,6 +172,17 @@ An account-scoped GitHub backend hides which repos are actually valid --
 under that backend's owner (bounded to the first 100), and
 `ci(action=discover, backend=..., repo=...)` lists that repo's workflow
 files by their real file names -- the exact strings valid as `jobRef`'s
-second half. Not implemented for GitLab/Jenkins yet; `ci(action=discover)`
-against either fails with a clear "capability not supported" error rather
-than a crash.
+second half.
+
+Jenkins has no repo/workflow split, but the same operation is implemented
+against its own job-tree shape: `ci(action=discover, backend=...)` lists
+the instance's top-level jobs and folders, and `ci(action=discover,
+backend=..., repo=<folder>)` lists that folder's child jobs/folders one
+level down. Each returned workflow's `fileName` is already a real,
+folder-nested `jobRef` valid everywhere else in this tool -- pass `repo` as
+a leaf job (not a folder) and it comes back as its own single workflow, so
+discovery composes down to an exact, immediately-usable jobRef without
+ever having to guess Jenkins' `job/foo/job/bar` path encoding by hand.
+
+Not implemented for GitLab yet; `ci(action=discover)` against it fails
+with a clear "capability not supported" error rather than a crash.
