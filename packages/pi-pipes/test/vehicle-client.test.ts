@@ -234,6 +234,11 @@ describe("isPipesVehicleTool", () => {
 		expect(isPipesVehicleTool("ci_presets_list")).toBe(true);
 	});
 
+	it("recognizes Report Portal's own rp_ namespace, not just ci_", () => {
+		expect(isPipesVehicleTool("rp_launches")).toBe(true);
+		expect(isPipesVehicleTool("rp_dashboard_create")).toBe(true);
+	});
+
 	it("rejects an unrelated tool name", () => {
 		expect(isPipesVehicleTool("read")).toBe(false);
 		expect(isPipesVehicleTool("bash")).toBe(false);

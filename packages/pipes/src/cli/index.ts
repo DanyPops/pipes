@@ -12,6 +12,7 @@ import { createFileCredentialStore } from "../auth/jenkins-auth.ts";
 import { SYSTEMD_UNIT_NAME } from "../constants.ts";
 import { profiledBackend, resolvePipesCredentialPaths, resolvePipesPaths } from "../paths.ts";
 import { serveMain } from "../process/daemon.ts";
+import { createFileCredentialStore as createReportPortalCredentialStore } from "../reportportal/init.ts";
 import { VERSION } from "../version.ts";
 import { connectPipesClient } from "./client.ts";
 
@@ -130,7 +131,20 @@ async function loginMain(backend: string | undefined, args: string[]): Promise<v
 		return;
 	}
 
-	console.error("usage: pipes login <github|gitlab|jenkins> [--as <profile>] [--gh-cli [account]] (github only)");
+	if (backend === "reportportal") {
+		const { RP_URL: baseUrl, RP_PROJECT: project, RP_API_KEY: apiKey } = process.env;
+		if (!baseUrl || !project || !apiKey) {
+			console.error("RP_URL, RP_PROJECT, and RP_API_KEY are required — generate an API key from your Report Portal user's profile page");
+			process.exit(1);
+		}
+		// Unlike github/gitlab's profile (a suffix on a shared default identity), Report Portal has
+		// exactly one configured instance today (see reportportal/init.ts) -- no profile parameter yet.
+		createReportPortalCredentialStore(credentialPaths.credentialsDir, "reportportal").save({ baseUrl, project, apiKey });
+		console.log("Report Portal credentials saved.");
+		return;
+	}
+
+	console.error("usage: pipes login <github|gitlab|jenkins|reportportal> [--as <profile>] [--gh-cli [account]] (github only)");
 	process.exit(1);
 }
 
@@ -277,7 +291,7 @@ if (import.meta.main) {
 		}
 		default:
 			console.error(
-				'usage: pipes <serve|login|health|backends|credentials|call|service>\n  login <github|gitlab|jenkins> [--as <profile>]  authenticate and store credentials for a backend\n  credentials list                                list stored local credential profile names, never their contents\n  credentials remove <name>                       delete a stored local credential profile (e.g. "github-work")\n  call <op> [json-input]         invoke any ci.* operation, e.g. call ci.pool \'{"backend":"gh","jobRef":"job"}\'\n  service <install|start|stop|restart|status>     manage the systemd --user unit',
+				'usage: pipes <serve|login|health|backends|credentials|call|service>\n  login <github|gitlab|jenkins|reportportal> [--as <profile>]  authenticate and store credentials for a backend\n  credentials list                                list stored local credential profile names, never their contents\n  credentials remove <name>                       delete a stored local credential profile (e.g. "github-work")\n  call <op> [json-input]         invoke any ci.*/rp.* operation, e.g. call ci.pool \'{"backend":"gh","jobRef":"job"}\' or call rp.launches \'{}\'\n  service <install|start|stop|restart|status>     manage the systemd --user unit',
 			);
 			process.exit(1);
 	}

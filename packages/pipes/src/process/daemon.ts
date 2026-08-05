@@ -10,6 +10,7 @@ import { defaultRepoConfigPath, loadRepoConfig } from "../config/repo-config.ts"
 import { RUN_POOL_SYNC_INTERVAL_MS } from "../constants.ts";
 import { Orchestrator } from "../orchestrator.ts";
 import { resolvePipesCredentialPaths, resolvePipesPaths } from "../paths.ts";
+import { buildConfiguredReportPortalAdapter } from "../reportportal/init.ts";
 import { createApp, createPipesService } from "../rpc/service.ts";
 import { openPipesDb } from "../sqlite/db.ts";
 import { createRunPool } from "../sqlite/run-pool.ts";
@@ -34,9 +35,12 @@ export async function serveMain(): Promise<void> {
 	const token = ensureAuthToken(paths.token, "Pipes");
 	const credentialPaths = resolvePipesCredentialPaths(paths);
 	const orchestrator = await buildOrchestrator(credentialPaths);
+	// A single optional LaunchBackend, not a multi-adapter registry like Orchestrator's CIBackend
+	// map -- Report Portal is deliberately not part of Orchestrator (see reportportal/launch-backend.ts).
+	const launchBackend = await buildConfiguredReportPortalAdapter(credentialPaths);
 	const db = openPipesDb(paths.database);
 	const runPool = createRunPool(db);
-	const service = createPipesService(orchestrator, { runPool });
+	const service = createPipesService(orchestrator, { runPool, launchBackend });
 	const pushChannel = new PushChannel({ token });
 
 	runDaemonProcess({

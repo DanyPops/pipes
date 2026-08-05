@@ -4,7 +4,11 @@ Supervised Bun daemon (built on `@danypops/vehicle-server`) that owns CI
 credentials, real GitHub Actions/GitLab CI/Jenkins adapters, an
 orchestration layer with named pipeline presets, and a local SQLite pool of
 run status and cached logs — the standalone-adapter shape: the pool syncs on
-its own schedule regardless of whether any client is connected.
+its own schedule regardless of whether any client is connected. It also owns
+a Report Portal launch/test-item query adapter (`rp.*`) — a separate
+LaunchBackend port, not a CIBackend: test-execution results are a different
+domain than CI runs, and there's exactly one Report Portal instance to talk
+to rather than a multi-adapter registry.
 
 ## Service (systemd --user)
 
@@ -35,23 +39,36 @@ callable via the CLI's generic passthrough (`pipes call <op> [json]`):
 - `ci.stages` / `ci.chain` / `ci.downstream` — pipeline stage/step trees, a
   bounded (cycle-safe, node-capped) downstream/artifact tree, and a targeted
   downstream lookup for backends that need an explicit job name (Jenkins)
+- `rp.launches` / `rp.launch` / `rp.items` / `rp.search` / `rp.item` /
+  `rp.items.get` — Report Portal launch and test-item queries. `rp.search`
+  is cross-launch and requires `launchIds` — resolve a launch name/date range
+  to ids via `rp.launches` first, since Report Portal's own `/item` endpoint
+  400s without at least one launch id.
+- `rp.defects.update` — bulk defect classification (issue type, comment,
+  linked tickets) on one or more test items, a real write
+- `rp.dashboards` / `rp.dashboard` / `rp.dashboard.create` /
+  `rp.dashboard.widget.add` — Report Portal dashboard CRUD
 
 ## Auth
 
 Real delegated auth wherever the backend has one: GitHub OAuth Device
 Authorization Grant, GitLab OAuth2 Device Flow (or Authorization Code+PKCE
-via a local loopback listener on older instances). Jenkins has no delegated
-auth API, so it uses a stored username+API-token pair — the one documented
-exception, not a default.
+via a local loopback listener on older instances). Jenkins and Report Portal
+have no delegated auth API, so each uses a stored static credential — the
+documented exception for those two backends, not a default.
 
-`pipes login <github|gitlab|jenkins> [--as <profile>]` runs the flow and
-stores the result — omit `--as` to use the plain default credential, or
-name a profile to keep a second account/server separate (see "Multiple
-repos/projects per backend" below). Every device-flow and PKCE login prints
-the verification URL/code as text regardless, and also best-effort opens it
-in your default browser (matching GitHub CLI's own UX) — a headless
-session or missing browser opener never blocks the login, it just falls
-back to the printed URL.
+`pipes login <github|gitlab|jenkins|reportportal> [--as <profile>]` runs the
+flow and stores the result — omit `--as` to use the plain default
+credential, or name a profile to keep a second account/server separate (see
+"Multiple repos/projects per backend" below; Report Portal itself doesn't
+support a profile yet, since there's only ever one configured instance).
+Report Portal reads `RP_URL`/`RP_PROJECT`/`RP_API_KEY` (also the resolution
+order's env-var step, and the names Enigma's own Report Portal credential's
+`extra.url`/`extra.project` fields map onto). Every device-flow and PKCE
+login prints the verification URL/code as text regardless, and also
+best-effort opens it in your default browser (matching GitHub CLI's own
+UX) — a headless session or missing browser opener never blocks the login,
+it just falls back to the printed URL.
 
 ### GitHub: reuse an already-authenticated `gh` CLI session
 

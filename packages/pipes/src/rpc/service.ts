@@ -12,6 +12,18 @@ import { errorResponse, healthResponse, jsonResponse, readyResponse, requireBear
 import { defaultPresetsPath, savePresets } from "../config/presets.ts";
 import { DEFAULT_LOG_TAIL_TOKENS } from "../constants.ts";
 import type { Orchestrator } from "../orchestrator.ts";
+import type {
+	Dashboard,
+	DashboardCreateInput,
+	DefectUpdate,
+	Launch,
+	LaunchFilter,
+	TestItem,
+	TestItemFilter,
+	Widget,
+	WidgetAddInput,
+} from "../reportportal/launch.ts";
+import type { LaunchBackend } from "../reportportal/launch-backend.ts";
 import type { CIRunNode, CIStageNode, LogResult, RunResult } from "../run/ci-run.ts";
 import type { RepoInfo, WorkflowInfo } from "../run/discovery.ts";
 import type { Pipeline, PipelineRun } from "../run/pipeline.ts";
@@ -43,7 +55,18 @@ export type OperationName =
 	| "ci.downstream"
 	| "ci.presets.list"
 	| "ci.presets.set"
-	| "ci.presets.remove";
+	| "ci.presets.remove"
+	| "rp.launches"
+	| "rp.launch"
+	| "rp.items"
+	| "rp.search"
+	| "rp.item"
+	| "rp.items.get"
+	| "rp.defects.update"
+	| "rp.dashboards"
+	| "rp.dashboard"
+	| "rp.dashboard.create"
+	| "rp.dashboard.widget.add";
 
 export interface OperationInputs {
 	"ci.help": Record<string, never>;
@@ -83,7 +106,22 @@ export interface OperationInputs {
 	/** Upsert by name -- setting an existing name's preset replaces it entirely, matching Orchestrator.registerPipeline's Map semantics. */
 	"ci.presets.set": { preset: Pipeline };
 	"ci.presets.remove": { name: string };
+	/** Date-range fields travel as ISO strings over RPC, converted to Date at the handler boundary -- same pattern ci.search already uses for `since`. */
+	"rp.launches": Omit<LaunchFilter, "startAfter" | "startBefore"> & { startAfter?: string; startBefore?: string };
+	"rp.launch": { id: string };
+	"rp.items": { launchId: string; filter?: RpTestItemFilterInput };
+	"rp.search": RpTestItemFilterInput;
+	"rp.item": { id: string };
+	"rp.items.get": { ids: string[] };
+	"rp.defects.update": { updates: DefectUpdate[] };
+	"rp.dashboards": Record<string, never>;
+	"rp.dashboard": { id: string };
+	"rp.dashboard.create": DashboardCreateInput;
+	"rp.dashboard.widget.add": { dashboardId: string } & WidgetAddInput;
 }
+
+/** TestItemFilter's date-range fields (since/before) as ISO strings over RPC, matching LaunchFilter's own rp.launches convention above. */
+export type RpTestItemFilterInput = Omit<TestItemFilter, "since" | "before"> & { since?: string; before?: string };
 
 export interface OperationOutputs {
 	"ci.help": { backends: ReturnType<Orchestrator["backendInfo"]>; pipelines: string[] };
@@ -109,11 +147,28 @@ export interface OperationOutputs {
 	"ci.presets.set": { preset: Pipeline };
 	/** True when a preset by this name existed and was removed; false if it was never registered -- idempotent, not an error either way. */
 	"ci.presets.remove": { removed: boolean };
+	"rp.launches": { launches: Launch[] };
+	"rp.launch": { launch: Launch };
+	"rp.items": { items: TestItem[] };
+	"rp.search": { items: TestItem[] };
+	"rp.item": { item: TestItem };
+	"rp.items.get": { items: TestItem[] };
+	"rp.defects.update": { updated: number };
+	"rp.dashboards": { dashboards: Dashboard[] };
+	"rp.dashboard": { dashboard: Dashboard };
+	"rp.dashboard.create": { dashboard: Dashboard };
+	"rp.dashboard.widget.add": { widget: Widget };
 }
 
 export class UnknownOperationError extends Error {
 	constructor(op: string) {
 		super(`unknown operation: ${op}`);
+	}
+}
+
+export class ReportPortalNotConfiguredError extends Error {
+	constructor() {
+		super("Report Portal is not configured -- set RP_URL/RP_PROJECT/RP_API_KEY, an Enigma vault credential, or `pipes login reportportal`");
 	}
 }
 
@@ -147,6 +202,17 @@ export const OPERATION_NAMES: OperationName[] = [
 	"ci.presets.list",
 	"ci.presets.set",
 	"ci.presets.remove",
+	"rp.launches",
+	"rp.launch",
+	"rp.items",
+	"rp.search",
+	"rp.item",
+	"rp.items.get",
+	"rp.defects.update",
+	"rp.dashboards",
+	"rp.dashboard",
+	"rp.dashboard.create",
+	"rp.dashboard.widget.add",
 ];
 
 export interface CreatePipesServiceOptions {
@@ -156,6 +222,8 @@ export interface CreatePipesServiceOptions {
 	runPool?: RunPool;
 	/** Overridable for tests; production default is the same human-edited pipelines.json loadPresets reads at startup. */
 	presetsPath?: string;
+	/** Optional: when absent, every rp.* operation rejects with ReportPortalNotConfiguredError -- Report Portal is a single optional LaunchBackend, not a multi-adapter registry like Orchestrator's CIBackend map. */
+	launchBackend?: LaunchBackend;
 }
 
 export function createPipesService(orchestrator: Orchestrator, options: CreatePipesServiceOptions = {}): PipesService {
@@ -164,6 +232,11 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 	const presetsPath = options.presetsPath ?? defaultPresetsPath();
 	let service!: PipesService;
 	let cachedVehicleRegistry: VehicleRegistry | undefined;
+
+	function launchBackend(): LaunchBackend {
+		if (!options.launchBackend) throw new ReportPortalNotConfiguredError();
+		return options.launchBackend;
+	}
 
 	async function handleStatus(input: OperationInputs["ci.status"]): Promise<OperationOutputs["ci.status"]> {
 		if (input.pipeline) {
@@ -393,12 +466,72 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 					if (removed) savePresets(presetsPath, orchestrator.listPipelineDefinitions());
 					return { removed } as OperationOutputs[Name];
 				}
+				case "rp.launches": {
+					const filter = input as OperationInputs["rp.launches"];
+					const launches = await launchBackend().listLaunches({
+						...filter,
+						startAfter: filter.startAfter ? new Date(filter.startAfter) : undefined,
+						startBefore: filter.startBefore ? new Date(filter.startBefore) : undefined,
+					});
+					return { launches } as OperationOutputs[Name];
+				}
+				case "rp.launch": {
+					const { id } = input as OperationInputs["rp.launch"];
+					return { launch: await launchBackend().getLaunch(id) } as OperationOutputs[Name];
+				}
+				case "rp.items": {
+					const { launchId, filter } = input as OperationInputs["rp.items"];
+					const items = await launchBackend().listTestItems(launchId, toTestItemFilter(filter));
+					return { items } as OperationOutputs[Name];
+				}
+				case "rp.search": {
+					const filter = input as OperationInputs["rp.search"];
+					const items = await launchBackend().searchTestItems(toTestItemFilter(filter));
+					return { items } as OperationOutputs[Name];
+				}
+				case "rp.item": {
+					const { id } = input as OperationInputs["rp.item"];
+					return { item: await launchBackend().getTestItem(id) } as OperationOutputs[Name];
+				}
+				case "rp.items.get": {
+					const { ids } = input as OperationInputs["rp.items.get"];
+					return { items: await launchBackend().getTestItems(ids) } as OperationOutputs[Name];
+				}
+				case "rp.defects.update": {
+					const { updates } = input as OperationInputs["rp.defects.update"];
+					await launchBackend().updateDefects(updates);
+					return { updated: updates.length } as OperationOutputs[Name];
+				}
+				case "rp.dashboards":
+					return { dashboards: await launchBackend().listDashboards() } as OperationOutputs[Name];
+				case "rp.dashboard": {
+					const { id } = input as OperationInputs["rp.dashboard"];
+					return { dashboard: await launchBackend().getDashboard(id) } as OperationOutputs[Name];
+				}
+				case "rp.dashboard.create":
+					return {
+						dashboard: await launchBackend().createDashboard(input as OperationInputs["rp.dashboard.create"]),
+					} as OperationOutputs[Name];
+				case "rp.dashboard.widget.add": {
+					const { dashboardId, ...widgetInput } = input as OperationInputs["rp.dashboard.widget.add"];
+					return { widget: await launchBackend().addWidget(dashboardId, widgetInput) } as OperationOutputs[Name];
+				}
 				default:
 					throw new UnknownOperationError(op);
 			}
 		},
 	};
 	return service;
+}
+
+/** Converts rp.items/rp.search's wire-shape TestItemFilter (ISO date strings) into the domain TestItemFilter (real Date objects), matching rp.launches' own ISO-string-over-RPC convention. */
+function toTestItemFilter(filter: RpTestItemFilterInput | undefined): TestItemFilter {
+	if (!filter) return {};
+	return {
+		...filter,
+		since: filter.since ? new Date(filter.since) : undefined,
+		before: filter.before ? new Date(filter.before) : undefined,
+	};
 }
 
 function sleep(ms: number): Promise<void> {

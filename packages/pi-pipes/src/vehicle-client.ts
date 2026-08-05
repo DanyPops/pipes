@@ -51,8 +51,8 @@ import type { AgentToolResult, ExtensionAPI, Theme } from "@earendil-works/pi-co
 import { Text } from "@earendil-works/pi-tui";
 import { findFirstUrl, openLine, renderResultText } from "./ci-render.ts";
 
-/** Every Vehicle-projected ci tool name starts with "ci_" (ci_help, ci_status, ci_presets_list, ...). */
-export const PIPES_TOOL_PREFIXES = ["ci_"];
+/** Every Vehicle-projected tool name starts with "ci_" (ci_help, ci_status, ci_presets_list, ...) or "rp_" (rp_launches, rp_search, ...) -- one prefix per daemon operation namespace (see ../../pipes/src/rpc/service.ts's OperationName). */
+export const PIPES_TOOL_PREFIXES = ["ci_", "rp_"];
 
 export function isPipesVehicleTool(toolName: string): boolean {
 	return PIPES_TOOL_PREFIXES.some((prefix) => toolName.startsWith(prefix));
@@ -60,8 +60,13 @@ export function isPipesVehicleTool(toolName: string): boolean {
 
 function renderCiCall(operationName: string, args: unknown, theme: Theme) {
 	const input = args as { backend?: string; jobRef?: string; pipeline?: string; runId?: string } | undefined;
-	const action = operationName.slice("ci.".length);
-	let text = theme.fg("toolTitle", theme.bold("ci ")) + theme.fg("muted", action);
+	// operationName is always "<namespace>.<action>" (ci.status, rp.launches, ...) -- split on the
+	// first dot rather than assuming the "ci." namespace specifically, so a Report Portal (rp.*)
+	// operation renders with its own real namespace instead of a mis-sliced fragment of its action.
+	const dot = operationName.indexOf(".");
+	const namespace = dot === -1 ? operationName : operationName.slice(0, dot);
+	const action = dot === -1 ? operationName : operationName.slice(dot + 1);
+	let text = theme.fg("toolTitle", theme.bold(`${namespace} `)) + theme.fg("muted", action);
 	if (input?.pipeline) {
 		text += ` ${theme.fg("accent", input.pipeline)}`;
 	} else {

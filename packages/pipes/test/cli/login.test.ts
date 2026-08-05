@@ -79,6 +79,38 @@ describe("pipes login (real subprocess)", () => {
 		}
 	});
 
+	it("exits non-zero with a clear message when Report Portal env vars are incomplete", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pipes-login-"));
+		try {
+			const { code, stderr } = await runCli(["login", "reportportal"], tempXdgEnv(dir));
+			expect(code).not.toBe(0);
+			expect(stderr).toContain("RP_URL");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("saves real Report Portal credentials to the state directory on success — no network involved for this backend", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "pipes-login-"));
+		try {
+			const { code, stdout } = await runCli(["login", "reportportal"], {
+				...tempXdgEnv(dir),
+				RP_URL: "https://rp.example.com",
+				RP_PROJECT: "myproject",
+				RP_API_KEY: "key-123",
+			});
+			expect(code).toBe(0);
+			expect(stdout).toContain("Report Portal credentials saved");
+
+			const stateFile = join(dir, "pipes", "reportportal.json");
+			expect(existsSync(stateFile)).toBe(true);
+			const saved = JSON.parse(readFileSync(stateFile, "utf8"));
+			expect(saved).toEqual({ accessToken: "key-123", extra: { url: "https://rp.example.com", project: "myproject" } });
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
 	it("saves real Jenkins credentials to the state directory on success — no network involved for this backend", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pipes-login-"));
 		try {
