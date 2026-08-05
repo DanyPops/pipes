@@ -42,9 +42,11 @@ export interface RunPool {
 	 * defaults to "" -- the anonymous/shared subscriber every pre-existing caller implicitly
 	 * uses. scheduleMs, when set, is this subscriber's own minimum check cadence in
 	 * milliseconds; omitted means "check on every global sync tick", matching the pre-existing
-	 * single-subscriber behavior.
+	 * single-subscriber behavior. runId, when set, pins this subscription to that exact run
+	 * forever instead of always re-resolving "latest" -- the only safe way to track a specific
+	 * triggered run on a job with other unrelated concurrent triggers.
 	 */
-	subscribeJob(backend: string, jobRef: string, options?: { subscriberId?: string; scheduleMs?: number }): void;
+	subscribeJob(backend: string, jobRef: string, options?: { subscriberId?: string; scheduleMs?: number; runId?: string }): void;
 	/** Removes exactly one subscriber's row. subscriberId defaults to "". Idempotent no-op if that subscription wasn't present. */
 	unsubscribeJob(backend: string, jobRef: string, subscriberId?: string): void;
 	/** True if the given subscriber (default "") is currently watching this job. */
@@ -65,6 +67,8 @@ export interface JobSubscription {
 	subscriberId: string;
 	scheduleMs?: number;
 	lastCheckedAt?: Date;
+	/** When set, this subscription tracks exactly this run id, never "latest". */
+	pinnedRunId?: string;
 }
 
 interface RunRow {
@@ -155,13 +159,13 @@ export function createRunPool(db: Database): RunPool {
 			);
 		},
 
-		subscribeJob(backend: string, jobRef: string, options?: { subscriberId?: string; scheduleMs?: number }): void {
+		subscribeJob(backend: string, jobRef: string, options?: { subscriberId?: string; scheduleMs?: number; runId?: string }): void {
 			const subscriberId = options?.subscriberId ?? "";
 			db.query(
-				`INSERT INTO job_watches (backend, job_ref, subscriber_id, schedule_ms)
-				 VALUES (?, ?, ?, ?)
-				 ON CONFLICT(backend, job_ref, subscriber_id) DO UPDATE SET schedule_ms = excluded.schedule_ms`,
-			).run(backend, jobRef, subscriberId, options?.scheduleMs ?? null);
+				`INSERT INTO job_watches (backend, job_ref, subscriber_id, schedule_ms, pinned_run_id)
+				 VALUES (?, ?, ?, ?, ?)
+				 ON CONFLICT(backend, job_ref, subscriber_id) DO UPDATE SET schedule_ms = excluded.schedule_ms, pinned_run_id = excluded.pinned_run_id`,
+			).run(backend, jobRef, subscriberId, options?.scheduleMs ?? null, options?.runId ?? null);
 		},
 
 		unsubscribeJob(backend: string, jobRef: string, subscriberId = ""): void {
@@ -187,6 +191,7 @@ export function createRunPool(db: Database): RunPool {
 				subscriber_id: string;
 				schedule_ms: number | null;
 				last_checked_at: number | null;
+				pinned_run_id: string | null;
 			}>;
 			return rows.map((row) => ({
 				backend: row.backend,
@@ -194,6 +199,7 @@ export function createRunPool(db: Database): RunPool {
 				subscriberId: row.subscriber_id,
 				scheduleMs: row.schedule_ms ?? undefined,
 				lastCheckedAt: row.last_checked_at !== null ? new Date(row.last_checked_at) : undefined,
+				pinnedRunId: row.pinned_run_id ?? undefined,
 			}));
 		},
 

@@ -61,9 +61,10 @@ describe("createPipesVehicleRegistry (via PipesService.vehicle)", () => {
 		const subscribeSchema = subscribe?.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
 		const unsubscribeSchema = unsubscribe?.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
 
-		expect(Object.keys(subscribeSchema.properties ?? {})).toEqual(expect.arrayContaining(["subscriberId", "scheduleMs"]));
+		expect(Object.keys(subscribeSchema.properties ?? {})).toEqual(expect.arrayContaining(["subscriberId", "scheduleMs", "runId"]));
 		expect(subscribeSchema.required).not.toContain("subscriberId");
 		expect(subscribeSchema.required).not.toContain("scheduleMs");
+		expect(subscribeSchema.required).not.toContain("runId");
 		expect(Object.keys(unsubscribeSchema.properties ?? {})).toEqual(expect.arrayContaining(["subscriberId"]));
 		expect(unsubscribeSchema.required).not.toContain("subscriberId");
 	});

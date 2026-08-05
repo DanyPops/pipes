@@ -182,9 +182,9 @@ const OPERATIONS: readonly OperationSpec[] = [
 	{
 		action: "ci.subscribe",
 		description:
-			"Has the daemon keep following a job's latest run in the background -- auto-refocuses onto a new run if one supersedes the last, auto-unsubscribes once terminal. Idempotent. ci.trigger already subscribes automatically. subscriberId scopes this watch to one caller (defaults to a shared anonymous subscriber); scheduleMs bounds how often that subscriber's watch is refreshed, in milliseconds (omit to refresh on every background sync tick).",
+			"Has the daemon keep following a job's run in the background -- auto-unsubscribes once terminal. Idempotent. ci.trigger already subscribes automatically, pinned to the run it produced. subscriberId scopes this watch to one caller (defaults to a shared anonymous subscriber); scheduleMs bounds how often that subscriber's watch is refreshed, in milliseconds (omit to refresh on every background sync tick). runId pins the watch to that exact run instead of always re-resolving latest -- use this whenever you already have a concrete run id (e.g. from ci.trigger or ci.status), especially on a job that might have other unrelated concurrent triggers; without it, ci.subscribe always follows whatever 'latest' currently means for the job, auto-refocusing onto a new run if one supersedes the last.",
 		effect: "local-write",
-		properties: { backend: stringProp, jobRef: stringProp, subscriberId: stringProp, scheduleMs: numberProp },
+		properties: { backend: stringProp, jobRef: stringProp, subscriberId: stringProp, scheduleMs: numberProp, runId: stringProp },
 		required: ["backend", "jobRef"],
 	},
 	{

@@ -97,8 +97,8 @@ export interface OperationInputs {
 	"ci.stages": { backend: string; jobRef: string; runId: string; steps?: boolean; includeFailedLog?: boolean };
 	"ci.chain": { backend: string; jobRef: string; runId: string; depth?: number; artifacts?: boolean };
 	"ci.pool": { backend: string; jobRef: string; limit?: number };
-	/** subscriberId defaults to "" -- the same anonymous subscriber every pre-existing caller implicitly uses. scheduleMs, when set, is this subscriber's own minimum check cadence; omitted checks on every background sync tick. */
-	"ci.subscribe": { backend: string; jobRef: string; subscriberId?: string; scheduleMs?: number };
+	/** subscriberId defaults to "" -- the same anonymous subscriber every pre-existing caller implicitly uses. scheduleMs, when set, is this subscriber's own minimum check cadence; omitted checks on every background sync tick. runId, when set, pins this watch to that exact run forever instead of always re-resolving "latest" -- use this whenever you already have a concrete run id, especially on a job with other unrelated concurrent triggers. */
+	"ci.subscribe": { backend: string; jobRef: string; subscriberId?: string; scheduleMs?: number; runId?: string };
 	/** subscriberId defaults to "", removing only that one subscription -- another subscriber's independent watch on the same job is untouched. */
 	"ci.unsubscribe": { backend: string; jobRef: string; subscriberId?: string };
 	"ci.tail": { backend: string; jobRef: string; runId?: string; maxTokens?: number };
@@ -280,9 +280,13 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 	/** Idempotent: subscribing an already-watched job just re-seeds it with a fresh immediate fetch. */
 	async function handleSubscribe(input: OperationInputs["ci.subscribe"]): Promise<OperationOutputs["ci.subscribe"]> {
 		if (!pool) throw new Error("no local run pool is configured");
-		pool.subscribeJob(input.backend, input.jobRef, { subscriberId: input.subscriberId, scheduleMs: input.scheduleMs });
+		const subscriberId = input.subscriberId ?? "";
+		pool.subscribeJob(input.backend, input.jobRef, { subscriberId, scheduleMs: input.scheduleMs, runId: input.runId });
+		// A pinned subscription's very first fetch must already reflect the pinned run, not "latest" --
+		// this is the exact confusion a bare "latest" resolve caused live on a job with other concurrent triggers.
+		const targetRunId = input.runId ?? "latest";
 		try {
-			const run = await orchestrator.ciGetRun(input.backend, input.jobRef, "latest");
+			const run = await orchestrator.ciGetRun(input.backend, input.jobRef, targetRunId);
 			const log = await orchestrator.ciGetRawLog(input.backend, input.jobRef, run.id);
 			const snapshot: RunSnapshot = {
 				backend: input.backend,
@@ -298,8 +302,11 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 			};
 			pool.upsert(snapshot);
 			pool.upsertLog(input.backend, input.jobRef, run.id, log);
-			// A job-level fact -- if the very first fetch already shows terminal, no subscriber (not just this call's) has anything left to watch.
-			if (isTerminalStatus(run.status)) pool.unsubscribeAllForJob(input.backend, input.jobRef);
+			if (isTerminalStatus(run.status)) {
+				// Only this call's own subscription -- a pinned run's own terminal status says nothing about
+				// whether "latest" (or some other subscriber's pinned run) on the same job is also done.
+				pool.unsubscribeJob(input.backend, input.jobRef, subscriberId);
+			}
 			return { subscribed: true, run: snapshot };
 		} catch {
 			// The job watch is still recorded -- the next background sync tick retries. Subscribing to a job that
@@ -542,11 +549,12 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** Seeds one row per resolved step so the background sync loop picks them up on its next tick, without waiting for a caller to ask ci.status first. */
+/** Pins each step's auto-subscription to the exact run id that step itself produced, not "latest" -- same reasoning as seedPoolFromTrigger. */
 function seedPoolFromPipelineRun(pool: RunPool, backend: string, pipelineRun: PipelineRun): void {
 	const fetchedAt = new Date();
 	for (const step of pipelineRun.steps) {
 		if (!step.runId) continue;
-		pool.subscribeJob(backend, step.jobName);
+		pool.subscribeJob(backend, step.jobName, { runId: step.runId });
 		if (isTerminalStatus(step.status)) pool.unsubscribeJob(backend, step.jobName);
 		pool.upsert({
 			backend,
@@ -564,9 +572,10 @@ function seedPoolFromPipelineRun(pool: RunPool, backend: string, pipelineRun: Pi
 }
 
 /** Seeds an approximate "pending" row immediately after trigger — the background sync loop corrects it to the real status on its first tick. */
+/** Pins the auto-subscription to the exact run this trigger just produced, not "latest" -- a shared job can have other unrelated concurrent triggers, and "latest" has no way to tell them apart from the run this call actually started. */
 function seedPoolFromTrigger(pool: RunPool, backend: string, jobRef: string, runId: string): void {
 	const now = new Date();
-	pool.subscribeJob(backend, jobRef);
+	pool.subscribeJob(backend, jobRef, { runId });
 	pool.upsert({ backend, jobRef, runId, status: "pending", result: "", url: "", startedAt: now, fetchedAt: now, watched: true });
 }
 

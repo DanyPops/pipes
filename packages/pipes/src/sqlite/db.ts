@@ -70,6 +70,15 @@ DROP TABLE job_watches;
 ALTER TABLE job_watches_new RENAME TO job_watches;
 `;
 
+// A subscription with pinned_run_id set tracks that exact run forever, never re-resolving
+// "latest" -- the fix for a real bug where a busy/shared job's background watch silently
+// jumped onto an unrelated concurrent run. Null (the default, and every pre-4 row after
+// migration 4 backfills it implicitly via ALTER TABLE's column default) preserves today's
+// "always track latest" behavior.
+const MIGRATION_5_PINNED_RUN_ID = `
+ALTER TABLE job_watches ADD COLUMN pinned_run_id TEXT;
+`;
+
 export function openPipesDb(path: string): Database {
 	return openSqliteWithPragmas(path, {
 		databaseOptions: { create: true, strict: true },
@@ -78,6 +87,7 @@ export function openPipesDb(path: string): Database {
 			{ version: 2, up: (db) => db.exec(MIGRATION_2_LOG_TEXT) },
 			{ version: 3, up: (db) => db.exec(MIGRATION_3_JOB_WATCHES) },
 			{ version: 4, up: (db) => db.exec(MIGRATION_4_SUBSCRIBER_SCHEDULES) },
+			{ version: 5, up: (db) => db.exec(MIGRATION_5_PINNED_RUN_ID) },
 		],
 	});
 }

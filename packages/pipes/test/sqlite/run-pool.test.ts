@@ -213,3 +213,32 @@ describe("createRunPool: per-subscriber subscriptions", () => {
 		expect(subs.find((s) => s.subscriberId === "bob")?.lastCheckedAt).toBeUndefined();
 	});
 });
+
+describe("createRunPool: pinning a subscription to a specific runId instead of always tracking latest", () => {
+	it("subscribeJob's runId option round-trips through watchedSubscriptions() as pinnedRunId", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("jenkins", "job", { runId: "9191" });
+
+		const subs = pool.watchedSubscriptions();
+		expect(subs).toHaveLength(1);
+		expect(subs[0]?.pinnedRunId).toBe("9191");
+	});
+
+	it("a subscription with no runId option shows pinnedRunId undefined -- back-compat, tracks latest as before", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("jenkins", "job");
+
+		const subs = pool.watchedSubscriptions();
+		expect(subs[0]?.pinnedRunId).toBeUndefined();
+	});
+
+	it("two subscribers on the same job can independently pin to different runs, or not pin at all", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("jenkins", "job", { subscriberId: "alice", runId: "9191" });
+		pool.subscribeJob("jenkins", "job", { subscriberId: "bob" });
+
+		const subs = pool.watchedSubscriptions();
+		expect(subs.find((s) => s.subscriberId === "alice")?.pinnedRunId).toBe("9191");
+		expect(subs.find((s) => s.subscriberId === "bob")?.pinnedRunId).toBeUndefined();
+	});
+});

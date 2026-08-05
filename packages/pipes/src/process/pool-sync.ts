@@ -1,26 +1,28 @@
 /**
- * Background sync: for every watched *job* (not a fixed run ID), resolves
- * whatever "latest" currently means for that job and refreshes its status
- * and full log through the real orchestrator/adapter path. Re-resolving
- * "latest" every tick is what gives autofocus for free -- if a new run
- * supersedes the one last observed, the very next tick naturally follows
- * it, with no separate "a new run started" detection needed. Once the
- * latest run reaches a terminal status, every subscriber on the job is
- * auto-unsubscribed: the run is done, a job-level fact no individual
- * subscriber's schedule should keep polling past.
+ * Background sync: for every watched subscription, resolves either "latest" for its job
+ * (the default) or, if the subscription pinned itself to a specific runId, that exact run
+ * forever -- pinning is the only safe way to track a run this session actually triggered on
+ * a job other automation/users also trigger concurrently; re-resolving "latest" on a busy
+ * shared job can silently jump onto someone else's unrelated build.
  *
- * A job can have several independent subscriptions (one per subscriberId),
- * each with its own optional scheduleMs cadence. A job is fetched on a
- * given tick if ANY of its subscriptions is due (scheduleMs elapsed since
- * its own lastCheckedAt, or no scheduleMs at all -- due on every tick,
- * the original single-subscriber behavior). One live fetch serves every
- * subscriber attached to that job, so every attached subscription's
- * lastCheckedAt is stamped together, not just the one(s) that triggered it.
+ * Subscriptions are grouped by (backend, jobRef, targetRunId) -- "latest" for every unpinned
+ * subscriber on a job is one group (autofocus: if a new run supersedes the last one observed,
+ * the very next tick naturally follows it, no separate "a new run started" detection needed);
+ * each distinct pinned runId on that same job is its own separate group, fetched and tracked
+ * independently. One live fetch serves every subscription in its own group, so their
+ * lastCheckedAt is stamped together. Once a group's target run reaches a terminal status,
+ * only the subscriptions in *that* group are unsubscribed -- a pinned run finishing says
+ * nothing about whether "latest" (or a different pinned run) on the same job is also done.
+ *
+ * A job can have several independent subscriptions (one per subscriberId), each with its own
+ * optional scheduleMs cadence. A group is fetched on a given tick if ANY of its member
+ * subscriptions is due (scheduleMs elapsed since its own lastCheckedAt, or no scheduleMs at
+ * all -- due on every tick, the original single-subscriber behavior).
  *
  * Wired into the daemon as a maintenance task (see daemon.ts), so it runs
  * on its own schedule regardless of whether any client is connected right
- * now. One job's failed refresh must not abort the rest of the batch, so
- * each job is fetched and caught independently.
+ * now. One group's failed refresh must not abort the rest of the batch, so
+ * each group is fetched and caught independently.
  */
 import type { Logger } from "@danypops/vehicle-server/logging";
 import type { Orchestrator } from "../orchestrator.ts";
@@ -45,6 +47,14 @@ function isDue(subscription: JobSubscription, nowMs: number): boolean {
 	return nowMs - subscription.lastCheckedAt.getTime() >= subscription.scheduleMs;
 }
 
+interface FetchGroup {
+	backend: string;
+	jobRef: string;
+	/** The literal run id to fetch -- "latest" for every unpinned subscription's shared group, or the exact pinned run id for a pinned group. */
+	targetRunId: string;
+	subscriptions: JobSubscription[];
+}
+
 export async function syncRunPool(
 	orchestrator: Orchestrator,
 	pool: RunPool,
@@ -54,21 +64,22 @@ export async function syncRunPool(
 	/** Injected clock, mirroring orchestrator.ts's ciWatch -- lets tests assert due-time gating with literal fake timestamps instead of real sleeps. */
 	now: () => number = Date.now,
 ): Promise<void> {
-	const subscriptionsByJob = new Map<string, { backend: string; jobRef: string; subscriptions: JobSubscription[] }>();
+	const groupsByKey = new Map<string, FetchGroup>();
 	for (const subscription of pool.watchedSubscriptions()) {
-		const key = `${subscription.backend}\u0000${subscription.jobRef}`;
-		const existing = subscriptionsByJob.get(key);
+		const targetRunId = subscription.pinnedRunId ?? "latest";
+		const key = `${subscription.backend}\u0000${subscription.jobRef}\u0000${targetRunId}`;
+		const existing = groupsByKey.get(key);
 		if (existing) existing.subscriptions.push(subscription);
-		else subscriptionsByJob.set(key, { backend: subscription.backend, jobRef: subscription.jobRef, subscriptions: [subscription] });
+		else groupsByKey.set(key, { backend: subscription.backend, jobRef: subscription.jobRef, targetRunId, subscriptions: [subscription] });
 	}
 
 	const nowMs = now();
-	const dueJobs = [...subscriptionsByJob.values()].filter((job) => job.subscriptions.some((s) => isDue(s, nowMs)));
+	const dueGroups = [...groupsByKey.values()].filter((group) => group.subscriptions.some((s) => isDue(s, nowMs)));
 
 	await Promise.all(
-		dueJobs.map(async ({ backend, jobRef, subscriptions }) => {
+		dueGroups.map(async ({ backend, jobRef, targetRunId, subscriptions }) => {
 			try {
-				const run = await orchestrator.ciGetRun(backend, jobRef, "latest");
+				const run = await orchestrator.ciGetRun(backend, jobRef, targetRunId);
 				const log = await orchestrator.ciGetRawLog(backend, jobRef, run.id);
 				const fetchedAt = new Date(nowMs);
 				const previous = pool.get(backend, jobRef, run.id);
@@ -90,16 +101,19 @@ export async function syncRunPool(
 				}
 
 				if (isTerminalStatus(run.status)) {
-					pool.unsubscribeAllForJob(backend, jobRef);
+					// Only this group's own subscriptions -- a pinned run (or "latest") finishing says
+					// nothing about whether a different pinned run, or "latest" itself, is also done.
+					for (const subscription of subscriptions) pool.unsubscribeJob(backend, jobRef, subscription.subscriberId);
 				} else {
-					// The live fetch serves every subscriber attached to this job, whether or not
-					// each one's own schedule was individually due -- everyone's view is fresh now.
+					// The live fetch serves every subscription in this group, whether or not each
+					// one's own schedule was individually due -- everyone's view is fresh now.
 					for (const subscription of subscriptions) pool.markSubscriptionChecked(backend, jobRef, subscription.subscriberId, fetchedAt);
 				}
 			} catch (error) {
-				logger.warn("job pool sync failed for one job", {
+				logger.warn("job pool sync failed for one group", {
 					backend,
 					jobRef,
+					targetRunId,
 					error: error instanceof Error ? error.message : String(error),
 				});
 			}

@@ -165,6 +165,56 @@ describe("syncRunPool", () => {
 		expect(pool.watchedJobs()).toHaveLength(0);
 	});
 
+	it("a subscription pinned to a specific runId always reflects that run, never autofocusing onto a different 'latest'", async () => {
+		const orchestrator = new Orchestrator();
+		const runsById: Record<string, CIRun> = {
+			"9191": { id: "9191", name: "job", status: "running", startedAt: new Date(0) },
+			latest: { id: "9193", name: "job", status: "success", startedAt: new Date(0) },
+		};
+		orchestrator.addAdapter(createStubCIBackend({ name: "jenkins", runsById }));
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("jenkins", "job", { runId: "9191" });
+
+		await syncRunPool(orchestrator, pool);
+
+		expect(pool.get("jenkins", "job", "9191")?.status).toBe("running");
+		expect(pool.get("jenkins", "job", "9193")).toBeUndefined();
+	});
+
+	it("a pinned subscription and an unpinned subscription on the same job coexist -- the unpinned one still autofocuses onto latest", async () => {
+		const orchestrator = new Orchestrator();
+		const runsById: Record<string, CIRun> = {
+			"9191": { id: "9191", name: "job", status: "running", startedAt: new Date(0) },
+			latest: { id: "9193", name: "job", status: "success", startedAt: new Date(0) },
+		};
+		orchestrator.addAdapter(createStubCIBackend({ name: "jenkins", runsById }));
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("jenkins", "job", { subscriberId: "alice", runId: "9191" });
+		pool.subscribeJob("jenkins", "job", { subscriberId: "bob" });
+
+		await syncRunPool(orchestrator, pool);
+
+		expect(pool.get("jenkins", "job", "9191")?.status).toBe("running");
+		expect(pool.get("jenkins", "job", "9193")?.status).toBe("success");
+	});
+
+	it("once a pinned run reaches terminal, only that pinned subscription is unsubscribed -- an unpinned sibling watching the same job is untouched", async () => {
+		const orchestrator = new Orchestrator();
+		const runsById: Record<string, CIRun> = {
+			"9191": { id: "9191", name: "job", status: "failure", startedAt: new Date(0) },
+			latest: { id: "9193", name: "job", status: "running", startedAt: new Date(0) },
+		};
+		orchestrator.addAdapter(createStubCIBackend({ name: "jenkins", runsById }));
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("jenkins", "job", { subscriberId: "alice", runId: "9191" });
+		pool.subscribeJob("jenkins", "job", { subscriberId: "bob" });
+
+		await syncRunPool(orchestrator, pool);
+
+		expect(pool.isJobSubscribed("jenkins", "job", "alice")).toBe(false);
+		expect(pool.isJobSubscribed("jenkins", "job", "bob")).toBe(true);
+	});
+
 	it("calls onStatusChange when a run's status differs from what the pool had previously recorded for it", async () => {
 		const orchestrator = new Orchestrator();
 		const runsById: Record<string, CIRun> = { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } };
