@@ -5,9 +5,17 @@
  * "latest" every tick is what gives autofocus for free -- if a new run
  * supersedes the one last observed, the very next tick naturally follows
  * it, with no separate "a new run started" detection needed. Once the
- * latest run reaches a terminal status, the job is auto-unsubscribed: the
- * agent asked to watch until done, it's done, so watching stops without
- * an explicit ci.unsubscribe call.
+ * latest run reaches a terminal status, every subscriber on the job is
+ * auto-unsubscribed: the run is done, a job-level fact no individual
+ * subscriber's schedule should keep polling past.
+ *
+ * A job can have several independent subscriptions (one per subscriberId),
+ * each with its own optional scheduleMs cadence. A job is fetched on a
+ * given tick if ANY of its subscriptions is due (scheduleMs elapsed since
+ * its own lastCheckedAt, or no scheduleMs at all -- due on every tick,
+ * the original single-subscriber behavior). One live fetch serves every
+ * subscriber attached to that job, so every attached subscription's
+ * lastCheckedAt is stamped together, not just the one(s) that triggered it.
  *
  * Wired into the daemon as a maintenance task (see daemon.ts), so it runs
  * on its own schedule regardless of whether any client is connected right
@@ -18,7 +26,7 @@ import type { Logger } from "@danypops/vehicle-server/logging";
 import type { Orchestrator } from "../orchestrator.ts";
 import type { RunStatus } from "../run/ci-run.ts";
 import { isTerminalStatus } from "../run/ci-run.ts";
-import type { RunPool } from "../sqlite/run-pool.ts";
+import type { JobSubscription, RunPool } from "../sqlite/run-pool.ts";
 
 const NOOP_LOGGER: Logger = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -30,20 +38,39 @@ export interface RunStatusTransition {
 	url: string;
 }
 
+/** True if this subscription's own cadence has elapsed since it was last checked -- always true for a subscription with no scheduleMs, matching the original every-tick behavior. */
+function isDue(subscription: JobSubscription, nowMs: number): boolean {
+	if (subscription.scheduleMs === undefined) return true;
+	if (subscription.lastCheckedAt === undefined) return true;
+	return nowMs - subscription.lastCheckedAt.getTime() >= subscription.scheduleMs;
+}
+
 export async function syncRunPool(
 	orchestrator: Orchestrator,
 	pool: RunPool,
 	logger: Logger = NOOP_LOGGER,
 	/** Called once per job whose fetched status differs from what the pool had previously recorded for that run -- e.g. wired to PushChannel.publish() so a subscribed client sees a live queued -> running -> success/failure transition instead of polling. Never called for an unchanged status (including the fresh-fetch tick that lands the same terminal status a second time). */
 	onStatusChange?: (transition: RunStatusTransition) => void,
+	/** Injected clock, mirroring orchestrator.ts's ciWatch -- lets tests assert due-time gating with literal fake timestamps instead of real sleeps. */
+	now: () => number = Date.now,
 ): Promise<void> {
-	const jobs = pool.watchedJobs();
+	const subscriptionsByJob = new Map<string, { backend: string; jobRef: string; subscriptions: JobSubscription[] }>();
+	for (const subscription of pool.watchedSubscriptions()) {
+		const key = `${subscription.backend}\u0000${subscription.jobRef}`;
+		const existing = subscriptionsByJob.get(key);
+		if (existing) existing.subscriptions.push(subscription);
+		else subscriptionsByJob.set(key, { backend: subscription.backend, jobRef: subscription.jobRef, subscriptions: [subscription] });
+	}
+
+	const nowMs = now();
+	const dueJobs = [...subscriptionsByJob.values()].filter((job) => job.subscriptions.some((s) => isDue(s, nowMs)));
+
 	await Promise.all(
-		jobs.map(async ({ backend, jobRef }) => {
+		dueJobs.map(async ({ backend, jobRef, subscriptions }) => {
 			try {
 				const run = await orchestrator.ciGetRun(backend, jobRef, "latest");
 				const log = await orchestrator.ciGetRawLog(backend, jobRef, run.id);
-				const fetchedAt = new Date();
+				const fetchedAt = new Date(nowMs);
 				const previous = pool.get(backend, jobRef, run.id);
 				pool.upsert({
 					backend,
@@ -62,7 +89,13 @@ export async function syncRunPool(
 					onStatusChange?.({ backend, jobRef, runId: run.id, status: run.status, url: run.url ?? "" });
 				}
 
-				if (isTerminalStatus(run.status)) pool.unsubscribeJob(backend, jobRef);
+				if (isTerminalStatus(run.status)) {
+					pool.unsubscribeAllForJob(backend, jobRef);
+				} else {
+					// The live fetch serves every subscriber attached to this job, whether or not
+					// each one's own schedule was individually due -- everyone's view is fresh now.
+					for (const subscription of subscriptions) pool.markSubscriptionChecked(backend, jobRef, subscription.subscriberId, fetchedAt);
+				}
 			} catch (error) {
 				logger.warn("job pool sync failed for one job", {
 					backend,

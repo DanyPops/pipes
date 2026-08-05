@@ -92,6 +92,79 @@ describe("syncRunPool", () => {
 		await expect(syncRunPool(orchestrator, pool)).resolves.toBeUndefined();
 	});
 
+	it("skips a subscription whose schedule hasn't come due yet -- no adapter call at all on that tick", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({
+			name: "gh",
+			runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } },
+		});
+		orchestrator.addAdapter(backend);
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job", { subscriberId: "alice", scheduleMs: 60_000 });
+
+		await syncRunPool(orchestrator, pool, undefined, undefined, () => 0);
+		expect(backend.calls.getRun).toHaveLength(1);
+
+		// Not due yet -- only 30s have passed against a 60s schedule.
+		await syncRunPool(orchestrator, pool, undefined, undefined, () => 30_000);
+		expect(backend.calls.getRun).toHaveLength(1);
+
+		// Due now -- 61s have passed.
+		await syncRunPool(orchestrator, pool, undefined, undefined, () => 61_000);
+		expect(backend.calls.getRun).toHaveLength(2);
+	});
+
+	it("a subscription with no scheduleMs is checked on every tick regardless of now()", async () => {
+		const orchestrator = new Orchestrator();
+		const runsById: Record<string, CIRun> = { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } };
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById }));
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job");
+
+		await syncRunPool(orchestrator, pool, undefined, undefined, () => 0);
+		runsById.latest = { id: "2", name: "job", status: "running", startedAt: new Date(0) };
+		await syncRunPool(orchestrator, pool, undefined, undefined, () => 1);
+
+		expect(pool.get("gh", "job", "2")).toBeDefined();
+	});
+
+	it("a job is checked if ANY of its subscribers is due, and every attached subscriber's lastCheckedAt is refreshed together", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({
+			name: "gh",
+			runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } },
+		});
+		orchestrator.addAdapter(backend);
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job", { subscriberId: "alice", scheduleMs: 5_000 });
+		pool.subscribeJob("gh", "job", { subscriberId: "bob", scheduleMs: 60_000 });
+
+		await syncRunPool(orchestrator, pool, undefined, undefined, () => 0);
+		// alice's 5s schedule is due at t=6000, bob's 60s schedule is not -- the job is still fetched exactly once, for both.
+		await syncRunPool(orchestrator, pool, undefined, undefined, () => 6_000);
+
+		expect(backend.calls.getRun).toHaveLength(2);
+		const subs = pool.watchedSubscriptions();
+		expect(subs.find((s) => s.subscriberId === "alice")?.lastCheckedAt?.getTime()).toBe(6_000);
+		expect(subs.find((s) => s.subscriberId === "bob")?.lastCheckedAt?.getTime()).toBe(6_000);
+	});
+
+	it("auto-unsubscribes every subscriber on the job once its latest run reaches a terminal status, not just one", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "failure", startedAt: new Date(0) } } }),
+		);
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job", { subscriberId: "alice" });
+		pool.subscribeJob("gh", "job", { subscriberId: "bob" });
+
+		await syncRunPool(orchestrator, pool);
+
+		expect(pool.isJobSubscribed("gh", "job", "alice")).toBe(false);
+		expect(pool.isJobSubscribed("gh", "job", "bob")).toBe(false);
+		expect(pool.watchedJobs()).toHaveLength(0);
+	});
+
 	it("calls onStatusChange when a run's status differs from what the pool had previously recorded for it", async () => {
 		const orchestrator = new Orchestrator();
 		const runsById: Record<string, CIRun> = { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } };

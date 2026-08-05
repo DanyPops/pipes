@@ -48,6 +48,28 @@ CREATE TABLE job_watches (
 );
 `;
 
+// Widens a job watch from one shared, anonymous subscription per (backend, job_ref)
+// into one subscription per (backend, job_ref, subscriber_id) -- several subscribers
+// can now watch the same job independently, each with its own optional check cadence.
+// subscriber_id defaults to '' so every pre-existing row (and every caller that never
+// passes one) keeps behaving exactly as it did under the old single-row-per-job schema.
+// schedule_ms is nullable: null means "check on every global sync tick", today's only
+// behavior; a set value means this subscriber doesn't need checking more often than that.
+const MIGRATION_4_SUBSCRIBER_SCHEDULES = `
+CREATE TABLE job_watches_new (
+	backend TEXT NOT NULL,
+	job_ref TEXT NOT NULL,
+	subscriber_id TEXT NOT NULL DEFAULT '',
+	schedule_ms INTEGER,
+	last_checked_at INTEGER,
+	PRIMARY KEY (backend, job_ref, subscriber_id)
+);
+INSERT INTO job_watches_new (backend, job_ref, subscriber_id)
+	SELECT backend, job_ref, '' FROM job_watches;
+DROP TABLE job_watches;
+ALTER TABLE job_watches_new RENAME TO job_watches;
+`;
+
 export function openPipesDb(path: string): Database {
 	return openSqliteWithPragmas(path, {
 		databaseOptions: { create: true, strict: true },
@@ -55,6 +77,7 @@ export function openPipesDb(path: string): Database {
 			{ version: 1, up: (db) => db.exec(INITIAL_SCHEMA) },
 			{ version: 2, up: (db) => db.exec(MIGRATION_2_LOG_TEXT) },
 			{ version: 3, up: (db) => db.exec(MIGRATION_3_JOB_WATCHES) },
+			{ version: 4, up: (db) => db.exec(MIGRATION_4_SUBSCRIBER_SCHEDULES) },
 		],
 	});
 }

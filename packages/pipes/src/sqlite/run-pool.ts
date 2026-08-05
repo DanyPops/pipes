@@ -36,12 +36,35 @@ export interface RunPool {
 	/** Overwrites the cached log with the complete, untruncated text — truncation only ever happens on read. */
 	upsertLog(backend: string, jobRef: string, runId: string, logText: string): void;
 
-	/** Job-level watch list: presence means the background sync keeps resolving and refreshing this job's latest run. Idempotent. */
-	subscribeJob(backend: string, jobRef: string): void;
-	/** Idempotent no-op if the job wasn't subscribed. */
-	unsubscribeJob(backend: string, jobRef: string): void;
-	isJobSubscribed(backend: string, jobRef: string): boolean;
+	/**
+	 * Job-level watch list: presence means the background sync keeps resolving and refreshing
+	 * this job's latest run. Idempotent per (backend, jobRef, subscriberId). subscriberId
+	 * defaults to "" -- the anonymous/shared subscriber every pre-existing caller implicitly
+	 * uses. scheduleMs, when set, is this subscriber's own minimum check cadence in
+	 * milliseconds; omitted means "check on every global sync tick", matching the pre-existing
+	 * single-subscriber behavior.
+	 */
+	subscribeJob(backend: string, jobRef: string, options?: { subscriberId?: string; scheduleMs?: number }): void;
+	/** Removes exactly one subscriber's row. subscriberId defaults to "". Idempotent no-op if that subscription wasn't present. */
+	unsubscribeJob(backend: string, jobRef: string, subscriberId?: string): void;
+	/** True if the given subscriber (default "") is currently watching this job. */
+	isJobSubscribed(backend: string, jobRef: string, subscriberId?: string): boolean;
+	/** Distinct (backend, jobRef) pairs with at least one subscriber -- what the sync loop fetches, deduped across however many subscribers are watching each job. */
 	watchedJobs(): Array<{ backend: string; jobRef: string }>;
+	/** Every individual subscription row, one per (backend, jobRef, subscriberId) -- the schedule-aware view watchedJobs() collapses away. */
+	watchedSubscriptions(): JobSubscription[];
+	/** Removes every subscriber currently watching this job in one call -- used once a job's latest run reaches a terminal status, a job-level fact no subscriber's schedule should keep polling past. */
+	unsubscribeAllForJob(backend: string, jobRef: string): void;
+	/** Records that this exact subscription was just checked, for schedule due-time gating. */
+	markSubscriptionChecked(backend: string, jobRef: string, subscriberId: string, at: Date): void;
+}
+
+export interface JobSubscription {
+	backend: string;
+	jobRef: string;
+	subscriberId: string;
+	scheduleMs?: number;
+	lastCheckedAt?: Date;
 }
 
 interface RunRow {
@@ -132,21 +155,59 @@ export function createRunPool(db: Database): RunPool {
 			);
 		},
 
-		subscribeJob(backend: string, jobRef: string): void {
-			db.query("INSERT OR IGNORE INTO job_watches (backend, job_ref) VALUES (?, ?)").run(backend, jobRef);
+		subscribeJob(backend: string, jobRef: string, options?: { subscriberId?: string; scheduleMs?: number }): void {
+			const subscriberId = options?.subscriberId ?? "";
+			db.query(
+				`INSERT INTO job_watches (backend, job_ref, subscriber_id, schedule_ms)
+				 VALUES (?, ?, ?, ?)
+				 ON CONFLICT(backend, job_ref, subscriber_id) DO UPDATE SET schedule_ms = excluded.schedule_ms`,
+			).run(backend, jobRef, subscriberId, options?.scheduleMs ?? null);
 		},
 
-		unsubscribeJob(backend: string, jobRef: string): void {
-			db.query("DELETE FROM job_watches WHERE backend = ? AND job_ref = ?").run(backend, jobRef);
+		unsubscribeJob(backend: string, jobRef: string, subscriberId = ""): void {
+			db.query("DELETE FROM job_watches WHERE backend = ? AND job_ref = ? AND subscriber_id = ?").run(backend, jobRef, subscriberId);
 		},
 
-		isJobSubscribed(backend: string, jobRef: string): boolean {
-			return db.query("SELECT 1 FROM job_watches WHERE backend = ? AND job_ref = ?").get(backend, jobRef) !== null;
+		isJobSubscribed(backend: string, jobRef: string, subscriberId = ""): boolean {
+			return (
+				db.query("SELECT 1 FROM job_watches WHERE backend = ? AND job_ref = ? AND subscriber_id = ?").get(backend, jobRef, subscriberId) !==
+				null
+			);
 		},
 
 		watchedJobs(): Array<{ backend: string; jobRef: string }> {
-			const rows = db.query("SELECT backend, job_ref FROM job_watches").all() as Array<{ backend: string; job_ref: string }>;
+			const rows = db.query("SELECT DISTINCT backend, job_ref FROM job_watches").all() as Array<{ backend: string; job_ref: string }>;
 			return rows.map((row) => ({ backend: row.backend, jobRef: row.job_ref }));
+		},
+
+		watchedSubscriptions(): JobSubscription[] {
+			const rows = db.query("SELECT * FROM job_watches").all() as Array<{
+				backend: string;
+				job_ref: string;
+				subscriber_id: string;
+				schedule_ms: number | null;
+				last_checked_at: number | null;
+			}>;
+			return rows.map((row) => ({
+				backend: row.backend,
+				jobRef: row.job_ref,
+				subscriberId: row.subscriber_id,
+				scheduleMs: row.schedule_ms ?? undefined,
+				lastCheckedAt: row.last_checked_at !== null ? new Date(row.last_checked_at) : undefined,
+			}));
+		},
+
+		unsubscribeAllForJob(backend: string, jobRef: string): void {
+			db.query("DELETE FROM job_watches WHERE backend = ? AND job_ref = ?").run(backend, jobRef);
+		},
+
+		markSubscriptionChecked(backend: string, jobRef: string, subscriberId: string, at: Date): void {
+			db.query("UPDATE job_watches SET last_checked_at = ? WHERE backend = ? AND job_ref = ? AND subscriber_id = ?").run(
+				at.getTime(),
+				backend,
+				jobRef,
+				subscriberId,
+			);
 		},
 	};
 }

@@ -373,6 +373,38 @@ describe("ci.subscribe / ci.unsubscribe", () => {
 
 		expect(runPool.isJobSubscribed("gh", "job")).toBe(false);
 	});
+
+	it("ci.subscribe accepts an optional subscriberId + scheduleMs, tracked independently from the default anonymous subscriber", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } },
+			}),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		await service.execute("ci.subscribe", { backend: "gh", jobRef: "job", subscriberId: "alice", scheduleMs: 60_000 });
+		await service.execute("ci.subscribe", { backend: "gh", jobRef: "job" });
+
+		const subs = runPool.watchedSubscriptions();
+		expect(subs.find((s) => s.subscriberId === "alice")?.scheduleMs).toBe(60_000);
+		expect(subs.find((s) => s.subscriberId === "")).toBeDefined();
+		expect(subs).toHaveLength(2);
+	});
+
+	it("ci.unsubscribe with a subscriberId removes only that subscriber, leaving the default subscriber's watch intact", async () => {
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		runPool.subscribeJob("gh", "job", { subscriberId: "alice" });
+		runPool.subscribeJob("gh", "job");
+		const service = createPipesService(new Orchestrator(), { runPool });
+
+		await service.execute("ci.unsubscribe", { backend: "gh", jobRef: "job", subscriberId: "alice" });
+
+		expect(runPool.isJobSubscribed("gh", "job", "alice")).toBe(false);
+		expect(runPool.isJobSubscribed("gh", "job")).toBe(true);
+	});
 });
 
 describe("ci.tail", () => {

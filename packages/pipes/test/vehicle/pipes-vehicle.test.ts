@@ -53,6 +53,21 @@ describe("createPipesVehicleRegistry (via PipesService.vehicle)", () => {
 		expect(effectOf("ci.presets.set")).toBe("local-write");
 	});
 
+	it("ci.subscribe/ci.unsubscribe expose subscriberId (and ci.subscribe's scheduleMs) as optional -- not required, so every existing caller stays valid", () => {
+		const { service } = harness();
+		const manifest = service.vehicle.manifest();
+		const subscribe = manifest.operations.find((op) => op.name === "ci.subscribe");
+		const unsubscribe = manifest.operations.find((op) => op.name === "ci.unsubscribe");
+		const subscribeSchema = subscribe?.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
+		const unsubscribeSchema = unsubscribe?.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
+
+		expect(Object.keys(subscribeSchema.properties ?? {})).toEqual(expect.arrayContaining(["subscriberId", "scheduleMs"]));
+		expect(subscribeSchema.required).not.toContain("subscriberId");
+		expect(subscribeSchema.required).not.toContain("scheduleMs");
+		expect(Object.keys(unsubscribeSchema.properties ?? {})).toEqual(expect.arrayContaining(["subscriberId"]));
+		expect(unsubscribeSchema.required).not.toContain("subscriberId");
+	});
+
 	it("marks ci.wait streaming and long-running", () => {
 		const { service } = harness();
 		const wait = service.vehicle.manifest().operations.find((op) => op.name === "ci.wait");

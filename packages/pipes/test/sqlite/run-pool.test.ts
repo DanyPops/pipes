@@ -148,3 +148,68 @@ describe("createRunPool: job-level subscriptions", () => {
 		expect(pool.isJobSubscribed("gl", "a")).toBe(false);
 	});
 });
+
+describe("createRunPool: per-subscriber subscriptions", () => {
+	it("two different subscriberIds watching the same job are independent rows in watchedSubscriptions()", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job", { subscriberId: "alice", scheduleMs: 60_000 });
+		pool.subscribeJob("gh", "job", { subscriberId: "bob", scheduleMs: 5_000 });
+
+		const subs = pool.watchedSubscriptions();
+		expect(subs).toHaveLength(2);
+		expect(subs.find((s) => s.subscriberId === "alice")?.scheduleMs).toBe(60_000);
+		expect(subs.find((s) => s.subscriberId === "bob")?.scheduleMs).toBe(5_000);
+	});
+
+	it("watchedJobs() dedupes across subscribers -- one entry per (backend, jobRef) regardless of subscriber count", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job", { subscriberId: "alice" });
+		pool.subscribeJob("gh", "job", { subscriberId: "bob" });
+
+		expect(pool.watchedJobs()).toEqual([{ backend: "gh", jobRef: "job" }]);
+	});
+
+	it("unsubscribing one subscriberId leaves another subscriber's watch on the same job intact", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job", { subscriberId: "alice" });
+		pool.subscribeJob("gh", "job", { subscriberId: "bob" });
+
+		pool.unsubscribeJob("gh", "job", "alice");
+
+		expect(pool.isJobSubscribed("gh", "job", "alice")).toBe(false);
+		expect(pool.isJobSubscribed("gh", "job", "bob")).toBe(true);
+		expect(pool.watchedJobs()).toEqual([{ backend: "gh", jobRef: "job" }]);
+	});
+
+	it("unsubscribeAllForJob removes every subscriber watching that job in one call", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job", { subscriberId: "alice" });
+		pool.subscribeJob("gh", "job", { subscriberId: "bob" });
+
+		pool.unsubscribeAllForJob("gh", "job");
+
+		expect(pool.watchedJobs()).toEqual([]);
+		expect(pool.watchedSubscriptions()).toEqual([]);
+	});
+
+	it("subscribeJob defaults subscriberId to '' -- the same anonymous subscriber every pre-existing caller implicitly uses", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job");
+
+		expect(pool.watchedSubscriptions()).toEqual([
+			{ backend: "gh", jobRef: "job", subscriberId: "", scheduleMs: undefined, lastCheckedAt: undefined },
+		]);
+	});
+
+	it("markSubscriptionChecked records lastCheckedAt for exactly the given subscriber", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job", { subscriberId: "alice" });
+		pool.subscribeJob("gh", "job", { subscriberId: "bob" });
+
+		pool.markSubscriptionChecked("gh", "job", "alice", new Date(5000));
+
+		const subs = pool.watchedSubscriptions();
+		expect(subs.find((s) => s.subscriberId === "alice")?.lastCheckedAt?.getTime()).toBe(5000);
+		expect(subs.find((s) => s.subscriberId === "bob")?.lastCheckedAt).toBeUndefined();
+	});
+});

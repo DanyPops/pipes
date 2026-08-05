@@ -97,8 +97,10 @@ export interface OperationInputs {
 	"ci.stages": { backend: string; jobRef: string; runId: string; steps?: boolean; includeFailedLog?: boolean };
 	"ci.chain": { backend: string; jobRef: string; runId: string; depth?: number; artifacts?: boolean };
 	"ci.pool": { backend: string; jobRef: string; limit?: number };
-	"ci.subscribe": { backend: string; jobRef: string };
-	"ci.unsubscribe": { backend: string; jobRef: string };
+	/** subscriberId defaults to "" -- the same anonymous subscriber every pre-existing caller implicitly uses. scheduleMs, when set, is this subscriber's own minimum check cadence; omitted checks on every background sync tick. */
+	"ci.subscribe": { backend: string; jobRef: string; subscriberId?: string; scheduleMs?: number };
+	/** subscriberId defaults to "", removing only that one subscription -- another subscriber's independent watch on the same job is untouched. */
+	"ci.unsubscribe": { backend: string; jobRef: string; subscriberId?: string };
 	"ci.tail": { backend: string; jobRef: string; runId?: string; maxTokens?: number };
 	/** Targeted lookup for backends (Jenkins) where ci.chain's automatic tree crawl can't discover children without already knowing the downstream job name. */
 	"ci.downstream": { backend: string; downstreamJob: string; upstreamJob: string; upstreamRunId: string };
@@ -278,7 +280,7 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 	/** Idempotent: subscribing an already-watched job just re-seeds it with a fresh immediate fetch. */
 	async function handleSubscribe(input: OperationInputs["ci.subscribe"]): Promise<OperationOutputs["ci.subscribe"]> {
 		if (!pool) throw new Error("no local run pool is configured");
-		pool.subscribeJob(input.backend, input.jobRef);
+		pool.subscribeJob(input.backend, input.jobRef, { subscriberId: input.subscriberId, scheduleMs: input.scheduleMs });
 		try {
 			const run = await orchestrator.ciGetRun(input.backend, input.jobRef, "latest");
 			const log = await orchestrator.ciGetRawLog(input.backend, input.jobRef, run.id);
@@ -296,7 +298,8 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 			};
 			pool.upsert(snapshot);
 			pool.upsertLog(input.backend, input.jobRef, run.id, log);
-			if (isTerminalStatus(run.status)) pool.unsubscribeJob(input.backend, input.jobRef);
+			// A job-level fact -- if the very first fetch already shows terminal, no subscriber (not just this call's) has anything left to watch.
+			if (isTerminalStatus(run.status)) pool.unsubscribeAllForJob(input.backend, input.jobRef);
 			return { subscribed: true, run: snapshot };
 		} catch {
 			// The job watch is still recorded -- the next background sync tick retries. Subscribing to a job that
@@ -306,7 +309,7 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 	}
 
 	function handleUnsubscribe(input: OperationInputs["ci.unsubscribe"]): OperationOutputs["ci.unsubscribe"] {
-		pool?.unsubscribeJob(input.backend, input.jobRef);
+		pool?.unsubscribeJob(input.backend, input.jobRef, input.subscriberId);
 		return { unsubscribed: true };
 	}
 

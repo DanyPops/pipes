@@ -103,6 +103,73 @@ const theme = {
 	bold: (text: string) => text,
 } as Theme;
 
+describe("registerPipesVehicle: generic tool-schema projection (via @danypops/vehicle-client-pi's registerVehicleTools)", () => {
+	it("projects a new optional operation property straight onto the registered tool's own parameter schema, no pi-pipes-side code needed", async () => {
+		// Mirrors packages/pipes/src/vehicle/pipes-vehicle.ts's real ci.subscribe schema after adding
+		// subscriberId/scheduleMs -- proves the tool-exposure layer is genuinely generic: this test's
+		// FakeClient never mentions "subscriberId" by name anywhere in pi-pipes' own source, only in
+		// the manifest it serves, and registerVehicleTools (Vehicle Pi Client) still produces a real
+		// ci_subscribe tool whose parameters carry it straight through.
+		class SubscribeManifestClient implements VehicleClient {
+			manifest(): Promise<VehicleManifest> {
+				return Promise.resolve({
+					name: "pipes",
+					version: "1.0.0",
+					description: "Pipes.",
+					operations: [
+						{
+							name: "ci.subscribe",
+							version: 1,
+							description: "Subscribe to a job.",
+							inputSchema: {
+								type: "object",
+								properties: {
+									backend: { type: "string" },
+									jobRef: { type: "string" },
+									subscriberId: { type: "string" },
+									scheduleMs: { type: "number" },
+								},
+								required: ["backend", "jobRef"],
+							},
+							outputSchema: { type: "object" },
+							permissions: [],
+							effect: "local-write",
+							idempotency: { mode: "safe" },
+							streaming: false,
+							longRunning: false,
+							limits: { defaultTimeoutMs: 1_000, maxTimeoutMs: 5_000, maxRequestBytes: 1_024, maxResponseBytes: 4_096 },
+							errors: [],
+							available: true,
+						},
+					],
+				});
+			}
+
+			invoke<Output = unknown>(_name: string, _version: number, _input: unknown, _options?: VehicleInvocationOptions): Promise<Output> {
+				return Promise.resolve({ subscribed: true } as Output);
+			}
+
+			close(): Promise<void> {
+				return Promise.resolve();
+			}
+		}
+
+		const { pi, tools } = captureTools();
+		await registerPipesVehicle(pi, {
+			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "test" }),
+			createClient: () => new SubscribeManifestClient(),
+			manifestCache: fakeManifestCache(),
+		});
+
+		const subscribeTool = tools.find((tool) => tool.name === "ci_subscribe");
+		expect(subscribeTool).toBeDefined();
+		const schema = subscribeTool!.parameters as unknown as { properties?: Record<string, unknown>; required?: string[] };
+		expect(Object.keys(schema.properties ?? {})).toEqual(expect.arrayContaining(["subscriberId", "scheduleMs"]));
+		expect(schema.required).not.toContain("subscriberId");
+		expect(schema.required).not.toContain("scheduleMs");
+	});
+});
+
 describe("registerPipesVehicle real result wiring", () => {
 	it("registers its renderer while Pi is still loading, before persisted tool rows are replayed", async () => {
 		const tools: ToolDefinition[] = [];
