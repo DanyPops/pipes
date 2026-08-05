@@ -63,10 +63,6 @@ function buildSelector(runId: string): string {
  * `_class`, which varies across plugins/versions for what is functionally the same "this is
  * a container, not a job" fact.
  */
-function isJenkinsFolder(item: JenkinsJobSummary): boolean {
-	return item.color === undefined;
-}
-
 function jenkinsJobState(item: JenkinsJobSummary): string {
 	return item.color ?? "folder";
 }
@@ -462,7 +458,7 @@ interface JenkinsArtifact {
 interface JenkinsJobSummary {
 	name: string;
 	url: string;
-	/** Absent for a folder/organization-folder/multibranch container -- only present on a real buildable job. See isJenkinsFolder(). */
+	/** Absent for a folder/organization-folder/multibranch container -- only present on a real buildable job. See jenkinsJobState(). */
 	color?: string;
 }
 
