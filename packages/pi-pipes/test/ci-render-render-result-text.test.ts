@@ -12,10 +12,17 @@ describe("renderResultText: still-in-flight ci wait (isPartial)", () => {
 	});
 
 	it("renders the real WatchStatus+tail snapshot once a tick has landed data, instead of staying a bare placeholder", () => {
+		// details.progress, not details.output -- this is the actual shape vehicle-client-pi's
+		// invokeVehicleOperation puts on every in-flight onUpdate tick (see its own
+		// PiVehicleToolDetails: output and progress are two distinct fields; output is only ever
+		// set on the final settled result). See vehicle-client-real-wiring.test.ts for the same
+		// scenario driven through the real registerPipesVehicle -> execute -> renderResult pipeline
+		// instead of this hand-typed shape.
 		const result = {
 			content: [{ type: "text" as const, text: "" }],
 			details: {
-				output: {
+				vehicle: { manifest: "pipes", operation: "ci.wait" },
+				progress: {
 					status: "running",
 					buildNumber: "9176",
 					progressPercent: 42,

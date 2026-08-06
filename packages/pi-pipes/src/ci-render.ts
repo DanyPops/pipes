@@ -78,8 +78,14 @@ export function renderResultText(
 	isError: boolean,
 	theme: ThemeLike,
 ): string {
-	const details = result.details as { output?: unknown } | undefined;
-	const data = details?.output;
+	// vehicle-client-pi's own PiVehicleToolDetails declares output and progress as two distinct
+	// fields on purpose: invokeVehicleOperation's reportProgress() (see vehicle-pi.ts) builds every
+	// in-flight onUpdate tick as { vehicle, progress } -- output is only ever set on the final
+	// settled result. Reading only .output here left every partial tick with data === undefined,
+	// so a still-running ci_wait rendered a bare "Running..." for its entire lifetime, never the
+	// WatchStatus+tail snapshot this function's own doc comment above already promises.
+	const details = result.details as { output?: unknown; progress?: unknown } | undefined;
+	const data = details?.output ?? details?.progress;
 
 	if (isPartial && data === undefined) return theme.fg("warning", "Running...");
 

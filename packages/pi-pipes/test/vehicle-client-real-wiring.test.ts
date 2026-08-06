@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { renderToTerminal } from "@danypops/pi-tui-harness";
 import type { AtomicJsonFsAdapter, VehicleClient, VehicleInvocationOptions, VehicleManifest } from "@danypops/vehicle-core";
-import type { ExtensionAPI, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { registerPipesVehicle } from "../src/vehicle-client.ts";
 
 /** An in-memory AtomicJsonFsAdapter -- registerPipesVehicle now touches a manifest cache file by default; this suite injects one instead of the real on-disk default. */
@@ -225,5 +225,66 @@ describe("registerPipesVehicle real result wiring", () => {
 		expect(text).toContain("#30790854044");
 		expect(text).not.toContain('"verdict"');
 		expect(text).not.toContain("{");
+	});
+
+	it("renders a still-in-flight tick's real progress, not a bare 'Running...' placeholder, for the tool's entire lifetime", async () => {
+		// Mirrors vehicle-client-pi's own test/vehicle-pi.test.ts FakeClient: invoke() calls
+		// options.onProgress(...) synchronously and never resolves during the assertion window,
+		// exactly like a real still-running ci.wait. This is the actual invokeVehicleOperation
+		// code path building the update -- {content, details: {vehicle, progress}} -- rather than
+		// a hand-typed guess at that shape.
+		class WaitFakeClient implements VehicleClient {
+			manifest(): Promise<VehicleManifest> {
+				return Promise.resolve(manifest);
+			}
+
+			invoke<Output = unknown>(_name: string, _version: number, _input: unknown, options?: VehicleInvocationOptions): Promise<Output> {
+				options?.onProgress?.({
+					status: "running",
+					buildNumber: "9176",
+					progressPercent: 42,
+					overdue: false,
+					tail: { text: "line one\nline two", truncated: false },
+				});
+				return new Promise(() => {}); // still running -- only the tick matters for this assertion.
+			}
+
+			close(): Promise<void> {
+				return Promise.resolve();
+			}
+		}
+
+		const { pi, tools } = captureTools();
+		await registerPipesVehicle(pi, {
+			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "test" }),
+			createClient: () => new WaitFakeClient(),
+			manifestCache: fakeManifestCache(),
+		});
+
+		const tool = tools[0];
+		let partial: AgentToolResult<unknown> | undefined;
+		void tool!.execute(
+			"call-1",
+			{},
+			undefined,
+			(update) => {
+				partial = update;
+			},
+			{ sessionManager: { getSessionId: () => "session-1" }, hasUI: false } as never,
+		);
+		// invokeVehicleOperation hops through a few microtasks (awaiting the undefined
+		// resolveInvocation, etc.) before actually calling client.invoke() -- a macrotask flush
+		// guarantees the tick has landed regardless of how many microtask hops that takes.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(partial).toBeDefined();
+		const component = tool!.renderResult!(partial!, { expanded: false, isPartial: true }, theme, { isError: false } as never);
+		const terminal = await renderToTerminal(component.render(120));
+		const text = terminal.plainLines().join("\n");
+		terminal.dispose();
+
+		expect(text).toContain("42%");
+		expect(text).toContain("#9176");
+		expect(text).toContain("line two");
 	});
 });
