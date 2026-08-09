@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { clampDisplayPercent, summarize } from "../src/ci-render.ts";
+import { clampDisplayPercent, effectiveWatchPercent, isTerminalWatchStatus, summarize } from "../src/ci-render.ts";
 
 /** A no-op theme: wraps text with [color:...] markers so assertions can check both text and color choice. bold is a passthrough. */
 const theme = { fg: (color: string, text: string) => `[${color}:${text}]`, bold: (text: string) => text };
@@ -144,6 +144,29 @@ describe("summarize: ci.wait", () => {
 		const text = summarize(data, theme);
 		expect(text).toContain("100%");
 		expect(text).not.toContain("111%");
+	});
+
+	it("shows 100% for a terminal success/failure/aborted run, not its raw actual-vs-estimated ratio", () => {
+		// A run that finished faster than its estimated duration reports a real progressPercent well
+		// under 100 -- meaningful server-side, but reads as "still not done" next to a ✓ glyph.
+		for (const status of ["success", "failure", "aborted", "not_found"]) {
+			const text = summarize({ buildNumber: "1", status, progressPercent: 92, overdue: false }, theme);
+			expect(text).toContain("100%");
+			expect(text).not.toContain("92%");
+		}
+	});
+
+	it("still shows the raw ratio, not 100%, for a non-terminal (running/pending) status", () => {
+		for (const status of ["running", "pending"]) {
+			const text = summarize({ buildNumber: "1", status, progressPercent: 42, overdue: false }, theme);
+			expect(text).toContain("42%");
+		}
+	});
+
+	it("keeps the overdue flag visible on a terminal run even though the shown percent is forced to 100%", () => {
+		const text = summarize({ buildNumber: "1", status: "success", progressPercent: 160, overdue: true }, theme);
+		expect(text).toContain("100%");
+		expect(text).toContain("overdue");
 	});
 
 	it("prefers an explicit displayPercentOverride over the raw WatchStatus.progressPercent", () => {
@@ -300,5 +323,28 @@ describe("clampDisplayPercent", () => {
 	it("clamps below 0 up to 0 and above 100 down to 100", () => {
 		expect(clampDisplayPercent(-5)).toBe(0);
 		expect(clampDisplayPercent(111)).toBe(100);
+	});
+});
+
+describe("isTerminalWatchStatus", () => {
+	it("is true for every settled RunStatus", () => {
+		for (const status of ["success", "failure", "aborted", "not_found"]) expect(isTerminalWatchStatus(status)).toBe(true);
+	});
+
+	it("is false while still in flight", () => {
+		for (const status of ["running", "pending"]) expect(isTerminalWatchStatus(status)).toBe(false);
+	});
+});
+
+describe("effectiveWatchPercent", () => {
+	it("forces a terminal status to 100 regardless of the raw actual-vs-estimated ratio", () => {
+		expect(effectiveWatchPercent("success", 42)).toBe(100);
+		expect(effectiveWatchPercent("failure", 160)).toBe(100);
+	});
+
+	it("clamps but otherwise passes a non-terminal status's raw percent through", () => {
+		expect(effectiveWatchPercent("running", 42.4)).toBe(42.4);
+		expect(effectiveWatchPercent("running", 160)).toBe(100);
+		expect(effectiveWatchPercent("running", -5)).toBe(0);
 	});
 });

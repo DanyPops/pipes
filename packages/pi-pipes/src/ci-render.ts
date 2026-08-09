@@ -115,6 +115,27 @@ export function clampDisplayPercent(value: number): number {
 	return Math.max(0, Math.min(100, value));
 }
 
+/** Mirrors packages/pipes' own RunStatus's isTerminalStatus (a settled run's terminal states) --
+ * duplicated here rather than imported since ci-render.ts is pure presentation with no dependency
+ * on the daemon package, and this specific set (the WatchStatus.status strings a run can settle
+ * into) is a small, stable contract already mirrored locally by STATUS_ICON above. */
+export function isTerminalWatchStatus(status: string): boolean {
+	return status === "success" || status === "failure" || status === "aborted" || status === "not_found";
+}
+
+/**
+ * orchestrator.ts's own WatchStatus.progressPercent is deliberately actual-vs-estimated-duration
+ * ("this run took 50% of the usual time" / "took 150%, flag it overdue"), not "percent of the
+ * workflow completed" -- genuinely useful for a still-running watch, and for flagging a terminal
+ * run that ran anomalously long even though it finished fine. But rendered as a bare "92%" next to
+ * a ✓ success glyph, that ratio reads as "still not done" to a human, when the run is in fact
+ * completely done. Once a run has reached a terminal status there is nothing left to be a
+ * percentage *of* -- always show 100% (a full bar) there; the overdue flag alongside it still
+ * carries the "took longer than usual" signal on its own. */
+export function effectiveWatchPercent(status: string, rawPercent: number): number {
+	return isTerminalWatchStatus(status) ? 100 : clampDisplayPercent(rawPercent);
+}
+
 const TAIL_PREVIEW_LINES = 5;
 
 /** One compact, action-shaped summary line (or few) -- the human-facing counterpart to the JSON sent to the LLM. */
@@ -195,7 +216,7 @@ export function summarize(data: unknown, theme: ThemeLike, displayPercentOverrid
 			overdue: boolean;
 			tail?: { text: string; truncated: boolean };
 		};
-		const shownPercent = clampDisplayPercent(displayPercentOverride ?? watch.progressPercent);
+		const shownPercent = displayPercentOverride ?? effectiveWatchPercent(watch.status, watch.progressPercent);
 		let text = `${statusGlyph(watch.status, theme)} ${theme.fg("dim", `#${watch.buildNumber}`)} ${theme.fg("muted", `${Math.round(shownPercent)}%`)}`;
 		if (watch.overdue) text += ` ${theme.fg("warning", "overdue")}`;
 		if (watch.tail?.text) {

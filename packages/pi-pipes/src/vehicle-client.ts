@@ -50,7 +50,7 @@ function resolveManifestCachePath(): string {
 
 import type { AgentToolResult, ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { clampDisplayPercent, findFirstUrl, openLine, renderResultText } from "./ci-render.ts";
+import { clampDisplayPercent, effectiveWatchPercent, findFirstUrl, openLine, renderResultText } from "./ci-render.ts";
 import { withConnectorDiagnostics } from "./connector-diagnostics.ts";
 
 export { withConnectorDiagnostics } from "./connector-diagnostics.ts";
@@ -175,12 +175,20 @@ function renderCiResult(
 ) {
 	const details = result.details as { output?: unknown; progress?: unknown } | undefined;
 	const live = details?.progress ?? details?.output;
-	const rawPercent =
-		live && typeof live === "object" && typeof (live as Record<string, unknown>).progressPercent === "number"
-			? ((live as Record<string, unknown>).progressPercent as number)
-			: undefined;
+	const liveRecord = live && typeof live === "object" ? (live as Record<string, unknown>) : undefined;
+	const rawPercent = typeof liveRecord?.progressPercent === "number" ? liveRecord.progressPercent : undefined;
+	// A terminal WatchStatus.progressPercent is actual-vs-estimated-duration, not "percent done" --
+	// see effectiveWatchPercent's own doc comment. Resolve that *before* handing a target to the
+	// tween, so a run that settles at (say) 92% of its estimate still animates the rest of the way
+	// to a full 100% bar instead of freezing next to its own ✓ success glyph.
+	const targetPercent =
+		rawPercent === undefined
+			? undefined
+			: typeof liveRecord?.status === "string"
+				? effectiveWatchPercent(liveRecord.status, rawPercent)
+				: rawPercent;
 
-	if (rawPercent === undefined) {
+	if (targetPercent === undefined) {
 		let text = renderResultText(result, isPartial, isError, theme);
 		const data = details?.output;
 		if (data !== undefined) {
@@ -194,10 +202,10 @@ function renderCiResult(
 	// displayed value below is always read fresh from animState at render(width) time, since this
 	// same Component gets re-rendered by the tween's own invalidate() calls without renderCiResult
 	// necessarily running again in between.
-	if (animState) tickCiWaitProgress(animState, rawPercent, isPartial, invalidate);
+	if (animState) tickCiWaitProgress(animState, targetPercent, isPartial, invalidate);
 
 	return statelessComponent((width) => {
-		const shown = animState?.displayPercent ?? clampDisplayPercent(rawPercent);
+		const shown = animState?.displayPercent ?? clampDisplayPercent(targetPercent);
 		let text = renderResultText(result, isPartial, isError, theme, shown);
 		const data = details?.output;
 		if (data !== undefined) {

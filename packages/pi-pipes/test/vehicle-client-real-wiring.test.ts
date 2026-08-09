@@ -367,4 +367,57 @@ describe("registerPipesVehicle real result wiring", () => {
 		await new Promise((resolve) => setTimeout(resolve, 400));
 		expect(extractPercent(await renderNow())).toBe(90);
 	});
+
+	it("animates all the way to 100% on a terminal success, even though the raw progressPercent settled well under 100", async () => {
+		// Mirrors a run that finished faster than its historical estimate (orchestrator.ts's
+		// elapsedMs/estimatedMs ratio) -- a real, previously-reported case ("✓ success ... 92%").
+		class SettlesFastClient implements VehicleClient {
+			manifest(): Promise<VehicleManifest> {
+				return Promise.resolve(manifest);
+			}
+
+			async invoke<Output = unknown>(
+				_name: string,
+				_version: number,
+				_input: unknown,
+				options?: VehicleInvocationOptions,
+			): Promise<Output> {
+				options?.onProgress?.({ status: "running", buildNumber: "9176", progressPercent: 50, overdue: false } as never);
+				return { status: "success", buildNumber: "9176", progressPercent: 92, overdue: false } as Output;
+			}
+
+			close(): Promise<void> {
+				return Promise.resolve();
+			}
+		}
+
+		const { pi, tools } = captureTools();
+		await registerPipesVehicle(pi, {
+			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "test" }),
+			createClient: () => new SettlesFastClient(),
+			manifestCache: fakeManifestCache(),
+		});
+
+		const tool = tools[0];
+		const state = {};
+		const context = { isError: false, state, invalidate: () => {} } as never;
+		const extractPercent = (text: string): number => {
+			const match = text.match(/(\d+)%/);
+			if (!match) throw new Error(`no percent found in: ${text}`);
+			return Number(match[1]);
+		};
+
+		const result = await tool!.execute("call-1", {}, undefined, undefined, {
+			sessionManager: { getSessionId: () => "session-1" },
+			hasUI: false,
+		} as never);
+
+		const component = tool!.renderResult!(result, { expanded: false, isPartial: false }, theme, context);
+		const terminal = await renderToTerminal(component.render(120));
+		const text = terminal.plainLines().join("\n");
+		terminal.dispose();
+
+		expect(extractPercent(text)).toBe(100);
+		expect(text).not.toContain("92%");
+	});
 });
