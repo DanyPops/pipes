@@ -10,7 +10,7 @@
 		"extensions": ["./src/index.ts"]
 	},
 	"dependencies": {
-		"@danypops/pipes": "^0.14.0",
+		"@danypops/pipes": "^0.15.0",
 		"@danypops/vehicle-client": "^0.5.3",
 		"@danypops/vehicle-client-pi": "^0.20.0",
 		"@danypops/vehicle-core": "^0.12.3",

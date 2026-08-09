@@ -23,7 +23,7 @@
       "name": "@danypops/pi-pipes",
       "version": "0.10.1",
       "dependencies": {
-        "@danypops/pipes": "^0.14.0",
+        "@danypops/pipes": "^0.15.0",
         "@danypops/vehicle-client": "^0.5.3",
         "@danypops/vehicle-client-pi": "^0.20.0",
         "@danypops/vehicle-core": "^0.12.3",
@@ -45,7 +45,7 @@
     },
     "packages/pipes": {
       "name": "@danypops/pipes",
-      "version": "0.14.2",
+      "version": "0.15.0",
       "bin": {
         "pipes": "src/cli/index.ts",
       },
