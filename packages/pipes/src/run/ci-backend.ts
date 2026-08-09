@@ -1,4 +1,4 @@
-import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, LogFilter } from "./ci-run.ts";
+import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, LogFilter, SearchResult } from "./ci-run.ts";
 import type { RepoInfo, WorkflowInfo } from "./discovery.ts";
 import type { TriggerReceipt } from "./trigger.ts";
 
@@ -42,7 +42,7 @@ export interface CIBackend {
 	type(): string;
 	capabilities(): CapabilitySet;
 	getRun(jobRef: string, runId: string): Promise<CIRun>;
-	searchRuns(jobRef: string, filter: BuildFilter): Promise<CIRun[]>;
+	searchRuns(jobRef: string, filter: BuildFilter): Promise<SearchResult>;
 	/** Returns the raw console log; filter is only a hint for backends that support server-side filtering — the orchestrator applies the authoritative tail/grep/byte-cap filtering. */
 	getLog(jobRef: string, runId: string, filter: LogFilter): Promise<string>;
 	cancelRun(jobRef: string, runId: string): Promise<void>;

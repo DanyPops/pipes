@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { FetchLike } from "../../src/auth/github-auth.ts";
-import { createGitHubAdapter, GitHubNotFoundError } from "../../src/github/github.ts";
+import { createGitHubAdapter, GitHubNotFoundError, GitHubParamsFilterUnsupportedError } from "../../src/github/github.ts";
 import { RateLimitError } from "../../src/http/rate-limit.ts";
 import { asArtifactStore, asHistorical, asPipeliner, asTriggerable, Capability, hasCapability } from "../../src/run/ci-backend.ts";
 
@@ -334,5 +334,88 @@ describe("createGitHubAdapter: discovery", () => {
 	it("is advertised as a capability -- asDiscoverable resolves, and the capability set includes Discover", () => {
 		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r" });
 		expect(hasCapability(adapter.capabilities(), Capability.Discover)).toBe(true);
+	});
+});
+
+describe("createGitHubAdapter.searchRuns", () => {
+	it("paginates via GitHub's own page= param to actually reach a `since` far enough back in history", async () => {
+		const since = new Date("2026-01-01T00:00:00Z");
+		const requestedUrls: string[] = [];
+		const fetchImpl: FetchLike = async (url) => {
+			requestedUrls.push(url);
+			if (url.includes("page=1")) {
+				return jsonResponse({
+					workflow_runs: [ghRun(104, { created_at: "2026-01-05T00:00:00Z" }), ghRun(103, { created_at: "2026-01-04T00:00:00Z" })],
+				});
+			}
+			if (url.includes("page=2")) {
+				return jsonResponse({
+					workflow_runs: [ghRun(102, { created_at: "2026-01-03T00:00:00Z" }), ghRun(101, { created_at: "2025-12-20T00:00:00Z" })],
+				});
+			}
+			throw new Error(`unexpected url: ${url}`);
+		};
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl, searchPageSize: 2, searchMaxPages: 10 });
+
+		const result = await adapter.searchRuns("ci.yml", { since, limit: 100 });
+
+		expect(requestedUrls).toHaveLength(2); // stopped as soon as `since` was crossed
+		expect(result.runs.map((r) => r.id)).toEqual(["104", "103", "102"]); // #101 predates since, correctly excluded
+		expect(result.truncated).toBe(false);
+	});
+
+	it("throws rather than silently ignoring filter.params -- GitHub Actions exposes no way to retrieve dispatch inputs after the fact", async () => {
+		let calls = 0;
+		const fetchImpl: FetchLike = async () => {
+			calls++;
+			return jsonResponse({ workflow_runs: [ghRun(1)] }); // would silently "succeed" if params filtering were skipped
+		};
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl });
+
+		await expect(adapter.searchRuns("ci.yml", { params: { HOST: "kni-qe-79" } })).rejects.toThrow(GitHubParamsFilterUnsupportedError);
+		expect(calls).toBe(0); // fails before ever hitting the network -- not a filtered-then-discarded fetch
+	});
+
+	it("reports truncated:true when the page-cap safety valve is hit before `since` is ever reached", async () => {
+		const farSince = new Date(0);
+		let requests = 0;
+		const fetchImpl: FetchLike = async () => {
+			requests++;
+			return jsonResponse({
+				workflow_runs: [ghRun(200, { created_at: "2026-06-01T00:00:00Z" }), ghRun(199, { created_at: "2026-06-01T00:00:00Z" })],
+			});
+		};
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl, searchPageSize: 2, searchMaxPages: 3 });
+
+		const result = await adapter.searchRuns("ci.yml", { since: farSince, limit: 1000 });
+
+		expect(requests).toBe(3);
+		expect(result.truncated).toBe(true);
+	});
+
+	it("reports truncated:false once real history runs out (a short final page)", async () => {
+		const farSince = new Date(0);
+		const fetchImpl: FetchLike = async () => jsonResponse({ workflow_runs: [ghRun(1, { created_at: "2026-01-01T00:00:00Z" })] });
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl, searchPageSize: 50, searchMaxPages: 200 });
+
+		const result = await adapter.searchRuns("ci.yml", { since: farSince });
+
+		expect(result.runs.map((r) => r.id)).toEqual(["1"]);
+		expect(result.truncated).toBe(false);
+	});
+
+	it("stops as soon as `limit` is satisfied, without needing a second page", async () => {
+		let requests = 0;
+		const fetchImpl: FetchLike = async () => {
+			requests++;
+			return jsonResponse({ workflow_runs: [ghRun(2), ghRun(1)] });
+		};
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl, searchPageSize: 2, searchMaxPages: 200 });
+
+		const result = await adapter.searchRuns("ci.yml", { limit: 1 });
+
+		expect(requests).toBe(1);
+		expect(result.runs.map((r) => r.id)).toEqual(["2"]);
+		expect(result.truncated).toBe(false);
 	});
 });

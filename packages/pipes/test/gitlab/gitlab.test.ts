@@ -252,3 +252,135 @@ describe("createGitLabAdapter.getDownstreamRuns", () => {
 		expect(runs.map((r) => r.id)).toEqual(["504"]);
 	});
 });
+
+describe("createGitLabAdapter.searchRuns", () => {
+	it("paginates via GitLab's own page= param to actually reach a `since` far enough back in history", async () => {
+		const since = new Date("2026-01-01T00:00:00Z");
+		const requestedUrls: string[] = [];
+		const fetchImpl: FetchLike = async (url) => {
+			requestedUrls.push(url);
+			if (url.includes("page=1")) {
+				return jsonResponse([
+					glPipeline(104, { created_at: "2026-01-05T00:00:00Z" }),
+					glPipeline(103, { created_at: "2026-01-04T00:00:00Z" }),
+				]);
+			}
+			if (url.includes("page=2")) {
+				return jsonResponse([
+					glPipeline(102, { created_at: "2026-01-03T00:00:00Z" }),
+					glPipeline(101, { created_at: "2025-12-20T00:00:00Z" }),
+				]);
+			}
+			throw new Error(`unexpected url: ${url}`);
+		};
+		const adapter = createGitLabAdapter({
+			name: "gl",
+			baseUrl: "https://gitlab.example.com",
+			projectId: "1",
+			fetchImpl,
+			searchPageSize: 2,
+			searchMaxPages: 10,
+		});
+
+		const result = await adapter.searchRuns("main", { since, limit: 100 });
+
+		expect(requestedUrls).toHaveLength(2); // stopped as soon as `since` was crossed
+		expect(result.runs.map((r) => r.id)).toEqual(["104", "103", "102"]); // #101 predates since, correctly excluded
+		expect(result.truncated).toBe(false);
+	});
+
+	it("filters on params via a per-candidate /variables fetch, excluding a pipeline whose real variables don't match every requested key", async () => {
+		const variablesByPipeline: Record<string, Array<{ key: string; value: string }>> = {
+			"3": [
+				{ key: "ENV", value: "prod" },
+				{ key: "HOST", value: "kni-qe-79" },
+			], // matches both
+			"2": [
+				{ key: "ENV", value: "staging" },
+				{ key: "HOST", value: "kni-qe-79" },
+			], // wrong ENV
+			"1": [
+				{ key: "ENV", value: "prod" },
+				{ key: "HOST", value: "kni-qe-86" },
+			], // wrong HOST
+		};
+		const fetchImpl: FetchLike = async (url) => {
+			if (url.endsWith("/variables") || url.includes("/variables?")) {
+				const match = url.match(/pipelines\/(\d+)\/variables/);
+				const id = match?.[1] ?? "";
+				return jsonResponse(variablesByPipeline[id] ?? []);
+			}
+			return jsonResponse([glPipeline(3), glPipeline(2), glPipeline(1)]);
+		};
+		const adapter = createGitLabAdapter({ name: "gl", baseUrl: "https://gitlab.example.com", projectId: "1", fetchImpl });
+
+		const result = await adapter.searchRuns("main", { params: { ENV: "prod", HOST: "kni-qe-79" } });
+
+		expect(result.runs.map((r) => r.id)).toEqual(["3"]);
+	});
+
+	it("reports truncated:true when the page-cap safety valve is hit before `since` is ever reached", async () => {
+		const farSince = new Date(0);
+		let requests = 0;
+		const fetchImpl: FetchLike = async () => {
+			requests++;
+			return jsonResponse([
+				glPipeline(200, { created_at: "2026-06-01T00:00:00Z" }),
+				glPipeline(199, { created_at: "2026-06-01T00:00:00Z" }),
+			]);
+		};
+		const adapter = createGitLabAdapter({
+			name: "gl",
+			baseUrl: "https://gitlab.example.com",
+			projectId: "1",
+			fetchImpl,
+			searchPageSize: 2,
+			searchMaxPages: 3,
+		});
+
+		const result = await adapter.searchRuns("main", { since: farSince, limit: 1000 });
+
+		expect(requests).toBe(3);
+		expect(result.truncated).toBe(true);
+	});
+
+	it("reports truncated:false once real history runs out (a short final page)", async () => {
+		const farSince = new Date(0);
+		const fetchImpl: FetchLike = async () => jsonResponse([glPipeline(1, { created_at: "2026-01-01T00:00:00Z" })]);
+		const adapter = createGitLabAdapter({
+			name: "gl",
+			baseUrl: "https://gitlab.example.com",
+			projectId: "1",
+			fetchImpl,
+			searchPageSize: 50,
+			searchMaxPages: 200,
+		});
+
+		const result = await adapter.searchRuns("main", { since: farSince });
+
+		expect(result.runs.map((r) => r.id)).toEqual(["1"]);
+		expect(result.truncated).toBe(false);
+	});
+
+	it("stops as soon as `limit` is satisfied, without needing a second page", async () => {
+		let requests = 0;
+		const fetchImpl: FetchLike = async () => {
+			requests++;
+			return jsonResponse([glPipeline(2), glPipeline(1)]);
+		};
+		const adapter = createGitLabAdapter({
+			name: "gl",
+			baseUrl: "https://gitlab.example.com",
+			projectId: "1",
+			fetchImpl,
+			searchPageSize: 2,
+			searchMaxPages: 200,
+		});
+
+		const result = await adapter.searchRuns("main", { limit: 1 });
+
+		expect(requests).toBe(1);
+		expect(result.runs.map((r) => r.id)).toEqual(["2"]);
+		expect(result.truncated).toBe(false);
+	});
+});

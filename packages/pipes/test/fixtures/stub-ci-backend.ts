@@ -22,6 +22,8 @@ export interface StubCIBackendOptions {
 	/** getRun keys its response by runId so distinct-ID tests are meaningful by default. */
 	runsById?: Record<string, CIRun>;
 	searchResults?: CIRun[];
+	/** Mirrors SearchResult.truncated -- defaults to false, matching a real backend that reached a genuine stopping point. */
+	searchTruncated?: boolean;
 	/** Raw log text (unfiltered) — matches the CIBackend.getLog contract. */
 	log?: string;
 	stages?: CIJob[];
@@ -60,7 +62,7 @@ export function createStubCIBackend(options: StubCIBackendOptions = {}): StubCIB
 			if (options.run) return { ...options.run, id: runId };
 			return { id: runId, name: jobRef, status: "success", startedAt: new Date(0) };
 		},
-		searchRuns: async () => options.searchResults ?? [],
+		searchRuns: async () => ({ runs: options.searchResults ?? [], truncated: options.searchTruncated ?? false }),
 		getLog: async () => options.log ?? "",
 		cancelRun: async () => {
 			if (options.err) throw options.err;

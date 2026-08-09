@@ -245,6 +245,17 @@ describe("summarize: ci.search / ci.downstream / ci.pool", () => {
 	it("renders a run count for ci.downstream's runs array", () => {
 		expect(summarize({ runs: [{ id: "1" }] }, theme)).toContain("1 run(s)");
 	});
+
+	it("flags a truncated ci.search result -- the search gave up early, this isn't necessarily every match", () => {
+		const text = summarize({ builds: [{ id: "1" }], truncated: true }, theme);
+		expect(text).toContain("1 run(s)");
+		expect(text.toLowerCase()).toContain("stopped early");
+	});
+
+	it("says nothing extra for a complete (non-truncated) ci.search result", () => {
+		const text = summarize({ builds: [{ id: "1" }], truncated: false }, theme);
+		expect(text.toLowerCase()).not.toContain("stopped early");
+	});
 });
 
 describe("summarize: ci.discover", () => {

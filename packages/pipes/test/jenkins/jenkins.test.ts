@@ -371,3 +371,105 @@ describe("createJenkinsAdapter.getDownstreamRuns", () => {
 		await expect(adapter.getDownstreamRuns("downstream", "upstream", "not-a-number")).rejects.toThrow(/invalid upstream run id/);
 	});
 });
+
+/** A minimal Jenkins build entry for the search endpoint's own tree shape, newest-timestamp-first like the real API. */
+function searchBuild(number: number, result: string, timestampMs: number, params?: Record<string, string>): unknown {
+	return {
+		number,
+		result,
+		building: false,
+		timestamp: timestampMs,
+		url: `https://jenkins.example.com/job/deploy/${number}/`,
+		fullDisplayName: `deploy #${number}`,
+		actions: params ? [{ parameters: Object.entries(params).map(([name, value]) => ({ name, value })) }] : [],
+	};
+}
+
+describe("createJenkinsAdapter.searchRuns", () => {
+	it("paginates past a single fixed-size page to actually reach a `since` far enough back in history", async () => {
+		// Page 1 (2 builds, both after since) -- old fixed-window behavior would have stopped here.
+		// Page 2 (2 builds: one after since, one before -- must stop there, not keep paging).
+		const since = new Date(1_700_000_000_000);
+		const requestedUrls: string[] = [];
+		const fetchImpl: FetchLike = async (url) => {
+			requestedUrls.push(url);
+			const decoded = decodeURIComponent(url);
+			if (decoded.includes("{0,2}")) {
+				return jsonResponse({
+					builds: [searchBuild(104, "SUCCESS", since.getTime() + 4000), searchBuild(103, "SUCCESS", since.getTime() + 3000)],
+				});
+			}
+			if (decoded.includes("{2,4}")) {
+				return jsonResponse({
+					builds: [searchBuild(102, "SUCCESS", since.getTime() + 2000), searchBuild(101, "SUCCESS", since.getTime() - 1000)],
+				});
+			}
+			throw new Error(`unexpected url: ${url}`);
+		};
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl, searchPageSize: 2, searchMaxPages: 10 });
+
+		const result = await adapter.searchRuns("deploy", { since, limit: 100 });
+
+		expect(requestedUrls).toHaveLength(2); // exactly 2 pages -- stopped as soon as `since` was crossed
+		expect(result.runs.map((r) => r.id)).toEqual(["104", "103", "102"]); // #101 is before since, correctly excluded
+		expect(result.truncated).toBe(false);
+	});
+
+	it("filters on params, excluding a build whose real parameters don't match every requested key", async () => {
+		const fetchImpl: FetchLike = async () =>
+			jsonResponse({
+				builds: [
+					searchBuild(3, "SUCCESS", 3000, { ENV: "prod", HOST: "kni-qe-79" }), // matches both
+					searchBuild(2, "SUCCESS", 2000, { ENV: "staging", HOST: "kni-qe-79" }), // wrong ENV
+					searchBuild(1, "SUCCESS", 1000, { ENV: "prod", HOST: "kni-qe-86" }), // wrong HOST
+				],
+			});
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl });
+
+		const result = await adapter.searchRuns("deploy", { params: { ENV: "prod", HOST: "kni-qe-79" } });
+
+		expect(result.runs.map((r) => r.id)).toEqual(["3"]);
+	});
+
+	it("reports truncated:true when the page-cap safety valve is hit before `since` is ever reached", async () => {
+		const farSince = new Date(0); // never crossed by any page below -- forces the cap
+		let requests = 0;
+		const fetchImpl: FetchLike = async () => {
+			requests++;
+			// Always a full page, newer-than-since, so the loop never finds a natural stopping point.
+			return jsonResponse({ builds: [searchBuild(200, "SUCCESS", 5_000_000), searchBuild(199, "SUCCESS", 4_000_000)] });
+		};
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl, searchPageSize: 2, searchMaxPages: 3 });
+
+		const result = await adapter.searchRuns("deploy", { since: farSince, limit: 1000 });
+
+		expect(requests).toBe(3); // exactly the page cap -- gave up, didn't hang forever
+		expect(result.truncated).toBe(true);
+	});
+
+	it("reports truncated:false once real history runs out (a short final page), even under a `since` that predates every build", async () => {
+		const farSince = new Date(0);
+		const fetchImpl: FetchLike = async () => jsonResponse({ builds: [searchBuild(1, "SUCCESS", 1000)] }); // shorter than the page size -- end of history
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl, searchPageSize: 50, searchMaxPages: 200 });
+
+		const result = await adapter.searchRuns("deploy", { since: farSince });
+
+		expect(result.runs.map((r) => r.id)).toEqual(["1"]);
+		expect(result.truncated).toBe(false);
+	});
+
+	it("stops as soon as `limit` is satisfied, without needing to reach `since` or run out of history", async () => {
+		let requests = 0;
+		const fetchImpl: FetchLike = async () => {
+			requests++;
+			return jsonResponse({ builds: [searchBuild(2, "SUCCESS", 2000), searchBuild(1, "SUCCESS", 1000)] });
+		};
+		const adapter = createJenkinsAdapter({ name: "j", credentials: CREDENTIALS, fetchImpl, searchPageSize: 2, searchMaxPages: 200 });
+
+		const result = await adapter.searchRuns("deploy", { limit: 1 });
+
+		expect(requests).toBe(1);
+		expect(result.runs.map((r) => r.id)).toEqual(["2"]);
+		expect(result.truncated).toBe(false);
+	});
+});

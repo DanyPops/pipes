@@ -19,7 +19,7 @@ import {
 	type CIPipeliner,
 	type CITriggerable,
 } from "../run/ci-backend.ts";
-import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode } from "../run/ci-run.ts";
+import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, SearchResult } from "../run/ci-run.ts";
 import type { TriggerReceipt } from "../run/trigger.ts";
 
 export class GitLabNotFoundError extends Error {
@@ -43,7 +43,17 @@ export interface GitLabAdapterOptions {
 	/** Resolved fresh before every request; takes precedence over `token` when present so a rotated/refreshed credential is always picked up. */
 	getToken?: () => Promise<string | undefined>;
 	fetchImpl?: FetchLike;
+	/** Pipelines fetched per GitLab API page in searchRuns. Overridable for tests; defaults to SEARCH_PAGE_SIZE. */
+	searchPageSize?: number;
+	/** Safety cap on total pages searchRuns will fetch, to bound an unbounded search (no `since`, a rare `params` match). Overridable for tests; defaults to SEARCH_MAX_PAGES. */
+	searchMaxPages?: number;
 }
+
+/** Default number of pipelines fetched per GitLab API page in searchRuns. */
+const SEARCH_PAGE_SIZE = 100;
+
+/** Default cap on total pages searchRuns will fetch, to bound an unbounded search (no `since`, a rare `params` match). */
+const SEARCH_MAX_PAGES = 100;
 
 export function createGitLabAdapter(
 	options: GitLabAdapterOptions,
@@ -54,6 +64,8 @@ export function createGitLabAdapter(
 	// default fetch is wrapped so a stalled connection to GitLab can't hang ci.wait's poll loop forever.
 	const doFetch = options.fetchImpl ?? withTimeout();
 	const resolveToken = options.getToken ?? (async () => token);
+	const searchPageSize = options.searchPageSize ?? SEARCH_PAGE_SIZE;
+	const searchMaxPages = options.searchMaxPages ?? SEARCH_MAX_PAGES;
 
 	async function api<T>(method: string, path: string, body?: unknown): Promise<T | undefined> {
 		const bearer = await resolveToken();
@@ -139,6 +151,16 @@ export function createGitLabAdapter(
 		return pipeline;
 	}
 
+	/** BuildFilter.params -- every requested key must match the pipeline's own variable value exactly. GitLab's
+	 * list-pipelines endpoint carries no variables inline (unlike Jenkins' tree=), so this is a real per-candidate
+	 * request -- only issued for pipelines that already passed the cheaper server-side result/runner/since filters. */
+	async function pipelineParamsMatch(pipelineId: number, params: Record<string, string>): Promise<boolean> {
+		const variables = (await api<GlPipelineVariable[]>("GET", `/projects/${projectId}/pipelines/${pipelineId}/variables`)) ?? [];
+		const got: Record<string, string> = {};
+		for (const variable of variables) got[variable.key] = variable.value;
+		return Object.entries(params).every(([key, value]) => got[key] === value);
+	}
+
 	/** GitLab jobs are already flat (no stage/step nesting like Jenkins' wfapi) — each job becomes one stage node with itself as its only step. */
 	async function buildStageNodes(runId: string): Promise<CIStageNode[]> {
 		const jobs = (await api<GlJob[]>("GET", `/projects/${projectId}/pipelines/${runId}/jobs`)) ?? [];
@@ -167,16 +189,55 @@ export function createGitLabAdapter(
 			return toCIRun(pipeline);
 		},
 
-		async searchRuns(_jobRef: string, filter: BuildFilter): Promise<CIRun[]> {
+		/**
+		 * Pages backward through real pipeline history via GitLab's own `page=` param instead of fetching
+		 * one fixed-size window up front -- a `since` far enough back used to fall outside that window
+		 * with zero indication the result was incomplete. `result`/`runner` are already applied server-side
+		 * (status/username query params); `since` stops the walk as soon as a pipeline older than it is
+		 * seen (GitLab is sorted newest-first via order_by=id&sort=desc, so every remaining pipeline on
+		 * this and later pages is also older); `params` is checked per-candidate via pipelineParamsMatch,
+		 * since GitLab's list endpoint carries no variables inline. `searchMaxPages` is a safety valve for
+		 * an unbounded search; hitting it without concluding is reported via `truncated`, not silently
+		 * returned as if it were a complete result.
+		 */
+		async searchRuns(_jobRef: string, filter: BuildFilter): Promise<SearchResult> {
 			const limit = filter.limit && filter.limit > 0 ? filter.limit : 20;
-			const params = new URLSearchParams({ per_page: String(Math.max(limit * 3, 50)), order_by: "id", sort: "desc" });
-			if (filter.result) params.set("status", glStatusForResult(filter.result));
-			if (filter.runner) params.set("username", filter.runner);
+			const runs: CIRun[] = [];
+			let reachedPageCap = true;
 
-			const pipelines = (await api<GlPipeline[]>("GET", `/projects/${projectId}/pipelines?${params}`)) ?? [];
-			let runs = pipelines.map(toCIRun);
-			if (filter.since) runs = runs.filter((run) => run.startedAt >= (filter.since as Date));
-			return runs.slice(0, limit);
+			for (let page = 1; page <= searchMaxPages; page++) {
+				const params = new URLSearchParams({ per_page: String(searchPageSize), page: String(page), order_by: "id", sort: "desc" });
+				if (filter.result) params.set("status", glStatusForResult(filter.result));
+				if (filter.runner) params.set("username", filter.runner);
+
+				const pipelines = (await api<GlPipeline[]>("GET", `/projects/${projectId}/pipelines?${params}`)) ?? [];
+
+				let stop = false;
+				for (const pipeline of pipelines) {
+					if (runs.length >= limit) {
+						stop = true;
+						break;
+					}
+					const run = toCIRun(pipeline);
+					if (filter.since && run.startedAt < filter.since) {
+						stop = true;
+						break;
+					}
+					if (filter.params && !(await pipelineParamsMatch(pipeline.id, filter.params))) continue;
+					runs.push(run);
+				}
+
+				if (stop) {
+					reachedPageCap = false;
+					break;
+				}
+				if (pipelines.length < searchPageSize) {
+					reachedPageCap = false; // ran out of real history before since/limit -- a genuinely complete result
+					break;
+				}
+			}
+
+			return { runs, truncated: reachedPageCap };
 		},
 
 		/** GitLab has no single pipeline-level log; concatenates each job's trace, matching GitHub's per-job approach for a consistent adapter shape. */

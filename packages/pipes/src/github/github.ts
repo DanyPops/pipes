@@ -16,7 +16,7 @@ import {
 	type CIPipeliner,
 	type CITriggerable,
 } from "../run/ci-backend.ts";
-import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode } from "../run/ci-run.ts";
+import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, SearchResult } from "../run/ci-run.ts";
 import { isTerminalStatus } from "../run/ci-run.ts";
 import type { RepoInfo, WorkflowInfo } from "../run/discovery.ts";
 import type { TriggerReceipt } from "../run/trigger.ts";
@@ -32,6 +32,15 @@ export class GitHubNotFoundError extends Error {
 export class GitHubApiError extends Error {
 	constructor(method: string, path: string, status: number, body: string) {
 		super(`GitHub API error: ${method} ${path}: ${status}: ${body}`);
+	}
+}
+
+/** GitHub Actions exposes no API to retrieve a workflow_dispatch run's own inputs after the fact
+ * (see getRunParams below) -- BuildFilter.params can never be honestly honored here, so searchRuns
+ * fails loudly instead of silently returning results that were never actually filtered by it. */
+export class GitHubParamsFilterUnsupportedError extends Error {
+	constructor() {
+		super("GitHub Actions does not expose workflow run inputs after dispatch -- search params filter is not supported");
 	}
 }
 
@@ -52,7 +61,17 @@ export interface GitHubAdapterOptions {
 	/** Resolved fresh before every request; takes precedence over `token` when present so a rotated/refreshed credential is always picked up. */
 	getToken?: () => Promise<string | undefined>;
 	fetchImpl?: FetchLike;
+	/** Runs fetched per GitHub API page in searchRuns. Overridable for tests; defaults to SEARCH_PAGE_SIZE. */
+	searchPageSize?: number;
+	/** Safety cap on total pages searchRuns will fetch, to bound an unbounded search (no `since`, a workflow with few runs). Overridable for tests; defaults to SEARCH_MAX_PAGES. */
+	searchMaxPages?: number;
 }
+
+/** Default number of runs fetched per GitHub API page in searchRuns; GitHub caps per_page at 100. */
+const SEARCH_PAGE_SIZE = 100;
+
+/** Default cap on total pages searchRuns will fetch, to bound an unbounded search (no `since`, a rarely-run workflow). */
+const SEARCH_MAX_PAGES = 100;
 
 export function createGitHubAdapter(
 	options: GitHubAdapterOptions,
@@ -62,6 +81,8 @@ export function createGitHubAdapter(
 	// default fetch is wrapped so a stalled connection to GitHub can't hang ci.wait's poll loop forever.
 	const doFetch = options.fetchImpl ?? withTimeout();
 	const resolveToken = options.getToken ?? (async () => token);
+	const searchPageSize = options.searchPageSize ?? SEARCH_PAGE_SIZE;
+	const searchMaxPages = options.searchMaxPages ?? SEARCH_MAX_PAGES;
 
 	/**
 	 * Resolves {repo, workflow} for one call. A repo-pinned adapter (fixedRepo
@@ -178,17 +199,60 @@ export function createGitHubAdapter(
 			return toCIRun(run);
 		},
 
-		async searchRuns(jobRef: string, filter: BuildFilter): Promise<CIRun[]> {
+		/**
+		 * Pages backward through real run history via GitHub's own `page=` param instead of fetching one
+		 * fixed-size window up front -- a `since` far enough back used to fall outside that window with
+		 * zero indication the result was incomplete. Stops as soon as `limit` is satisfied, a run older
+		 * than `since` is seen (GitHub returns runs newest-first, so every remaining run is also older),
+		 * or a short page signals the end of real history -- whichever comes first. `searchMaxPages` is a
+		 * safety valve for an unbounded search; hitting it without concluding is reported via `truncated`,
+		 * not silently returned as if it were a complete result.
+		 *
+		 * filter.params has no honest implementation here: GitHub Actions exposes no API to retrieve a
+		 * workflow_dispatch run's own inputs after the fact (see getRunParams below), so rather than
+		 * silently ignoring the filter and returning unfiltered results, this fails loudly up front.
+		 */
+		async searchRuns(jobRef: string, filter: BuildFilter): Promise<SearchResult> {
+			if (filter.params && Object.keys(filter.params).length > 0) throw new GitHubParamsFilterUnsupportedError();
+
 			const { repo } = resolveJobRef(jobRef);
 			const limit = filter.limit && filter.limit > 0 ? filter.limit : 20;
-			const params = new URLSearchParams({ per_page: String(Math.max(limit * 3, 50)) });
-			if (filter.result) params.set("status", filter.result.toLowerCase());
-			if (filter.runner) params.set("actor", filter.runner);
+			const runs: CIRun[] = [];
+			let reachedPageCap = true;
 
-			const page = await api<{ workflow_runs: GhWorkflowRun[] }>("GET", `/repos/${owner}/${repo}/actions/runs?${params}`);
-			const runs = (page?.workflow_runs ?? []).map(toCIRun);
-			const filtered = filter.since ? runs.filter((run) => run.startedAt >= (filter.since as Date)) : runs;
-			return filtered.slice(0, limit);
+			for (let page = 1; page <= searchMaxPages; page++) {
+				const params = new URLSearchParams({ per_page: String(searchPageSize), page: String(page) });
+				if (filter.result) params.set("status", filter.result.toLowerCase());
+				if (filter.runner) params.set("actor", filter.runner);
+
+				const response = await api<{ workflow_runs: GhWorkflowRun[] }>("GET", `/repos/${owner}/${repo}/actions/runs?${params}`);
+				const workflowRuns = response?.workflow_runs ?? [];
+
+				let stop = false;
+				for (const workflowRun of workflowRuns) {
+					if (runs.length >= limit) {
+						stop = true;
+						break;
+					}
+					const run = toCIRun(workflowRun);
+					if (filter.since && run.startedAt < filter.since) {
+						stop = true;
+						break;
+					}
+					runs.push(run);
+				}
+
+				if (stop) {
+					reachedPageCap = false;
+					break;
+				}
+				if (workflowRuns.length < searchPageSize) {
+					reachedPageCap = false; // ran out of real history before since/limit -- a genuinely complete result
+					break;
+				}
+			}
+
+			return { runs, truncated: reachedPageCap };
 		},
 
 		/**

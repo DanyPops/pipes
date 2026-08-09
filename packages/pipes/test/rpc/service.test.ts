@@ -190,6 +190,16 @@ describe("ci.search", () => {
 
 		const result = await service.execute("ci.search", { backend: "gh", jobRef: "job", since: "2026-01-01T00:00:00Z" });
 		expect(result.builds).toEqual([run]);
+		expect(result.truncated).toBe(false);
+	});
+
+	it("surfaces truncated:true from the backend instead of silently dropping it", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", searchResults: [], searchTruncated: true }));
+		const service = createPipesService(orchestrator);
+
+		const result = await service.execute("ci.search", { backend: "gh", jobRef: "job" });
+		expect(result.truncated).toBe(true);
 	});
 });
 

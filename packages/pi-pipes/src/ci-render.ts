@@ -258,10 +258,17 @@ export function summarize(data: unknown, theme: ThemeLike, displayPercentOverrid
 		return [theme.fg("muted", `${workflows.length} workflow(s):`), ...lines].join("\n");
 	}
 
-	// ci.search / ci.downstream: { builds } / { runs }
+	// ci.search / ci.downstream: { builds } / { runs }. ci.search alone can carry `truncated: true`
+	// (see run/ci-run.ts's SearchResult) -- the search gave up at a page-cap safety valve before
+	// `since`/`limit` was conclusively satisfied, so "N run(s)" alone would read as a complete result
+	// when it might not be.
 	for (const key of ["builds", "runs"]) {
 		const list = d[key];
-		if (Array.isArray(list)) return theme.fg("muted", `${list.length} run(s)`);
+		if (!Array.isArray(list)) continue;
+		const count = theme.fg("muted", `${list.length} run(s)`);
+		return key === "builds" && d.truncated === true
+			? `${count} ${theme.fg("warning", "(search stopped early -- since/limit may not be fully covered)")}`
+			: count;
 	}
 
 	// ci.pool: { runs: RunSnapshot[] } already covered above via "runs"; ci.subscribe/unsubscribe

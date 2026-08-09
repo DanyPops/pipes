@@ -286,6 +286,19 @@ describe("Orchestrator.ciWatch: real-time progress", () => {
 	});
 });
 
+describe("Orchestrator.ciSearch: passes a backend's SearchResult straight through", () => {
+	it("forwards both runs and truncated unchanged, rather than unwrapping to just the run list", async () => {
+		const orchestrator = new Orchestrator();
+		const run: CIRun = { id: "1", name: "run", status: "success", startedAt: new Date(0) };
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", searchResults: [run], searchTruncated: true }));
+
+		const result = await orchestrator.ciSearch("gh", "job", {});
+
+		expect(result.runs).toEqual([run]);
+		expect(result.truncated).toBe(true);
+	});
+});
+
 describe("Orchestrator: trigger records ownership; cancel is ownership-gated", () => {
 	it("refuses to cancel a run this session never triggered", async () => {
 		const orchestrator = new Orchestrator();

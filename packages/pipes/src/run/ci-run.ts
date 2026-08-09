@@ -91,6 +91,19 @@ export interface BuildFilter {
 	limit?: number;
 }
 
+/**
+ * searchRuns' return shape -- mirrors LogResult's own truncated flag. A backend that pages
+ * backward through history to satisfy `since`/`limit` bounds that scan cost by giving up after
+ * a fixed number of pages (see each adapter's own searchPageSize/searchMaxPages); when that
+ * safety valve is hit before `since` was reached, `limit` was satisfied, or history genuinely
+ * ran out, `truncated` is true so a caller can tell "no more matches exist" apart from "the
+ * search gave up early" -- the two are indistinguishable from `runs` alone.
+ */
+export interface SearchResult {
+	runs: CIRun[];
+	truncated: boolean;
+}
+
 export const LOG_DEFAULT_TAIL_LINES = 200;
 export const LOG_DEFAULT_MAX_BYTES = 50 * 1024;
 

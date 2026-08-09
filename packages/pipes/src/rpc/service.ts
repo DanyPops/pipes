@@ -129,7 +129,8 @@ export interface OperationOutputs {
 	"ci.help": { backends: ReturnType<Orchestrator["backendInfo"]>; pipelines: string[] };
 	"ci.status": { pipelineRun?: PipelineRun; verdict?: unknown; params?: Record<string, string>; truncatedParamKeys?: string[] };
 	"ci.log": LogResult;
-	"ci.search": { builds: unknown[] };
+	/** truncated mirrors SearchResult.truncated -- true when the backend gave up at a page-cap safety valve before `since`/`limit` was conclusively satisfied. See run/ci-run.ts's SearchResult doc comment. */
+	"ci.search": { builds: unknown[]; truncated: boolean };
 	/** Exactly one of repos/workflows is present, matching which input.repo case was requested. */
 	"ci.discover": { repos?: RepoInfo[]; workflows?: WorkflowInfo[] };
 	"ci.trigger": { pipelineRun?: PipelineRun; result?: TriggerResult };
@@ -426,14 +427,14 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 					return (await handleLog(input as OperationInputs["ci.log"])) as OperationOutputs[Name];
 				case "ci.search": {
 					const search = input as OperationInputs["ci.search"];
-					const builds = await orchestrator.ciSearch(search.backend, search.jobRef, {
+					const { runs: builds, truncated } = await orchestrator.ciSearch(search.backend, search.jobRef, {
 						result: search.result,
 						runner: search.runner,
 						since: search.since ? new Date(search.since) : undefined,
 						limit: search.limit,
 						params: search.params,
 					});
-					return { builds } as OperationOutputs[Name];
+					return { builds, truncated } as OperationOutputs[Name];
 				}
 				case "ci.discover": {
 					const discover = input as OperationInputs["ci.discover"];

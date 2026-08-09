@@ -18,7 +18,7 @@ import {
 	type CIPipeliner,
 	type CITriggerable,
 } from "../run/ci-backend.ts";
-import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, CIStep } from "../run/ci-run.ts";
+import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, CIStep, SearchResult } from "../run/ci-run.ts";
 import type { RepoInfo, WorkflowInfo } from "../run/discovery.ts";
 import type { TriggerReceipt } from "../run/trigger.ts";
 
@@ -39,7 +39,17 @@ export interface JenkinsAdapterOptions {
 	credentials: JenkinsCredentials;
 	fetchImpl?: FetchLike;
 	crumbCache?: CrumbCache;
+	/** Builds fetched per Jenkins API page in searchRuns. Overridable for tests; defaults to SEARCH_PAGE_SIZE. */
+	searchPageSize?: number;
+	/** Safety cap on total pages searchRuns will fetch, to bound an unbounded search (no `since`, rare `params` match). Overridable for tests; defaults to SEARCH_MAX_PAGES. */
+	searchMaxPages?: number;
 }
+
+/** Default number of builds fetched per Jenkins API page in searchRuns. */
+const SEARCH_PAGE_SIZE = 50;
+
+/** Default cap on total pages searchRuns will fetch, to bound an unbounded search (no `since`, rare `params` match). */
+const SEARCH_MAX_PAGES = 200;
 
 /** Turns "folder/subfolder/job" into Jenkins' URL path shape "job/folder/job/subfolder/job/job". */
 function buildJobPath(jobRef: string): string {
@@ -125,6 +135,8 @@ export function createJenkinsAdapter(
 	// default fetch is wrapped so a stalled connection to Jenkins can't hang ci.wait's poll loop forever.
 	const doFetch = options.fetchImpl ?? withTimeout();
 	const crumbCache = options.crumbCache ?? createCrumbCache();
+	const searchPageSize = options.searchPageSize ?? SEARCH_PAGE_SIZE;
+	const searchMaxPages = options.searchMaxPages ?? SEARCH_MAX_PAGES;
 	const baseUrl = credentials.baseUrl.replace(/\/$/, "");
 
 	async function get<T>(path: string): Promise<T | undefined> {
@@ -227,21 +239,57 @@ export function createJenkinsAdapter(
 			return toCIRun(jobRef, build);
 		},
 
-		async searchRuns(jobRef: string, filter: BuildFilter): Promise<CIRun[]> {
+		/**
+		 * Pages backward through real Jenkins build history (offset/count `{a,b}` tree ranges) instead
+		 * of fetching one fixed-size window up front -- a `since` far enough back on a high-volume
+		 * shared job used to fall outside that window with zero indication the result was incomplete.
+		 * Stops as soon as `limit` is satisfied, a build older than `since` is seen (builds are
+		 * newest-first, so every remaining build is also older), or a short page signals the end of
+		 * real history -- whichever comes first. `searchMaxPages` is a safety valve for an unbounded
+		 * search (no `since`, a rare `params` match); hitting it without concluding is reported via
+		 * `truncated`, not silently returned as if it were a complete result.
+		 */
+		async searchRuns(jobRef: string, filter: BuildFilter): Promise<SearchResult> {
 			const limit = filter.limit && filter.limit > 0 ? filter.limit : 20;
-			const fetchCount = Math.max(limit * 3, 50);
-			// tree= requires every nested field enumerated explicitly, or it is silently omitted, not errored.
-			const tree = `builds[number,result,building,timestamp,duration,url,fullDisplayName,actions[parameters[name,value],causes[userId,userName]]]{0,${fetchCount}}`;
-			const page = await get<{ builds: JenkinsBuild[] }>(`${buildJobPath(jobRef)}/api/json?tree=${encodeURIComponent(tree)}`);
-			let builds = (page?.builds ?? []).map((build) => toCIRun(jobRef, build));
+			const runs: CIRun[] = [];
+			let reachedPageCap = true;
 
-			if (filter.result) builds = builds.filter((run) => run.result === filter.result);
-			if (filter.since) builds = builds.filter((run) => run.startedAt >= (filter.since as Date));
-			if (filter.runner) {
-				const runnerIds = (page?.builds ?? []).map((build) => causesMatch(build, filter.runner as string));
-				builds = builds.filter((_run, index) => runnerIds[index]);
+			for (let page = 0; page < searchMaxPages; page++) {
+				const offset = page * searchPageSize;
+				// tree= requires every nested field enumerated explicitly, or it is silently omitted, not errored.
+				const tree = `builds[number,result,building,timestamp,duration,url,fullDisplayName,actions[parameters[name,value],causes[userId,userName]]]{${offset},${offset + searchPageSize}}`;
+				const response = await get<{ builds: JenkinsBuild[] }>(`${buildJobPath(jobRef)}/api/json?tree=${encodeURIComponent(tree)}`);
+				const builds = response?.builds ?? [];
+
+				let stop = false;
+				for (const build of builds) {
+					if (runs.length >= limit) {
+						stop = true;
+						break;
+					}
+					// Jenkins returns builds newest-first. The first build before filter.since means all
+					// remaining builds (on this page and every later one) are also before it.
+					if (filter.since && new Date(build.timestamp ?? 0) < filter.since) {
+						stop = true;
+						break;
+					}
+					if (filter.result && mapBuildResult(build.result) !== filter.result) continue;
+					if (filter.runner && !causesMatch(build, filter.runner)) continue;
+					if (filter.params && !paramsMatch(build, filter.params)) continue;
+					runs.push(toCIRun(jobRef, build));
+				}
+
+				if (stop) {
+					reachedPageCap = false;
+					break;
+				}
+				if (builds.length < searchPageSize) {
+					reachedPageCap = false; // ran out of real history before since/limit -- a genuinely complete result
+					break;
+				}
 			}
-			return builds.slice(0, limit);
+
+			return { runs, truncated: reachedPageCap };
 		},
 
 		async getLog(jobRef: string, runId: string): Promise<string> {
@@ -426,6 +474,17 @@ function causesMatch(build: JenkinsBuild, runner: string): boolean {
 		}
 	}
 	return false;
+}
+
+/** BuildFilter.params -- every requested key must match the build's own parameter value exactly. The
+ * tree= this build was fetched with already includes actions[parameters[...]], so this reads data
+ * already on hand rather than issuing another request per candidate. */
+function paramsMatch(build: JenkinsBuild, params: Record<string, string>): boolean {
+	const got: Record<string, string> = {};
+	for (const action of build.actions ?? []) {
+		for (const parameter of action.parameters ?? []) got[parameter.name] = String(parameter.value);
+	}
+	return Object.entries(params).every(([key, value]) => got[key] === value);
 }
 
 interface JenkinsBuild {

@@ -24,6 +24,7 @@ import {
 	isTerminalStatus,
 	type LogFilter,
 	type LogResult,
+	type SearchResult,
 } from "./run/ci-run.ts";
 import { classifyLog } from "./run/classify.ts";
 import type { RepoInfo, WorkflowInfo } from "./run/discovery.ts";
@@ -472,7 +473,7 @@ export class Orchestrator {
 		return historical.listRuns(jobRef, limit);
 	}
 
-	async ciSearch(backendName: string, jobRef: string, filter: BuildFilter): Promise<CIRun[]> {
+	async ciSearch(backendName: string, jobRef: string, filter: BuildFilter): Promise<SearchResult> {
 		return this.adapter(backendName).searchRuns(jobRef, filter);
 	}
 
