@@ -21,6 +21,7 @@ import {
 	type VehicleEffect,
 } from "@danypops/vehicle-core";
 import { VehicleRegistry } from "@danypops/vehicle-server";
+import { BackendUnavailableError } from "../orchestrator.ts";
 import { statusForKnownPipesError } from "../rpc/error-status.ts";
 import type { OperationInputs, OperationName, PipesService } from "../rpc/service.ts";
 
@@ -28,6 +29,7 @@ const OWNER = "pipes";
 
 const withPipesErrorParity = defineErrorMapping(
 	[
+		{ errorClass: BackendUnavailableError, category: "unavailable", code: "backend-unavailable" },
 		{ matches: (error) => statusForKnownPipesError(error) === 404, category: "not_found" },
 		{ matches: (error) => statusForKnownPipesError(error) === 403, category: "authorization" },
 		{ matches: (error) => statusForKnownPipesError(error) === 400, category: "validation" },
@@ -213,7 +215,8 @@ const OPERATIONS: readonly OperationSpec[] = [
 	},
 	{
 		action: "ci.presets.list",
-		description: "Lists every bookmarked pipeline preset (name -> backend + ordered steps).",
+		description:
+			"Lists every bookmarked pipeline preset (name -> backend + ordered steps). This is a live daemon read: while the Pipes connector is unreachable it returns connector-unavailable rather than stale preset data; recovery preserves the server-side list without requiring presets to be recreated.",
 		effect: "read",
 		properties: {},
 		required: [],

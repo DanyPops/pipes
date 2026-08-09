@@ -284,6 +284,8 @@ describe("registerPipesVehicle real result wiring", () => {
 		terminal.dispose();
 
 		expect(text).toContain("42%");
+		expect(text).toContain("|");
+		expect(text).toContain("■");
 		expect(text).toContain("#9176");
 		expect(text).toContain("line two");
 	});

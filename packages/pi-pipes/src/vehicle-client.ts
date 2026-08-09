@@ -34,6 +34,7 @@ import {
 import { registerVehicleStatusRefresh } from "@danypops/vehicle-client-pi/pi-status-refresh";
 import type { AtomicJsonFsAdapter, VehicleClient } from "@danypops/vehicle-core";
 import { createNodeAtomicJsonFsAdapter } from "@danypops/vehicle-server/atomic-json";
+import { ProgressBar, type ProgressBarGlyphStyle, type ProgressBarGlyphs, statelessComponent } from "malevich-tui-components";
 
 /**
  * Same directory pipes' own credential files already live in (resolvePipesCredentialPaths) --
@@ -50,6 +51,9 @@ function resolveManifestCachePath(): string {
 import type { AgentToolResult, ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { findFirstUrl, openLine, renderResultText } from "./ci-render.ts";
+import { withConnectorDiagnostics } from "./connector-diagnostics.ts";
+
+export { withConnectorDiagnostics } from "./connector-diagnostics.ts";
 
 /** Every Vehicle-projected tool name starts with "ci_" (ci_help, ci_status, ci_presets_list, ...) or "rp_" (rp_launches, rp_search, ...) -- one prefix per daemon operation namespace (see ../../pipes/src/rpc/service.ts's OperationName). */
 export const PIPES_TOOL_PREFIXES = ["ci_", "rp_"];
@@ -77,14 +81,43 @@ function renderCiCall(operationName: string, args: unknown, theme: Theme) {
 	return new Text(text, 0, 0);
 }
 
-function renderCiResult(result: AgentToolResult<unknown>, isPartial: boolean, isError: boolean, theme: Theme) {
+function renderCiResult(
+	result: AgentToolResult<unknown>,
+	isPartial: boolean,
+	isError: boolean,
+	theme: Theme,
+	progressBarGlyphs: ProgressBarGlyphs | ProgressBarGlyphStyle,
+) {
 	let text = renderResultText(result, isPartial, isError, theme);
-	const data = (result.details as { output?: unknown } | undefined)?.output;
+	const details = result.details as { output?: unknown; progress?: unknown } | undefined;
+	const data = details?.output;
 	if (data !== undefined) {
 		const url = findFirstUrl(data);
 		if (url) text += `\n${openLine(url, theme)}`;
 	}
-	return new Text(text, 0, 0);
+	const live = details?.progress ?? details?.output;
+	const percent =
+		live && typeof live === "object" && typeof (live as Record<string, unknown>).progressPercent === "number"
+			? ((live as Record<string, unknown>).progressPercent as number)
+			: undefined;
+	if (percent === undefined) return new Text(text, 0, 0);
+
+	return statelessComponent((width) => {
+		const summary = new Text(text, 0, 0).render(width);
+		const bar = new ProgressBar({
+			value: percent,
+			max: 100,
+			glyphs: progressBarGlyphs,
+			style: (line) => theme.fg("accent", line),
+		});
+		return [summary[0] ?? "", ...bar.render(width), ...summary.slice(1)];
+	});
+}
+
+const PROGRESS_BAR_STYLES = new Set<ProgressBarGlyphStyle>(["shade", "smooth", "blocks", "ascii"]);
+
+export function resolvePipesProgressBarStyle(value = process.env.PIPES_PROGRESS_BAR_STYLE): ProgressBarGlyphStyle {
+	return value && PROGRESS_BAR_STYLES.has(value as ProgressBarGlyphStyle) ? (value as ProgressBarGlyphStyle) : "blocks";
 }
 
 export interface PipesVehicleDeps {
@@ -94,6 +127,8 @@ export interface PipesVehicleDeps {
 	createClient?: (target: VehicleClientTarget) => VehicleClient;
 	/** Overridden in tests instead of touching the real on-disk manifest cache -- see resolveManifestCachePath's own doc comment. Omit at the call site (not here) to disable manifest caching entirely; this default is only for hermetic tests. */
 	manifestCache?: { filePath: string; fs: AtomicJsonFsAdapter };
+	/** Human-selected progress glyphs. Defaults to PIPES_PROGRESS_BAR_STYLE, then the bordered `blocks` style. */
+	progressBarGlyphs?: ProgressBarGlyphs | ProgressBarGlyphStyle;
 }
 
 export async function registerPipesVehicle(pi: ExtensionAPI, deps: PipesVehicleDeps = {}): Promise<RegisteredPiVehicle | undefined> {
@@ -103,22 +138,25 @@ export async function registerPipesVehicle(pi: ExtensionAPI, deps: PipesVehicleD
 
 	const createClient = deps.createClient ?? ((t: VehicleClientTarget) => new RemoteVehicleClient({ baseUrl: t.baseUrl, token: t.token }));
 	const manifestCache = deps.manifestCache ?? { filePath: resolveManifestCachePath(), fs: createNodeAtomicJsonFsAdapter() };
+	const progressBarGlyphs = deps.progressBarGlyphs ?? resolvePipesProgressBarStyle();
 	try {
 		// Re-resolves resolveTarget()/createClient fresh on every reconnect attempt rather than
 		// closing over the `target` captured above: the daemon rebinds a new random port on every
 		// restart, and a bare client built once has no way to notice its baseUrl died.
-		const client = createReconnectingVehicleClient(async () => {
-			const resolved = resolveTarget();
-			if (!resolved) throw new Error("Pipes daemon is not running");
-			return createClient(resolved);
-		});
+		const client = withConnectorDiagnostics(
+			createReconnectingVehicleClient(async () => {
+				const resolved = resolveTarget();
+				if (!resolved) throw new Error("Pipes daemon is not running");
+				return createClient(resolved);
+			}),
+		);
 		const options: RegisterVehicleToolsOptions = {
 			permissions: ["pipes:read", "pipes:write"],
 			principal: { id: "pi-pipes" },
 			renderers: (descriptor) => ({
 				renderCall: (args, theme) => renderCiCall(descriptor.name, args, theme),
 				renderResult: (result, resultOptions, theme, context) =>
-					renderCiResult(result as AgentToolResult<unknown>, resultOptions.isPartial, context.isError, theme),
+					renderCiResult(result as AgentToolResult<unknown>, resultOptions.isPartial, context.isError, theme, progressBarGlyphs),
 			}),
 			// A crash-loop or slow restart at factory time (Pi awaits this before transcript replay)
 			// used to leave every ci_* tool unregistered for the rest of the session -- see the

@@ -12,10 +12,10 @@
 	"dependencies": {
 		"@danypops/pipes": "^0.14.0",
 		"@danypops/vehicle-client": "^0.5.3",
-		"@danypops/vehicle-client-pi": "^0.16.3",
+		"@danypops/vehicle-client-pi": "^0.20.0",
 		"@danypops/vehicle-core": "^0.12.3",
 		"@danypops/vehicle-server": "^0.17.2",
-		"malevich-tui-components": "^0.16.1"
+		"malevich-tui-components": "^0.25.0"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": "*",

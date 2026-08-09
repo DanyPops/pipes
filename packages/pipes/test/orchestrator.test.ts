@@ -52,7 +52,7 @@ describe("Orchestrator.triggerPipeline: named presets", () => {
 		expect(run.status).toBe("success");
 		expect(run.steps).toHaveLength(2);
 		expect(run.steps.every((step) => step.status === "success")).toBe(true);
-		expect(orchestrator.getPipelineStatus("deploy")).toBe(run);
+		expect(await orchestrator.getPipelineStatus("deploy")).toBe(run);
 	});
 
 	it("stops at the first failing step and does not run later steps", async () => {

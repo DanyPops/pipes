@@ -30,3 +30,11 @@ The agent can manage these directly:
 A human-driven TUI menu (backend/preset picker → job picker → action
 picker) for manual trigger/cancel/log-viewing and preset management —
 distinct from the agent-facing `ci` tool, no LLM involvement.
+
+## Progress-bar visual
+
+Live `ci_wait` updates include a responsive progress bar. Set
+`PIPES_PROGRESS_BAR_STYLE` to `blocks` (default, bordered `■` cells), `smooth`
+(bordered fractional block cells), `shade` (`█`/`░`), or `ascii` (`#`/`-`).
+This changes only human TUI rendering; progress calculation and model-facing
+Vehicle output remain unchanged.

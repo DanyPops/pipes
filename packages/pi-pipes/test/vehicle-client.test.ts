@@ -7,7 +7,13 @@ import type {
 	VehicleManifestOperation,
 } from "@danypops/vehicle-core";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { isPipesVehicleTool, type PipesVehicleDeps, registerPipesVehicle } from "../src/vehicle-client.ts";
+import {
+	isPipesVehicleTool,
+	type PipesVehicleDeps,
+	registerPipesVehicle,
+	resolvePipesProgressBarStyle,
+	withConnectorDiagnostics,
+} from "../src/vehicle-client.ts";
 
 /** An in-memory AtomicJsonFsAdapter -- registerPipesVehicle now touches a manifest cache file by default; every test must inject one of these instead of the real on-disk default. */
 function fakeFs(): AtomicJsonFsAdapter {
@@ -225,6 +231,30 @@ describe("registerPipesVehicle's availability refresh", () => {
 		await fire("tool_execution_end", "read");
 
 		expect(active()).toEqual(["ci_discover"]);
+	});
+});
+
+describe("withConnectorDiagnostics", () => {
+	it("classifies a stale Pipes transport without leaking its URL, token, or raw cause", async () => {
+		const raw = new FakeClient(manifest([operation("ci.status")]));
+		raw.invoke = () => Promise.reject(new TypeError("fetch failed: ECONNREFUSED http://127.0.0.1:40917 token=secret"));
+		const client = withConnectorDiagnostics(raw);
+
+		const failure = await client.invoke("ci.status", 1, { pipeline: "lector-ci" }).catch((error: unknown) => error);
+
+		expect(failure).toMatchObject({ code: "connector-unavailable", category: "unavailable", retryable: true });
+		expect((failure as Error).message).toContain('ci.status for pipeline "lector-ci"');
+		expect((failure as Error).message).toContain("retry");
+		expect((failure as Error).message).not.toContain("40917");
+		expect((failure as Error).message).not.toContain("secret");
+	});
+});
+
+describe("resolvePipesProgressBarStyle", () => {
+	it("defaults to the bordered blocks visual and accepts every supported human selection", () => {
+		expect(resolvePipesProgressBarStyle(undefined)).toBe("blocks");
+		for (const style of ["shade", "smooth", "blocks", "ascii"] as const) expect(resolvePipesProgressBarStyle(style)).toBe(style);
+		expect(resolvePipesProgressBarStyle("unknown")).toBe("blocks");
 	});
 });
 

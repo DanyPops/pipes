@@ -110,6 +110,19 @@ describe("createPipesVehicleRegistry (via PipesService.vehicle)", () => {
 		expect((failure as Error).message).toContain("missing");
 	});
 
+	it("maps a transient backend transport failure separately from an unknown pipeline", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", err: new TypeError("fetch failed: token=secret") }));
+		orchestrator.registerPipeline({ name: "lector-ci", backend: "gh", steps: [{ jobName: "build" }] });
+		const service = createPipesService(orchestrator);
+
+		const failure = await service.vehicle.invoke("ci.status", 1, { pipeline: "lector-ci" }, PERMS).catch((error: unknown) => error);
+
+		expect(failure).toMatchObject({ category: "unavailable", code: "backend-unavailable" });
+		expect((failure as Error).message).toContain('ci.status for pipeline "lector-ci" (backend "gh")');
+		expect((failure as Error).message).not.toContain("secret");
+	});
+
 	it("returns the same registry instance on repeated access -- built once, not rebuilt per call", () => {
 		const { service } = harness();
 		expect(service.vehicle).toBe(service.vehicle);

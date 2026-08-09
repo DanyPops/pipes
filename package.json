@@ -6,9 +6,9 @@
   "workspaces": ["packages/*"],
   "keywords": ["pi-package"],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "check": "npm run check --workspaces --if-present",
+    "build": "bun run --filter './packages/*' build",
+    "test": "bun run --filter './packages/*' test",
+    "check": "bun run --filter './packages/*' check",
     "format": "biome format --write .",
     "lint": "biome check --write . && eslint packages --max-warnings 0",
     "lint:ci": "biome ci . && eslint packages --max-warnings 0",

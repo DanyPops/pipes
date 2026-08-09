@@ -40,6 +40,32 @@ describe("ci.status", () => {
 		expect(result.pipelineRun?.status).toBe("success");
 	});
 
+	it("recovers a configured pipeline's status when a fresh daemon has no in-memory PipelineRun", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				runsById: { latest: { id: "42", name: "build", status: "success", startedAt: new Date(0) } },
+			}),
+		);
+		orchestrator.registerPipeline({ name: "lector-ci", backend: "gh", steps: [{ jobName: "build" }] });
+		const service = createPipesService(orchestrator);
+
+		expect((await service.execute("ci.presets.list", {})).presets.map((preset) => preset.name)).toEqual(["lector-ci"]);
+		const result = await service.execute("ci.status", { pipeline: "lector-ci" });
+
+		expect(result.pipelineRun).toMatchObject({
+			pipeline: "lector-ci",
+			status: "success",
+			steps: [{ jobName: "build", runId: "42", status: "success" }],
+		});
+	});
+
+	it("keeps an actually unknown pipeline distinct from configured pipeline recovery", async () => {
+		const service = createPipesService(new Orchestrator());
+		await expect(service.execute("ci.status", { pipeline: "missing" })).rejects.toThrow(/pipeline not found: missing/);
+	});
+
 	it("rejects a status call with neither pipeline nor backend/jobRef", async () => {
 		const service = createPipesService(new Orchestrator());
 		await expect(service.execute("ci.status", {})).rejects.toThrow(/backend and jobRef are required/);

@@ -43,6 +43,21 @@ export class PipelineNotFoundError extends Error {
 	}
 }
 
+export class BackendUnavailableError extends Error {
+	constructor(operation: string, backend: string, pipeline?: string) {
+		const identity = pipeline ? `pipeline "${pipeline}" (backend "${backend}")` : `backend "${backend}"`;
+		super(`backend unavailable during ${operation} for ${identity}; retry after backend recovery`);
+	}
+}
+
+function isBackendTransportError(error: unknown): boolean {
+	if (error instanceof TypeError) return true;
+	if (!(error instanceof Error)) return false;
+	return /fetch failed|network|socket|ECONNRESET|ECONNREFUSED|connection refused|timed? ?out|AbortError/i.test(
+		`${error.name} ${error.message}`,
+	);
+}
+
 export class StepOutOfRangeError extends Error {
 	constructor(step: number, stepCount: number) {
 		super(`step index out of range: ${step} (pipeline has ${stepCount} steps)`);
@@ -183,10 +198,60 @@ export class Orchestrator {
 		return run;
 	}
 
-	getPipelineStatus(name: string): PipelineRun {
-		const run = this.runs.get(name);
-		if (!run) throw new PipelineNotFoundError(name);
-		return run;
+	/**
+	 * Returns the last run started by this process, or reconstructs the configured
+	 * preset's current status from each step's backend "latest" view after a daemon
+	 * restart. Preset identity is checked first: an empty in-memory run map must
+	 * never make a still-configured pipeline look unknown.
+	 */
+	async getPipelineStatus(name: string): Promise<PipelineRun> {
+		const pipeline = this.pipeline(name);
+		const existing = this.runs.get(name);
+		if (existing) return existing;
+
+		const backend = this.adapter(pipeline.backend);
+		let ciRuns: CIRun[];
+		try {
+			ciRuns = await Promise.all(pipeline.steps.map((step) => backend.getRun(step.jobName, "latest")));
+		} catch (error) {
+			if (isBackendTransportError(error)) throw new BackendUnavailableError("ci.status", pipeline.backend, name);
+			throw error;
+		}
+		const startedAt = ciRuns.reduce(
+			(earliest, run) => (run.startedAt.getTime() < earliest.getTime() ? run.startedAt : earliest),
+			ciRuns[0]?.startedAt ?? new Date(),
+		);
+		const statuses = ciRuns.map((run) => run.status);
+		const status = statuses.some((value) => value === "failure")
+			? "failure"
+			: statuses.some((value) => value === "aborted")
+				? "aborted"
+				: statuses.some((value) => value === "running")
+					? "running"
+					: statuses.some((value) => value === "pending")
+						? "pending"
+						: statuses.some((value) => value === "not_found")
+							? "not_found"
+							: "success";
+		const recovered: PipelineRun = {
+			pipeline: name,
+			status,
+			startedAt,
+			steps: pipeline.steps.map((step, index) => {
+				const run = ciRuns[index]!;
+				return {
+					jobName: step.jobName,
+					runId: run.id,
+					status: run.status,
+					result: run.result,
+					startedAt: run.startedAt,
+					durationMs: run.durationMs,
+					url: run.url,
+				};
+			}),
+		};
+		this.runs.set(name, recovered);
+		return recovered;
 	}
 
 	async getStepLog(name: string, step: number, filter: LogFilter): Promise<LogResult> {

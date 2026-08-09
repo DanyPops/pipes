@@ -242,7 +242,7 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 
 	async function handleStatus(input: OperationInputs["ci.status"]): Promise<OperationOutputs["ci.status"]> {
 		if (input.pipeline) {
-			return { pipelineRun: orchestrator.getPipelineStatus(input.pipeline) };
+			return { pipelineRun: await orchestrator.getPipelineStatus(input.pipeline) };
 		}
 		if (!input.backend || !input.jobRef) throw new Error("backend and jobRef are required when pipeline is not set");
 		const verdict = await orchestrator.getVerdict(input.backend, input.jobRef, input.runId, { tail: input.tail, grep: input.grep });
