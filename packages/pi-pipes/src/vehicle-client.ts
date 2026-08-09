@@ -50,7 +50,7 @@ function resolveManifestCachePath(): string {
 
 import type { AgentToolResult, ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { findFirstUrl, openLine, renderResultText } from "./ci-render.ts";
+import { clampDisplayPercent, findFirstUrl, openLine, renderResultText } from "./ci-render.ts";
 import { withConnectorDiagnostics } from "./connector-diagnostics.ts";
 
 export { withConnectorDiagnostics } from "./connector-diagnostics.ts";
@@ -81,31 +81,132 @@ function renderCiCall(operationName: string, args: unknown, theme: Theme) {
 	return new Text(text, 0, 0);
 }
 
+/**
+ * Per-tool-call ci_wait animation state, stashed under a namespaced key on Pi's own
+ * ToolRenderContext.state ("Shared renderer state for this tool row" -- the same object
+ * reference every renderResult call for one toolCallId receives, per pi-coding-agent's
+ * docs/tui.md). A fresh setInterval-driven ease-out tween is started every time the daemon
+ * reports a new target percent, and *always* self-terminates once it reaches that target --
+ * never left running past a finished/discarded tool row, no explicit teardown hook required.
+ */
+interface CiWaitAnimState {
+	displayPercent?: number;
+	animation?: { from: number; to: number; startedAt: number };
+	timer?: ReturnType<typeof setInterval>;
+}
+
+const CI_WAIT_ANIM_DURATION_MS = 450;
+const CI_WAIT_ANIM_TICK_MS = 50;
+
+function easeOutCubic(t: number): number {
+	return 1 - (1 - t) ** 3;
+}
+
+function ciWaitAnimState(state: unknown): CiWaitAnimState {
+	// A real ToolRenderContext.state is always an object (tool-execution.ts initializes it per
+	// row), but a test double or a future context shape may omit it entirely -- fall back to a
+	// fresh, unpersisted object rather than throwing; the render still works, just without the
+	// animation carrying over between calls.
+	if (!state || typeof state !== "object") return {};
+	const container = state as { ciWaitProgress?: CiWaitAnimState };
+	if (!container.ciWaitProgress) container.ciWaitProgress = {};
+	return container.ciWaitProgress;
+}
+
+/**
+ * Advances (or starts) the ease-out tween toward `targetPercent` and returns the percent to
+ * actually display this frame -- the bar and the "xx%" text both read this instead of the raw,
+ * possibly-just-jumped-30-points server value, so a ci_wait tick reads as the bar climbing over
+ * ~450ms rather than snapping. A settled (non-partial) result stops any in-flight tween and
+ * jumps straight to the final value -- nothing left to animate toward once the run is done.
+ */
+function tickCiWaitProgress(state: CiWaitAnimState, targetPercent: number, isPartial: boolean, invalidate: () => void): number {
+	const target = clampDisplayPercent(targetPercent);
+
+	if (!isPartial) {
+		if (state.timer !== undefined) {
+			clearInterval(state.timer);
+			state.timer = undefined;
+		}
+		state.displayPercent = target;
+		return target;
+	}
+
+	// The very first tick this tool call has ever reported has nothing to climb *from* -- show it
+	// immediately rather than manufacturing a fake 0%-start intro animation. Every later tick, once
+	// displayPercent already reflects somewhere real, does get the eased climb.
+	if (state.displayPercent === undefined) {
+		state.displayPercent = target;
+		return state.displayPercent;
+	}
+	if (!state.animation || state.animation.to !== target) {
+		state.animation = { from: state.displayPercent, to: target, startedAt: Date.now() };
+	}
+
+	if (state.timer === undefined) {
+		state.timer = setInterval(() => {
+			const animation = state.animation;
+			if (!animation) {
+				clearInterval(state.timer);
+				state.timer = undefined;
+				return;
+			}
+			const t = Math.min(1, (Date.now() - animation.startedAt) / CI_WAIT_ANIM_DURATION_MS);
+			state.displayPercent = animation.from + (animation.to - animation.from) * easeOutCubic(t);
+			if (t >= 1) {
+				clearInterval(state.timer);
+				state.timer = undefined;
+			}
+			invalidate();
+		}, CI_WAIT_ANIM_TICK_MS);
+	}
+
+	return state.displayPercent;
+}
+
 function renderCiResult(
 	result: AgentToolResult<unknown>,
 	isPartial: boolean,
 	isError: boolean,
 	theme: Theme,
 	progressBarGlyphs: ProgressBarGlyphs | ProgressBarGlyphStyle,
+	animState: CiWaitAnimState | undefined,
+	invalidate: () => void,
 ) {
-	let text = renderResultText(result, isPartial, isError, theme);
 	const details = result.details as { output?: unknown; progress?: unknown } | undefined;
-	const data = details?.output;
-	if (data !== undefined) {
-		const url = findFirstUrl(data);
-		if (url) text += `\n${openLine(url, theme)}`;
-	}
 	const live = details?.progress ?? details?.output;
-	const percent =
+	const rawPercent =
 		live && typeof live === "object" && typeof (live as Record<string, unknown>).progressPercent === "number"
 			? ((live as Record<string, unknown>).progressPercent as number)
 			: undefined;
-	if (percent === undefined) return new Text(text, 0, 0);
+
+	if (rawPercent === undefined) {
+		let text = renderResultText(result, isPartial, isError, theme);
+		const data = details?.output;
+		if (data !== undefined) {
+			const url = findFirstUrl(data);
+			if (url) text += `\n${openLine(url, theme)}`;
+		}
+		return new Text(text, 0, 0);
+	}
+
+	// Kick off (or retarget) the tween now, as a side effect of this render pass -- but the actual
+	// displayed value below is always read fresh from animState at render(width) time, since this
+	// same Component gets re-rendered by the tween's own invalidate() calls without renderCiResult
+	// necessarily running again in between.
+	if (animState) tickCiWaitProgress(animState, rawPercent, isPartial, invalidate);
 
 	return statelessComponent((width) => {
+		const shown = animState?.displayPercent ?? clampDisplayPercent(rawPercent);
+		let text = renderResultText(result, isPartial, isError, theme, shown);
+		const data = details?.output;
+		if (data !== undefined) {
+			const url = findFirstUrl(data);
+			if (url) text += `\n${openLine(url, theme)}`;
+		}
 		const summary = new Text(text, 0, 0).render(width);
 		const bar = new ProgressBar({
-			value: percent,
+			value: shown,
 			max: 100,
 			glyphs: progressBarGlyphs,
 			style: (line) => theme.fg("accent", line),
@@ -156,7 +257,15 @@ export async function registerPipesVehicle(pi: ExtensionAPI, deps: PipesVehicleD
 			renderers: (descriptor) => ({
 				renderCall: (args, theme) => renderCiCall(descriptor.name, args, theme),
 				renderResult: (result, resultOptions, theme, context) =>
-					renderCiResult(result as AgentToolResult<unknown>, resultOptions.isPartial, context.isError, theme, progressBarGlyphs),
+					renderCiResult(
+						result as AgentToolResult<unknown>,
+						resultOptions.isPartial,
+						context.isError,
+						theme,
+						progressBarGlyphs,
+						ciWaitAnimState(context.state),
+						context.invalidate,
+					),
 			}),
 			// A crash-loop or slow restart at factory time (Pi awaits this before transcript replay)
 			// used to leave every ci_* tool unregistered for the rest of the session -- see the

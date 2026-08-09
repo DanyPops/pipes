@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { summarize } from "../src/ci-render.ts";
+import { clampDisplayPercent, summarize } from "../src/ci-render.ts";
 
 /** A no-op theme: wraps text with [color:...] markers so assertions can check both text and color choice. bold is a passthrough. */
 const theme = { fg: (color: string, text: string) => `[${color}:${text}]`, bold: (text: string) => text };
@@ -139,6 +139,20 @@ describe("summarize: ci.wait", () => {
 		expect(text).toContain("#5");
 	});
 
+	it("clamps a run that overran its estimated duration to 100%, instead of a nonsensical 111%", () => {
+		const data = { buildNumber: "1", status: "running", progressPercent: 111, overdue: true, jobRef: "job", backend: "gh" };
+		const text = summarize(data, theme);
+		expect(text).toContain("100%");
+		expect(text).not.toContain("111%");
+	});
+
+	it("prefers an explicit displayPercentOverride over the raw WatchStatus.progressPercent", () => {
+		const data = { buildNumber: "1", status: "running", progressPercent: 90, overdue: false };
+		const text = summarize(data, theme, 42.4);
+		expect(text).toContain("42%");
+		expect(text).not.toContain("90%");
+	});
+
 	it("appends a streamed tail preview's last lines when present", () => {
 		const data = {
 			buildNumber: "1",
@@ -275,5 +289,16 @@ describe("summarize: fallback", () => {
 	it("never throws on an unrecognized shape and returns something reasonable", () => {
 		expect(() => summarize({ somethingUnexpected: true }, theme)).not.toThrow();
 		expect(summarize(null, theme)).toBe("null");
+	});
+});
+
+describe("clampDisplayPercent", () => {
+	it("passes an in-range value through unchanged", () => {
+		expect(clampDisplayPercent(42.4)).toBe(42.4);
+	});
+
+	it("clamps below 0 up to 0 and above 100 down to 100", () => {
+		expect(clampDisplayPercent(-5)).toBe(0);
+		expect(clampDisplayPercent(111)).toBe(100);
 	});
 });

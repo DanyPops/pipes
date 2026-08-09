@@ -289,4 +289,82 @@ describe("registerPipesVehicle real result wiring", () => {
 		expect(text).toContain("#9176");
 		expect(text).toContain("line two");
 	});
+
+	it("eases a later tick's percent toward its new target instead of instantly snapping to it, when context.state persists across renders", async () => {
+		let emit: ((progress: unknown) => void) | undefined;
+		class SteppedWaitClient implements VehicleClient {
+			manifest(): Promise<VehicleManifest> {
+				return Promise.resolve(manifest);
+			}
+
+			invoke<Output = unknown>(_name: string, _version: number, _input: unknown, options?: VehicleInvocationOptions): Promise<Output> {
+				emit = (progress) => options?.onProgress?.(progress as never);
+				return new Promise(() => {}); // still running for the whole assertion window.
+			}
+
+			close(): Promise<void> {
+				return Promise.resolve();
+			}
+		}
+
+		const { pi, tools } = captureTools();
+		await registerPipesVehicle(pi, {
+			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "test" }),
+			createClient: () => new SteppedWaitClient(),
+			manifestCache: fakeManifestCache(),
+		});
+
+		const tool = tools[0];
+		let partial: AgentToolResult<unknown> | undefined;
+		void tool!.execute(
+			"call-1",
+			{},
+			undefined,
+			(update) => {
+				partial = update;
+			},
+			{ sessionManager: { getSessionId: () => "session-1" }, hasUI: false } as never,
+		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		emit?.({ status: "running", buildNumber: "9176", progressPercent: 10, overdue: false });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		// A real ToolRenderContext.state is the same object reference across every renderResult call
+		// for this one tool call -- this is what actually carries the animation between renders.
+		const state = {};
+		const context = { isError: false, state, invalidate: () => {} } as never;
+		const extractPercent = (text: string): number => {
+			const match = text.match(/(\d+)%/);
+			if (!match) throw new Error(`no percent found in: ${text}`);
+			return Number(match[1]);
+		};
+		const renderNow = async (): Promise<string> => {
+			const component = tool!.renderResult!(partial!, { expanded: false, isPartial: true }, theme, context);
+			const terminal = await renderToTerminal(component.render(120));
+			const text = terminal.plainLines().join("\n");
+			terminal.dispose();
+			return text;
+		};
+
+		// The very first tick this animation state has ever seen renders immediately -- no
+		// manufactured 0%-start intro for a value that was never really 0.
+		expect(extractPercent(await renderNow())).toBe(10);
+
+		emit?.({ status: "running", buildNumber: "9176", progressPercent: 90, overdue: false });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		// Immediately after the new tick lands, the tween has only just started -- still showing the
+		// old value, not snapped straight to 90%.
+		expect(extractPercent(await renderNow())).toBe(10);
+
+		// Mid-flight (well inside the 450ms tween), the displayed value has climbed but not arrived.
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		const midPercent = extractPercent(await renderNow());
+		expect(midPercent).toBeGreaterThan(10);
+		expect(midPercent).toBeLessThan(90);
+
+		// Well past the tween's duration, it has settled exactly on the latest target.
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		expect(extractPercent(await renderNow())).toBe(90);
+	});
 });

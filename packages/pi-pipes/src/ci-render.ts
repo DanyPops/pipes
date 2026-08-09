@@ -77,6 +77,10 @@ export function renderResultText(
 	isPartial: boolean,
 	isError: boolean,
 	theme: ThemeLike,
+	/** Overrides ci.wait's own WatchStatus.progressPercent for display -- lets a caller (vehicle-client.ts's
+	 * tickCiWaitProgress) thread in a client-side-eased value instead of whatever the server most recently
+	 * reported, so the "xx%" text climbs in step with the animated bar instead of snapping ahead of it. */
+	displayPercentOverride?: number,
 ): string {
 	// vehicle-client-pi's own PiVehicleToolDetails declares output and progress as two distinct
 	// fields on purpose: invokeVehicleOperation's reportProgress() (see vehicle-pi.ts) builds every
@@ -99,14 +103,22 @@ export function renderResultText(
 		return message?.type === "text" ? (message.text ?? "") : "";
 	}
 
-	const summary = summarize(data, theme);
+	const summary = summarize(data, theme, displayPercentOverride);
 	return isPartial ? `${theme.fg("warning", "Running...")} ${summary}` : summary;
+}
+
+/** Clamps a reported progress percentage into the displayable 0..100 range -- a run that overruns
+ * its estimated duration (see orchestrator.ts's elapsed/estimated projection) can report over 100%,
+ * which is meaningful server-side (it's how "overdue" gets set) but nonsensical rendered next to a
+ * bar that's necessarily already full. */
+export function clampDisplayPercent(value: number): number {
+	return Math.max(0, Math.min(100, value));
 }
 
 const TAIL_PREVIEW_LINES = 5;
 
 /** One compact, action-shaped summary line (or few) -- the human-facing counterpart to the JSON sent to the LLM. */
-export function summarize(data: unknown, theme: ThemeLike): string {
+export function summarize(data: unknown, theme: ThemeLike, displayPercentOverride?: number): string {
 	if (!data || typeof data !== "object") return String(data);
 	const d = data as Record<string, unknown>;
 
@@ -183,7 +195,8 @@ export function summarize(data: unknown, theme: ThemeLike): string {
 			overdue: boolean;
 			tail?: { text: string; truncated: boolean };
 		};
-		let text = `${statusGlyph(watch.status, theme)} ${theme.fg("dim", `#${watch.buildNumber}`)} ${theme.fg("muted", `${Math.round(watch.progressPercent)}%`)}`;
+		const shownPercent = clampDisplayPercent(displayPercentOverride ?? watch.progressPercent);
+		let text = `${statusGlyph(watch.status, theme)} ${theme.fg("dim", `#${watch.buildNumber}`)} ${theme.fg("muted", `${Math.round(shownPercent)}%`)}`;
 		if (watch.overdue) text += ` ${theme.fg("warning", "overdue")}`;
 		if (watch.tail?.text) {
 			const lines = watch.tail.text.split("\n");
