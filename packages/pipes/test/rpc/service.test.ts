@@ -521,6 +521,32 @@ describe("ci.subscribe / ci.unsubscribe", () => {
 		expect(runPool.isJobSubscribed("gh", "job")).toBe(false);
 	});
 
+	it("ci.unsubscribe also clears run_snapshots.watched, so ci.subscribed stops listing it immediately -- not just job_watches", async () => {
+		// Reproduces task 8a0cec61-a033-4e83-bd58-1f2ed3cb5215: ci.subscribed / watchedRunsWithProjectLabels()
+		// reads run_snapshots.watched, an entirely separate store from job_watches -- unsubscribeJob() only
+		// ever touched the latter, so a run stayed listed as watched forever after an explicit unsubscribe,
+		// since nothing was left polling it to ever correct the stale flag.
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		runPool.subscribeJob("gh", "job");
+		runPool.upsert({
+			backend: "gh",
+			jobRef: "job",
+			runId: "1",
+			status: "running",
+			result: "",
+			url: "",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: true,
+		});
+		const service = createPipesService(new Orchestrator(), { runPool });
+
+		await service.execute("ci.unsubscribe", { backend: "gh", jobRef: "job" });
+
+		const result = await service.execute("ci.subscribed", {});
+		expect(result.runs).toEqual([]);
+	});
+
 	it("ci.subscribe accepts an optional subscriberId + scheduleMs, tracked independently from the default anonymous subscriber", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(

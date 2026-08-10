@@ -365,6 +365,10 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 
 	function handleUnsubscribe(input: OperationInputs["ci.unsubscribe"]): OperationOutputs["ci.unsubscribe"] {
 		pool?.unsubscribeJob(input.backend, input.jobRef, input.subscriberId);
+		// run_snapshots.watched is a separate store from job_watches (see RunPool.clearWatchedForJob's
+		// own doc comment) -- without this, ci.subscribed keeps listing this run as watched forever,
+		// since nothing is left subscribed to ever poll it again and correct the stale flag.
+		pool?.clearWatchedForJob(input.backend, input.jobRef);
 		return { unsubscribed: true };
 	}
 

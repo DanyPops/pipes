@@ -61,6 +61,17 @@ export interface RunPool {
 	): void;
 	/** Removes exactly one subscriber's row. subscriberId defaults to "". Idempotent no-op if that subscription wasn't present. */
 	unsubscribeJob(backend: string, jobRef: string, subscriberId?: string): void;
+	/**
+	 * Flips run_snapshots.watched back to false for every cached run of this (backend, jobRef) --
+	 * a completely separate store from job_watches (see unsubscribeJob), read directly by
+	 * watchedRuns()/watchedRunsWithProjectLabels()/ci.subscribed. Without this, an explicit
+	 * unsubscribe only ever removed the job_watches row; the background sync loop's own
+	 * natural-completion path (process/pool-sync.ts) is the only other thing that ever clears
+	 * watched, and it never runs again for a job nothing is left subscribed to -- leaving the
+	 * stale watched=1 row (and whatever status happened to be cached at unsubscribe time) stuck
+	 * forever. Idempotent no-op if no cached run exists for this job.
+	 */
+	clearWatchedForJob(backend: string, jobRef: string): void;
 	/** True if the given subscriber (default "") is currently watching this job. */
 	isJobSubscribed(backend: string, jobRef: string, subscriberId?: string): boolean;
 	/** Distinct (backend, jobRef) pairs with at least one subscriber -- what the sync loop fetches, deduped across however many subscribers are watching each job. */
@@ -207,6 +218,10 @@ export function createRunPool(db: Database): RunPool {
 
 		unsubscribeJob(backend: string, jobRef: string, subscriberId = ""): void {
 			db.query("DELETE FROM job_watches WHERE backend = ? AND job_ref = ? AND subscriber_id = ?").run(backend, jobRef, subscriberId);
+		},
+
+		clearWatchedForJob(backend: string, jobRef: string): void {
+			db.query("UPDATE run_snapshots SET watched = 0 WHERE backend = ? AND job_ref = ?").run(backend, jobRef);
 		},
 
 		isJobSubscribed(backend: string, jobRef: string, subscriberId = ""): boolean {

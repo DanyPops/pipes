@@ -168,6 +168,52 @@ describe("createRunPool: job-level subscriptions", () => {
 	});
 });
 
+describe("createRunPool: clearWatchedForJob", () => {
+	it("flips a cached run's watched flag back to false, independent of job_watches", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.upsert({
+			backend: "gh",
+			jobRef: "job",
+			runId: "1",
+			status: "running",
+			result: "",
+			url: "",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: true,
+		});
+
+		pool.clearWatchedForJob("gh", "job");
+
+		expect(pool.get("gh", "job", "1")?.watched).toBe(false);
+		expect(pool.watchedRuns()).toEqual([]);
+	});
+
+	it("is idempotent/safe when no cached run exists for the job", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		expect(() => pool.clearWatchedForJob("gh", "nonexistent")).not.toThrow();
+	});
+
+	it("does not touch a different job's cached watched run", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.upsert({
+			backend: "gh",
+			jobRef: "other",
+			runId: "9",
+			status: "running",
+			result: "",
+			url: "",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: true,
+		});
+
+		pool.clearWatchedForJob("gh", "job");
+
+		expect(pool.get("gh", "other", "9")?.watched).toBe(true);
+	});
+});
+
 describe("createRunPool: per-subscriber subscriptions", () => {
 	it("two different subscriberIds watching the same job are independent rows in watchedSubscriptions()", () => {
 		const pool = createRunPool(openPipesDb(":memory:"));
