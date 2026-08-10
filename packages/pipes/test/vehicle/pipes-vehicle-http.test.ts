@@ -18,8 +18,8 @@
  * echo operation.
  */
 import { afterEach, describe, expect, it } from "bun:test";
-import { createVehicleHttpApp } from "@danypops/vehicle-server/http";
 import { RemoteVehicleClient } from "@danypops/vehicle-client/http";
+import { createVehicleHttpApp } from "@danypops/vehicle-server/http";
 import { Orchestrator } from "../../src/orchestrator.ts";
 import { createPipesService, type PipesService } from "../../src/rpc/service.ts";
 import { Capability } from "../../src/run/ci-backend.ts";
@@ -89,7 +89,7 @@ describe("ci.trigger / ci.subscribe over a real HTTP round trip (RemoteVehicleCl
 	});
 
 	it("ci.subscribed, scoped to that same real session id, actually sees the job -- the Jobs widget's own exact read path", async () => {
-		const { service, runPool } = harness();
+		const { service } = harness();
 		const { baseUrl } = startRealDaemon(service);
 		const client = new RemoteVehicleClient({ baseUrl, token: TOKEN });
 
