@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { findVehicleProject, registerVehicleProject } from "@danypops/vehicle-server/project-scope";
 import { loadPresets } from "../../src/config/presets.ts";
 import { Orchestrator } from "../../src/orchestrator.ts";
 import { syncRunPool } from "../../src/process/pool-sync.ts";
@@ -9,7 +10,7 @@ import { createPipesService } from "../../src/rpc/service.ts";
 import { Capability } from "../../src/run/ci-backend.ts";
 import type { CIRun } from "../../src/run/ci-run.ts";
 import { openPipesDb } from "../../src/sqlite/db.ts";
-import { createRunPool } from "../../src/sqlite/run-pool.ts";
+import { createRunPool, createSqliteVehicleProjectStore } from "../../src/sqlite/run-pool.ts";
 import { createStubCIBackend } from "../fixtures/stub-ci-backend.ts";
 
 describe("ci.status", () => {
@@ -592,6 +593,108 @@ describe("ci.subscribe / ci.unsubscribe", () => {
 
 		expect(runPool.isJobSubscribed("jenkins", "job", "alice")).toBe(false);
 		expect(runPool.isJobSubscribed("jenkins", "job", "bob")).toBe(true);
+	});
+
+	it("defaults subscriberId to the caller's own real session id (callContext.callerSessionId) instead of the shared anonymous subscriber, when the caller doesn't pass one explicitly", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } } }),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		await service.execute("ci.subscribe", { backend: "gh", jobRef: "job" }, { callerSessionId: "session-42" });
+
+		expect(runPool.isJobSubscribed("gh", "job", "session-42")).toBe(true);
+		expect(runPool.isJobSubscribed("gh", "job", "")).toBe(false);
+	});
+
+	it("an explicit subscriberId still wins over callContext.callerSessionId", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } } }),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		await service.execute("ci.subscribe", { backend: "gh", jobRef: "job", subscriberId: "alice" }, { callerSessionId: "session-42" });
+
+		expect(runPool.isJobSubscribed("gh", "job", "alice")).toBe(true);
+		expect(runPool.isJobSubscribed("gh", "job", "session-42")).toBe(false);
+	});
+
+	it("auto-registers and records the caller's own project root (callContext.callerProjectRoot) on the subscription", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } } }),
+		);
+		const db = openPipesDb(":memory:");
+		const runPool = createRunPool(db);
+		const projectStore = createSqliteVehicleProjectStore(db);
+		const service = createPipesService(orchestrator, { runPool, projectStore });
+
+		await service.execute("ci.subscribe", { backend: "gh", jobRef: "job" }, { callerProjectRoot: "/home/x/pipes" });
+
+		expect(runPool.watchedSubscriptions()[0]?.projectRoot).toBe("/home/x/pipes");
+		expect(findVehicleProject(projectStore, "/home/x/pipes")?.name).toBe("pipes");
+	});
+
+	it("an explicit projectRoot input still wins over callContext.callerProjectRoot", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } } }),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		await service.execute(
+			"ci.subscribe",
+			{ backend: "gh", jobRef: "job", projectRoot: "/home/x/explicit" },
+			{ callerProjectRoot: "/home/x/from-context" },
+		);
+
+		expect(runPool.watchedSubscriptions()[0]?.projectRoot).toBe("/home/x/explicit");
+	});
+
+	it("never throws when no projectStore is configured, even with a callerProjectRoot present -- registration is best-effort", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } } }),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		await expect(
+			service.execute("ci.subscribe", { backend: "gh", jobRef: "job" }, { callerProjectRoot: "/home/x/pipes" }),
+		).resolves.toBeDefined();
+		expect(runPool.watchedSubscriptions()[0]?.projectRoot).toBe("/home/x/pipes");
+	});
+});
+
+describe("ci.subscribed: project labels", () => {
+	it("attaches the subscribing project's own name to each watched run", async () => {
+		const db = openPipesDb(":memory:");
+		const runPool = createRunPool(db);
+		const projectStore = createSqliteVehicleProjectStore(db);
+		registerVehicleProject(projectStore, { projectRoot: "/home/x/pipes" });
+		runPool.subscribeJob("gh", "job", { projectRoot: "/home/x/pipes" });
+		runPool.upsert({
+			backend: "gh",
+			jobRef: "job",
+			runId: "1",
+			status: "running",
+			result: "",
+			url: "",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: true,
+		});
+		const service = createPipesService(new Orchestrator(), { runPool, projectStore });
+
+		const result = await service.execute("ci.subscribed", {});
+
+		expect(result.runs[0]?.projectRoot).toBe("/home/x/pipes");
+		expect(result.runs[0]?.projectName).toBe("pipes");
 	});
 });
 

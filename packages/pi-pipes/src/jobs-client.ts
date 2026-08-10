@@ -36,5 +36,6 @@ export async function fetchSubscribedJobs(): Promise<JobsWidgetRow[]> {
 		url: run.url || undefined,
 		progressPercent: run.progressPercent,
 		overdue: run.overdue,
+		projectName: run.projectName,
 	}));
 }

@@ -192,9 +192,16 @@ const OPERATIONS: readonly OperationSpec[] = [
 	{
 		action: "ci.subscribe",
 		description:
-			"Has the daemon keep following a job's run in the background -- auto-unsubscribes once terminal. Idempotent. ci.trigger already subscribes automatically, pinned to the run it produced. subscriberId scopes this watch to one caller (defaults to a shared anonymous subscriber); scheduleMs bounds how often that subscriber's watch is refreshed, in milliseconds (omit to refresh on every background sync tick). runId pins the watch to that exact run instead of always re-resolving latest -- use this whenever you already have a concrete run id (e.g. from ci.trigger or ci.status), especially on a job that might have other unrelated concurrent triggers; without it, ci.subscribe always follows whatever 'latest' currently means for the job, auto-refocusing onto a new run if one supersedes the last.",
+			"Has the daemon keep following a job's run in the background -- auto-unsubscribes once terminal. Idempotent. ci.trigger already subscribes automatically, pinned to the run it produced. subscriberId scopes this watch to one caller (defaults to this calling Pi session's own real session id, then a shared anonymous subscriber for a raw RPC client with no session at all); scheduleMs bounds how often that subscriber's watch is refreshed, in milliseconds (omit to refresh on every background sync tick). runId pins the watch to that exact run instead of always re-resolving latest -- use this whenever you already have a concrete run id (e.g. from ci.trigger or ci.status), especially on a job that might have other unrelated concurrent triggers; without it, ci.subscribe always follows whatever 'latest' currently means for the job, auto-refocusing onto a new run if one supersedes the last. projectRoot attributes this subscription to a project for ci.subscribed's own display grouping -- defaults to this calling session's own cwd; rarely needs to be passed explicitly.",
 		effect: "local-write",
-		properties: { backend: stringProp, jobRef: stringProp, subscriberId: stringProp, scheduleMs: numberProp, runId: stringProp },
+		properties: {
+			backend: stringProp,
+			jobRef: stringProp,
+			subscriberId: stringProp,
+			scheduleMs: numberProp,
+			runId: stringProp,
+			projectRoot: stringProp,
+		},
 		required: ["backend", "jobRef"],
 	},
 	{
@@ -417,7 +424,14 @@ export function createPipesVehicleRegistry(service: PipesService): VehicleRegist
 						if (spec.action === "ci.wait") {
 							return waitWithProgress(service, context.input as OperationInputs["ci.wait"], context.reportProgress, context.signal);
 						}
-						return service.execute(spec.action, context.input as never);
+						// See @danypops/vehicle-core's own doc comment on callerSessionId/callerProjectRoot --
+						// auto-derived by vehicle-client-pi from this real call's own Pi session/cwd. Forwarded
+						// generically to every operation (most ignore it); ci.subscribe/ci.subscribed are the
+						// only ones that read it today.
+						return service.execute(spec.action, context.input as never, {
+							callerSessionId: context.callerSessionId,
+							callerProjectRoot: context.callerProjectRoot,
+						});
 					}),
 			),
 		);

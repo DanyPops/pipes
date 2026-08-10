@@ -13,7 +13,7 @@ import { resolvePipesCredentialPaths, resolvePipesPaths } from "../paths.ts";
 import { buildConfiguredReportPortalAdapter } from "../reportportal/init.ts";
 import { createApp, createPipesService } from "../rpc/service.ts";
 import { openPipesDb } from "../sqlite/db.ts";
-import { createRunPool } from "../sqlite/run-pool.ts";
+import { createRunPool, createSqliteVehicleProjectStore } from "../sqlite/run-pool.ts";
 import { syncRunPool } from "./pool-sync.ts";
 
 const logger = createLogger("pipes");
@@ -40,7 +40,8 @@ export async function serveMain(): Promise<void> {
 	const launchBackend = await buildConfiguredReportPortalAdapter(credentialPaths);
 	const db = openPipesDb(paths.database);
 	const runPool = createRunPool(db);
-	const service = createPipesService(orchestrator, { runPool, launchBackend });
+	const projectStore = createSqliteVehicleProjectStore(db);
+	const service = createPipesService(orchestrator, { runPool, launchBackend, projectStore });
 	const pushChannel = new PushChannel({ token });
 
 	runDaemonProcess({

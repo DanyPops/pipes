@@ -77,6 +77,37 @@ describe("fetchSubscribedJobs", () => {
 		expect(rows[0]?.overdue).toBeUndefined();
 	});
 
+	it("maps ci.subscribed's own projectName through when present", async () => {
+		setJobsClientConnectorForTests(
+			() =>
+				({
+					async call() {
+						return {
+							runs: [
+								{
+									backend: "jenkins-auto",
+									jobRef: "ocp-baremetal-ipi-deployment",
+									runId: "40531",
+									status: "running",
+									result: "",
+									url: "",
+									startedAt: new Date(0),
+									fetchedAt: new Date(0),
+									watched: true,
+									projectRoot: "/home/x/pipes",
+									projectName: "pipes",
+								},
+							],
+						};
+					},
+					// biome-ignore lint/suspicious/noExplicitAny: minimal test double
+				}) as any,
+		);
+
+		const rows = await fetchSubscribedJobs();
+		expect(rows[0]?.projectName).toBe("pipes");
+	});
+
 	it("propagates a connector failure (e.g. daemon not running) as a rejection -- the overlay is responsible for catching it", async () => {
 		setJobsClientConnectorForTests(() => {
 			throw new Error("Pipes daemon is not running; run `pipes serve`.");

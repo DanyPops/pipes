@@ -8,6 +8,7 @@
  */
 import type { VehicleRegistry } from "@danypops/vehicle-server";
 import { createVehicleHttpApp } from "@danypops/vehicle-server/http";
+import { registerVehicleProject, type VehicleProjectStore } from "@danypops/vehicle-server/project-scope";
 import { errorResponse, healthResponse, jsonResponse, readyResponse, requireBearerToken } from "@danypops/vehicle-server/rpc-http";
 import { defaultPresetsPath, savePresets } from "../config/presets.ts";
 import { DEFAULT_LOG_TAIL_TOKENS } from "../constants.ts";
@@ -101,8 +102,16 @@ export interface OperationInputs {
 	/** Every currently-subscribed job across every backend/jobRef -- unlike ci.pool (one job's own recent
 	 * history), this is the "what's subscribed right now" listing a jobs-overview widget polls. */
 	"ci.subscribed": Record<string, never>;
-	/** subscriberId defaults to "" -- the same anonymous subscriber every pre-existing caller implicitly uses. scheduleMs, when set, is this subscriber's own minimum check cadence; omitted checks on every background sync tick. runId, when set, pins this watch to that exact run forever instead of always re-resolving "latest" -- use this whenever you already have a concrete run id, especially on a job with other unrelated concurrent triggers. */
-	"ci.subscribe": { backend: string; jobRef: string; subscriberId?: string; scheduleMs?: number; runId?: string };
+	/** subscriberId defaults to the calling Pi session's own real id (PipesCallContext.callerSessionId,
+	 * auto-derived from context.sessionManager.getSessionId() -- see vehicle-client-pi's own doc comment)
+	 * when the caller doesn't pass one explicitly, falling back further to "" -- the shared anonymous
+	 * subscriber -- for a raw RPC client with no Pi session behind it at all. scheduleMs, when set, is
+	 * this subscriber's own minimum check cadence; omitted checks on every background sync tick. runId,
+	 * when set, pins this watch to that exact run forever instead of always re-resolving "latest" -- use
+	 * this whenever you already have a concrete run id, especially on a job with other unrelated
+	 * concurrent triggers. projectRoot defaults the same way from PipesCallContext.callerProjectRoot --
+	 * the project this subscription gets attributed to for ci.subscribed's own display grouping. */
+	"ci.subscribe": { backend: string; jobRef: string; subscriberId?: string; scheduleMs?: number; runId?: string; projectRoot?: string };
 	/** subscriberId defaults to "", removing only that one subscription -- another subscriber's independent watch on the same job is untouched. */
 	"ci.unsubscribe": { backend: string; jobRef: string; subscriberId?: string };
 	"ci.tail": { backend: string; jobRef: string; runId?: string; maxTokens?: number };
@@ -144,9 +153,12 @@ export interface OperationOutputs {
 	"ci.chain": CIRunNode;
 	/** Reads only the local pool — never a live backend call, safe to call frequently. Empty when no pool is configured. */
 	"ci.pool": { runs: RunSnapshot[] };
-	/** Every currently-watched run (RunPool.watchedRuns()) -- never a live backend call, safe to poll
-	 * frequently. Empty when no pool is configured. */
-	"ci.subscribed": { runs: RunSnapshot[] };
+	/** Every currently-watched run (RunPool.watchedRunsWithProjectLabels()) -- never a live backend call,
+	 * safe to poll frequently. Empty when no pool is configured. projectRoot/projectName are present when
+	 * (a) the subscribing call carried a real project root (see ci.subscribe's own doc comment) and (b)
+	 * that root was actually registered as a project (see PipesCallContext/registerVehicleProject) --
+	 * absent for e.g. a raw RPC client's subscription, which has no project to attribute. */
+	"ci.subscribed": { runs: Array<RunSnapshot & { projectRoot?: string; projectName?: string }> };
 	/** Idempotent: seeds an immediate fetch and starts background refreshing that job's latest run. */
 	"ci.subscribe": { subscribed: true; run?: RunSnapshot };
 	/** Idempotent: no error if the job wasn't subscribed. */
@@ -182,9 +194,26 @@ export class ReportPortalNotConfiguredError extends Error {
 	}
 }
 
+/**
+ * Per-invocation caller identity, generic across every operation -- mirrors
+ * @danypops/vehicle-core's own VehicleOperationContext.callerSessionId/callerProjectRoot exactly
+ * (see pipes-vehicle.ts's own operation loop for where these are read off a real Vehicle call and
+ * forwarded here). Optional and additive: a raw RPC client (PipesClient, no Pi session behind it)
+ * simply never supplies one, and every operation that doesn't care about caller identity ignores
+ * it -- only ci.subscribe/ci.subscribed read it today.
+ */
+export interface PipesCallContext {
+	readonly callerSessionId?: string;
+	readonly callerProjectRoot?: string;
+}
+
 export interface PipesService {
 	operationNames(): OperationName[];
-	execute<Name extends OperationName>(op: Name, input: OperationInputs[Name]): Promise<OperationOutputs[Name]>;
+	execute<Name extends OperationName>(
+		op: Name,
+		input: OperationInputs[Name],
+		callContext?: PipesCallContext,
+	): Promise<OperationOutputs[Name]>;
 	/**
 	 * Every ci.* operation projected onto Vehicle (see ../vehicle/pipes-vehicle.ts),
 	 * replacing pi-pipes' old `ci(action=X)` mega-tool with one real Pi tool per
@@ -235,6 +264,11 @@ export interface CreatePipesServiceOptions {
 	presetsPath?: string;
 	/** Optional: when absent, every rp.* operation rejects with ReportPortalNotConfiguredError -- Report Portal is a single optional LaunchBackend, not a multi-adapter registry like Orchestrator's CIBackend map. */
 	launchBackend?: LaunchBackend;
+	/** Optional: when present, ci.subscribe auto-registers (find-or-create) a project for a real
+	 * callerProjectRoot, and ci.subscribed's own output attaches each row's project name. Absent in
+	 * tests that don't exercise project scope -- registration is skipped, not an error, matching
+	 * runPool's own optionality. */
+	projectStore?: VehicleProjectStore;
 }
 
 export function createPipesService(orchestrator: Orchestrator, options: CreatePipesServiceOptions = {}): PipesService {
@@ -287,10 +321,15 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 	}
 
 	/** Idempotent: subscribing an already-watched job just re-seeds it with a fresh immediate fetch. */
-	async function handleSubscribe(input: OperationInputs["ci.subscribe"]): Promise<OperationOutputs["ci.subscribe"]> {
+	async function handleSubscribe(
+		input: OperationInputs["ci.subscribe"],
+		callContext?: PipesCallContext,
+	): Promise<OperationOutputs["ci.subscribe"]> {
 		if (!pool) throw new Error("no local run pool is configured");
-		const subscriberId = input.subscriberId ?? "";
-		pool.subscribeJob(input.backend, input.jobRef, { subscriberId, scheduleMs: input.scheduleMs, runId: input.runId });
+		const subscriberId = input.subscriberId ?? callContext?.callerSessionId ?? "";
+		const projectRoot = input.projectRoot ?? callContext?.callerProjectRoot;
+		if (projectRoot && options.projectStore) registerVehicleProject(options.projectStore, { projectRoot });
+		pool.subscribeJob(input.backend, input.jobRef, { subscriberId, scheduleMs: input.scheduleMs, runId: input.runId, projectRoot });
 		// A pinned subscription's very first fetch must already reflect the pinned run, not "latest" --
 		// this is the exact confusion a bare "latest" resolve caused live on a job with other concurrent triggers.
 		const targetRunId = input.runId ?? "latest";
@@ -405,16 +444,20 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 			if (!cachedVehicleRegistry) cachedVehicleRegistry = createPipesVehicleRegistry(service);
 			return cachedVehicleRegistry;
 		},
-		async execute<Name extends OperationName>(op: Name, input: OperationInputs[Name]): Promise<OperationOutputs[Name]> {
+		async execute<Name extends OperationName>(
+			op: Name,
+			input: OperationInputs[Name],
+			callContext?: PipesCallContext,
+		): Promise<OperationOutputs[Name]> {
 			switch (op) {
 				case "ci.pool": {
 					const pooled = input as OperationInputs["ci.pool"];
 					return { runs: pool ? pool.recent(pooled.backend, pooled.jobRef, pooled.limit ?? 20) : [] } as OperationOutputs[Name];
 				}
 				case "ci.subscribed":
-					return { runs: pool ? pool.watchedRuns() : [] } as OperationOutputs[Name];
+					return { runs: pool ? pool.watchedRunsWithProjectLabels() : [] } as OperationOutputs[Name];
 				case "ci.subscribe":
-					return (await handleSubscribe(input as OperationInputs["ci.subscribe"])) as OperationOutputs[Name];
+					return (await handleSubscribe(input as OperationInputs["ci.subscribe"], callContext)) as OperationOutputs[Name];
 				case "ci.unsubscribe":
 					return handleUnsubscribe(input as OperationInputs["ci.unsubscribe"]) as OperationOutputs[Name];
 				case "ci.tail":

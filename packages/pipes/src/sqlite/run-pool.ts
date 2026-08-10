@@ -5,6 +5,7 @@
  * polling a live CI backend right now.
  */
 import type { Database } from "bun:sqlite";
+import type { VehicleProjectStore } from "@danypops/vehicle-server/project-scope";
 import { isTerminalStatus, type RunStatus } from "../run/ci-run.ts";
 
 /** Re-exported so callers of run-pool.ts don't need a second import from run/ci-run.ts — there is exactly one definition, in the run domain. */
@@ -53,7 +54,11 @@ export interface RunPool {
 	 * forever instead of always re-resolving "latest" -- the only safe way to track a specific
 	 * triggered run on a job with other unrelated concurrent triggers.
 	 */
-	subscribeJob(backend: string, jobRef: string, options?: { subscriberId?: string; scheduleMs?: number; runId?: string }): void;
+	subscribeJob(
+		backend: string,
+		jobRef: string,
+		options?: { subscriberId?: string; scheduleMs?: number; runId?: string; projectRoot?: string },
+	): void;
 	/** Removes exactly one subscriber's row. subscriberId defaults to "". Idempotent no-op if that subscription wasn't present. */
 	unsubscribeJob(backend: string, jobRef: string, subscriberId?: string): void;
 	/** True if the given subscriber (default "") is currently watching this job. */
@@ -66,6 +71,15 @@ export interface RunPool {
 	unsubscribeAllForJob(backend: string, jobRef: string): void;
 	/** Records that this exact subscription was just checked, for schedule due-time gating. */
 	markSubscriptionChecked(backend: string, jobRef: string, subscriberId: string, at: Date): void;
+	/**
+	 * Same rows as watchedRuns(), each annotated with the subscribing project's own root/name --
+	 * see @danypops/vehicle-server/project-scope's VehicleProject. A job with more than one
+	 * subscriber picks whichever subscription happens to carry a project_root first (matching
+	 * this daemon's own "one label is enough, this isn't a set-membership feature" scope); both
+	 * fields are undefined when no subscription on this job ever carried a projectRoot, or the
+	 * root it carried was never actually registered as a project.
+	 */
+	watchedRunsWithProjectLabels(): Array<RunSnapshot & { projectRoot?: string; projectName?: string }>;
 }
 
 export interface JobSubscription {
@@ -76,6 +90,8 @@ export interface JobSubscription {
 	lastCheckedAt?: Date;
 	/** When set, this subscription tracks exactly this run id, never "latest". */
 	pinnedRunId?: string;
+	/** The calling Pi session's own cwd at ci.subscribe time, if any -- see this file's own VehicleProjectStore doc comment. */
+	projectRoot?: string;
 }
 
 interface RunRow {
@@ -176,13 +192,17 @@ export function createRunPool(db: Database): RunPool {
 			);
 		},
 
-		subscribeJob(backend: string, jobRef: string, options?: { subscriberId?: string; scheduleMs?: number; runId?: string }): void {
+		subscribeJob(
+			backend: string,
+			jobRef: string,
+			options?: { subscriberId?: string; scheduleMs?: number; runId?: string; projectRoot?: string },
+		): void {
 			const subscriberId = options?.subscriberId ?? "";
 			db.query(
-				`INSERT INTO job_watches (backend, job_ref, subscriber_id, schedule_ms, pinned_run_id)
-				 VALUES (?, ?, ?, ?, ?)
-				 ON CONFLICT(backend, job_ref, subscriber_id) DO UPDATE SET schedule_ms = excluded.schedule_ms, pinned_run_id = excluded.pinned_run_id`,
-			).run(backend, jobRef, subscriberId, options?.scheduleMs ?? null, options?.runId ?? null);
+				`INSERT INTO job_watches (backend, job_ref, subscriber_id, schedule_ms, pinned_run_id, project_root)
+				 VALUES (?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(backend, job_ref, subscriber_id) DO UPDATE SET schedule_ms = excluded.schedule_ms, pinned_run_id = excluded.pinned_run_id, project_root = excluded.project_root`,
+			).run(backend, jobRef, subscriberId, options?.scheduleMs ?? null, options?.runId ?? null, options?.projectRoot ?? null);
 		},
 
 		unsubscribeJob(backend: string, jobRef: string, subscriberId = ""): void {
@@ -209,6 +229,7 @@ export function createRunPool(db: Database): RunPool {
 				schedule_ms: number | null;
 				last_checked_at: number | null;
 				pinned_run_id: string | null;
+				project_root: string | null;
 			}>;
 			return rows.map((row) => ({
 				backend: row.backend,
@@ -217,6 +238,7 @@ export function createRunPool(db: Database): RunPool {
 				scheduleMs: row.schedule_ms ?? undefined,
 				lastCheckedAt: row.last_checked_at !== null ? new Date(row.last_checked_at) : undefined,
 				pinnedRunId: row.pinned_run_id ?? undefined,
+				projectRoot: row.project_root ?? undefined,
 			}));
 		},
 
@@ -231,6 +253,51 @@ export function createRunPool(db: Database): RunPool {
 				jobRef,
 				subscriberId,
 			);
+		},
+
+		watchedRunsWithProjectLabels(): Array<RunSnapshot & { projectRoot?: string; projectName?: string }> {
+			const rows = db.query("SELECT * FROM run_snapshots WHERE watched = 1").all() as RunRow[];
+			return rows.map((row) => {
+				const snapshot = toSnapshot(row);
+				const subscription = db
+					.query("SELECT project_root FROM job_watches WHERE backend = ? AND job_ref = ? AND project_root IS NOT NULL LIMIT 1")
+					.get(snapshot.backend, snapshot.jobRef) as { project_root: string } | null;
+				if (!subscription) return snapshot;
+				const project = db.query("SELECT name FROM vehicle_projects WHERE project_root = ?").get(subscription.project_root) as {
+					name: string;
+				} | null;
+				return { ...snapshot, projectRoot: subscription.project_root, projectName: project?.name };
+			});
+		},
+	};
+}
+
+/** SQLite-backed implementation of @danypops/vehicle-server/project-scope's VehicleProjectStore
+ * port, sharing this daemon's own database handle -- one row per registered project root. See
+ * rpc/service.ts's ci.subscribe handler for where a project gets auto-registered (lazily, on
+ * first sight of a caller's own projectRoot), unlike Papyrus's own Task/Doc/Rule/Playbook domain,
+ * which requires an explicit registration step -- a lightweight CI-job subscription auto-
+ * registering its own project is a reasonable, much cheaper default for this domain. */
+export function createSqliteVehicleProjectStore(db: Database): VehicleProjectStore {
+	return {
+		findByRoot(projectRoot: string) {
+			const row = db.query("SELECT * FROM vehicle_projects WHERE project_root = ?").get(projectRoot) as {
+				id: string;
+				name: string;
+				project_root: string;
+				created_at: string;
+				updated_at: string;
+			} | null;
+			return row
+				? { id: row.id, name: row.name, projectRoot: row.project_root, createdAt: row.created_at, updatedAt: row.updated_at }
+				: undefined;
+		},
+		upsert(project) {
+			db.query(
+				`INSERT INTO vehicle_projects (id, name, project_root, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?)
+				 ON CONFLICT(project_root) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
+			).run(project.id, project.name, project.projectRoot, project.createdAt, project.updatedAt);
 		},
 	};
 }

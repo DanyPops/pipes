@@ -91,6 +91,26 @@ ALTER TABLE run_snapshots ADD COLUMN estimated_ms INTEGER;
 ALTER TABLE run_snapshots ADD COLUMN overdue INTEGER;
 `;
 
+// project_root: the calling Pi session's own cwd at ci.subscribe time (see @danypops/vehicle-core's
+// generic callerProjectRoot, auto-derived by vehicle-client-pi from a real tool call's own
+// context.cwd) -- nullable, since a raw RPC client (no Pi session behind it) has no project to
+// attribute a subscription to. vehicle_projects is the SQLite-backed implementation of
+// @danypops/vehicle-server/project-scope's own VehicleProjectStore port -- one project per
+// distinct root, auto-registered (see rpc/service.ts's ci.subscribe handler) rather than
+// requiring an explicit registration step the way Papyrus's own Project domain does; a lightweight
+// subscription auto-registering its own project on first sight is a reasonable, much cheaper
+// default than Papyrus's own heavier Task/Doc/Rule/Playbook domain ever wants.
+const MIGRATION_7_PROJECT_SCOPE = `
+ALTER TABLE job_watches ADD COLUMN project_root TEXT;
+CREATE TABLE vehicle_projects (
+	id TEXT NOT NULL PRIMARY KEY,
+	name TEXT NOT NULL,
+	project_root TEXT NOT NULL UNIQUE,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+`;
+
 export function openPipesDb(path: string): Database {
 	return openSqliteWithPragmas(path, {
 		databaseOptions: { create: true, strict: true },
@@ -101,6 +121,7 @@ export function openPipesDb(path: string): Database {
 			{ version: 4, up: (db) => db.exec(MIGRATION_4_SUBSCRIBER_SCHEDULES) },
 			{ version: 5, up: (db) => db.exec(MIGRATION_5_PINNED_RUN_ID) },
 			{ version: 6, up: (db) => db.exec(MIGRATION_6_PROGRESS) },
+			{ version: 7, up: (db) => db.exec(MIGRATION_7_PROJECT_SCOPE) },
 		],
 	});
 }

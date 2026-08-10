@@ -24,6 +24,10 @@ export interface JobsWidgetRow {
 	 * A row with no progressPercent renders status-only, no bar. */
 	progressPercent?: number;
 	overdue?: boolean;
+	/** The project this subscription was attributed to (see @danypops/pipes' ci.subscribe/
+	 * ci.subscribed and @danypops/vehicle-server/project-scope) -- undefined for a subscription
+	 * with no known project (e.g. a raw RPC client with no Pi session behind it at all). */
+	projectName?: string;
 }
 
 export interface JobsWidgetProjection {
@@ -58,6 +62,7 @@ export function renderJobsWidgetLines(
 	const lines: string[] = [theme.fg("muted", `Jobs · ${projection.total} subscribed`)];
 	for (const row of projection.rows) {
 		let line = `${statusGlyph(row.status, theme)} ${theme.fg("accent", `${row.backend}/${row.jobRef}`)} ${theme.fg("dim", `#${row.runId}`)}`;
+		if (row.projectName) line += ` ${theme.fg("dim", `(${row.projectName})`)}`;
 		if (row.progressPercent !== undefined) {
 			const shown = effectiveWatchPercent(row.status, row.progressPercent);
 			const bar = new ProgressBar({ value: shown, max: 100, width: JOBS_WIDGET_BAR_WIDTH, glyphs: progressBarGlyphs }).format();

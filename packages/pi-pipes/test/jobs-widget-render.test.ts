@@ -60,6 +60,18 @@ describe("renderJobsWidgetLines", () => {
 		expect(lines[1]).toContain("100%"); // clamped, same as ci_wait's own overrun handling
 	});
 
+	it("shows a row's project name inline, in parentheses, when it has one", () => {
+		const projection = buildJobsWidgetProjection([row({ projectName: "pipes" })]);
+		const lines = renderJobsWidgetLines(theme, projection, 80);
+		expect(lines[1]).toContain("(pipes)");
+	});
+
+	it("shows nothing extra for a row with no project name -- e.g. a raw RPC client's subscription", () => {
+		const projection = buildJobsWidgetProjection([row()]); // projectName omitted
+		const lines = renderJobsWidgetLines(theme, projection, 80);
+		expect(lines[1]).not.toContain("(");
+	});
+
 	it("never produces a line wider than the given width, across several widths", () => {
 		const projection = buildJobsWidgetProjection([
 			row({ backend: "jenkins-auto", jobRef: "ocp-baremetal-ipi-deployment-with-a-very-long-name", runId: "40531", progressPercent: 55 }),

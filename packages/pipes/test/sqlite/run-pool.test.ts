@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { findVehicleProject, registerVehicleProject } from "@danypops/vehicle-server/project-scope";
 import { openPipesDb } from "../../src/sqlite/db.ts";
-import { createRunPool, isTerminalStatus, type RunSnapshot } from "../../src/sqlite/run-pool.ts";
+import { createRunPool, createSqliteVehicleProjectStore, isTerminalStatus, type RunSnapshot } from "../../src/sqlite/run-pool.ts";
 
 function snapshot(overrides: Partial<RunSnapshot> = {}): RunSnapshot {
 	return {
@@ -258,5 +259,95 @@ describe("createRunPool: pinning a subscription to a specific runId instead of a
 		const subs = pool.watchedSubscriptions();
 		expect(subs.find((s) => s.subscriberId === "alice")?.pinnedRunId).toBe("9191");
 		expect(subs.find((s) => s.subscriberId === "bob")?.pinnedRunId).toBeUndefined();
+	});
+});
+
+describe("createRunPool: project scope (which project/session subscribed)", () => {
+	it("subscribeJob's projectRoot option round-trips through watchedSubscriptions()", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("jenkins", "job", { projectRoot: "/home/x/pipes" });
+
+		const subs = pool.watchedSubscriptions();
+		expect(subs[0]?.projectRoot).toBe("/home/x/pipes");
+	});
+
+	it("a subscription with no projectRoot option shows projectRoot undefined -- back-compat, e.g. a raw RPC client with no Pi session behind it", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("jenkins", "job");
+
+		expect(pool.watchedSubscriptions()[0]?.projectRoot).toBeUndefined();
+	});
+});
+
+describe("createSqliteVehicleProjectStore", () => {
+	it("implements @danypops/vehicle-server/project-scope's VehicleProjectStore port -- round-trips through registerVehicleProject/findVehicleProject", () => {
+		const store = createSqliteVehicleProjectStore(openPipesDb(":memory:"));
+		const project = registerVehicleProject(store, { projectRoot: "/home/x/pipes" });
+
+		expect(project.name).toBe("pipes");
+		expect(findVehicleProject(store, "/home/x/pipes")).toEqual(project);
+		expect(findVehicleProject(store, "/home/x/never-seen")).toBeUndefined();
+	});
+
+	it("is idempotent by root, same as the in-memory reference implementation", () => {
+		const store = createSqliteVehicleProjectStore(openPipesDb(":memory:"));
+		const first = registerVehicleProject(store, { projectRoot: "/home/x/pipes" });
+		const second = registerVehicleProject(store, { projectRoot: "/home/x/pipes", name: "Pipes CI" });
+
+		expect(second.id).toBe(first.id);
+		expect(second.name).toBe("Pipes CI");
+	});
+});
+
+describe("createRunPool: watchedRunsWithProjectLabels", () => {
+	it("attaches the subscribing project's own name to a watched run", () => {
+		const db = openPipesDb(":memory:");
+		const pool = createRunPool(db);
+		const store = createSqliteVehicleProjectStore(db);
+		registerVehicleProject(store, { projectRoot: "/home/x/pipes" });
+		pool.subscribeJob("jenkins", "job", { projectRoot: "/home/x/pipes" });
+		pool.upsert(snapshot({ backend: "jenkins", jobRef: "job", runId: "1", watched: true }));
+
+		const rows = pool.watchedRunsWithProjectLabels();
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.projectRoot).toBe("/home/x/pipes");
+		expect(rows[0]?.projectName).toBe("pipes");
+	});
+
+	it("leaves projectRoot/projectName undefined for a run whose subscription never carried one (e.g. a raw RPC client)", () => {
+		const db = openPipesDb(":memory:");
+		const pool = createRunPool(db);
+		pool.subscribeJob("jenkins", "job");
+		pool.upsert(snapshot({ backend: "jenkins", jobRef: "job", runId: "1", watched: true }));
+
+		const rows = pool.watchedRunsWithProjectLabels();
+		expect(rows[0]?.projectRoot).toBeUndefined();
+		expect(rows[0]?.projectName).toBeUndefined();
+	});
+
+	it("leaves projectName undefined when a project root was recorded on the subscription but never actually registered", () => {
+		const db = openPipesDb(":memory:");
+		const pool = createRunPool(db);
+		pool.subscribeJob("jenkins", "job", { projectRoot: "/home/x/never-registered" });
+		pool.upsert(snapshot({ backend: "jenkins", jobRef: "job", runId: "1", watched: true }));
+
+		const rows = pool.watchedRunsWithProjectLabels();
+		expect(rows[0]?.projectRoot).toBe("/home/x/never-registered");
+		expect(rows[0]?.projectName).toBeUndefined();
+	});
+
+	it("does not attach a label from a different job's own subscription", () => {
+		const db = openPipesDb(":memory:");
+		const pool = createRunPool(db);
+		const store = createSqliteVehicleProjectStore(db);
+		registerVehicleProject(store, { projectRoot: "/home/x/pipes" });
+		pool.subscribeJob("jenkins", "job-a", { projectRoot: "/home/x/pipes" });
+		pool.subscribeJob("jenkins", "job-b");
+		pool.upsert(snapshot({ backend: "jenkins", jobRef: "job-a", runId: "1", watched: true }));
+		pool.upsert(snapshot({ backend: "jenkins", jobRef: "job-b", runId: "2", watched: true }));
+
+		const rows = pool.watchedRunsWithProjectLabels();
+		expect(rows.find((r) => r.jobRef === "job-a")?.projectName).toBe("pipes");
+		expect(rows.find((r) => r.jobRef === "job-b")?.projectName).toBeUndefined();
 	});
 });

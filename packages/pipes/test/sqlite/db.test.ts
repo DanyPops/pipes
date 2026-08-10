@@ -45,4 +45,33 @@ describe("openPipesDb", () => {
 		expect(updated.overdue).toBe(1);
 		db.close();
 	});
+
+	it("adds a nullable project_root column to job_watches, for the session/project that subscribed", () => {
+		const db = openPipesDb(":memory:");
+		db.query("INSERT INTO job_watches (backend, job_ref) VALUES ('gh', 'job')").run();
+		const row = db.query("SELECT * FROM job_watches WHERE job_ref = 'job'").get() as { project_root: string | null };
+		expect(row.project_root).toBeNull();
+
+		db.query("UPDATE job_watches SET project_root = ? WHERE job_ref = 'job'").run("/home/x/pipes");
+		const updated = db.query("SELECT * FROM job_watches WHERE job_ref = 'job'").get() as { project_root: string | null };
+		expect(updated.project_root).toBe("/home/x/pipes");
+		db.close();
+	});
+
+	it("creates the vehicle_projects schema, unique by project_root", () => {
+		const db = openPipesDb(":memory:");
+		db.query(
+			"INSERT INTO vehicle_projects (id, name, project_root, created_at, updated_at) VALUES ('1', 'pipes', '/home/x/pipes', 't', 't')",
+		).run();
+		expect(() =>
+			db
+				.query(
+					"INSERT INTO vehicle_projects (id, name, project_root, created_at, updated_at) VALUES ('2', 'other', '/home/x/pipes', 't', 't')",
+				)
+				.run(),
+		).toThrow();
+		const row = db.query("SELECT * FROM vehicle_projects WHERE project_root = '/home/x/pipes'").get() as { name: string };
+		expect(row.name).toBe("pipes");
+		db.close();
+	});
 });
