@@ -46,7 +46,7 @@
     },
     "packages/pipes": {
       "name": "@danypops/pipes",
-      "version": "0.17.1",
+      "version": "0.17.2",
       "bin": {
         "pipes": "src/cli/index.ts",
       },
