@@ -16,6 +16,8 @@ function fakePi(): {
 	commands: string[];
 	tools: string[];
 	userMessages: Array<{ content: unknown; options?: { deliverAs?: "steer" | "followUp" } }>;
+	// biome-ignore lint/suspicious/noExplicitAny: minimal test double, not the real CustomMessage shape
+	sentMessages: Array<{ message: any; options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" } }>;
 	// biome-ignore lint/suspicious/noExplicitAny: see FakeEventHandler
 	fire: (event: string, ctx?: any) => Promise<void>;
 } {
@@ -23,6 +25,8 @@ function fakePi(): {
 	const tools: string[] = [];
 	const handlers: Record<string, FakeEventHandler[]> = {};
 	const userMessages: Array<{ content: unknown; options?: { deliverAs?: "steer" | "followUp" } }> = [];
+	// biome-ignore lint/suspicious/noExplicitAny: minimal test double, not the real CustomMessage shape
+	const sentMessages: Array<{ message: any; options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" } }> = [];
 	const pi = {
 		registerCommand: (name: string) => commands.push(name),
 		registerTool: (def: { name: string }) => tools.push(def.name),
@@ -34,6 +38,11 @@ function fakePi(): {
 		getActiveTools: () => [],
 		setActiveTools: () => {},
 		sendUserMessage: (content: unknown, options?: { deliverAs?: "steer" | "followUp" }) => userMessages.push({ content, options }),
+		// biome-ignore lint/suspicious/noExplicitAny: minimal test double, not the real CustomMessage shape
+		sendMessage: (message: any, options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" }) => {
+			sentMessages.push({ message, options });
+			return Promise.resolve();
+		},
 	} as unknown as ExtensionAPI;
 	// biome-ignore lint/suspicious/noExplicitAny: see FakeEventHandler
 	const fire = async (event: string, ctx: any = {}) => {
@@ -42,7 +51,7 @@ function fakePi(): {
 		const fullCtx = { sessionManager: { getSessionId: () => "test-session" }, ...ctx };
 		for (const handler of handlers[event] ?? []) await handler({ type: event }, fullCtx);
 	};
-	return { pi, commands, tools, userMessages, fire };
+	return { pi, commands, tools, userMessages, sentMessages, fire };
 }
 
 describe("pipesExtension", () => {
@@ -168,7 +177,7 @@ describe("pipesExtension: subscribed-jobs widget", () => {
 		expect(registeredKey).toBeUndefined();
 	});
 
-	it("wires the widget's notifier to pi.sendUserMessage -- a subscribed job finishing between polls sends the agent a message", async () => {
+	it("wires the widget's notifier to pi.sendMessage -- a subscribed job finishing between polls sends the agent a message", async () => {
 		setJobsClientConnectorForTests(
 			() =>
 				({
@@ -192,12 +201,12 @@ describe("pipesExtension: subscribed-jobs widget", () => {
 					// biome-ignore lint/suspicious/noExplicitAny: minimal test double, not the real PipesClient shape
 				}) as any,
 		);
-		const { pi, fire, userMessages } = fakePi();
+		const { pi, fire, sentMessages } = fakePi();
 		await pipesExtension(pi, { registerVehicle: async () => undefined });
 
 		const ui = { setWidget: () => {} };
 		await fire("session_start", { hasUI: true, ui }); // baseline: tracking the job -- no message yet
-		expect(userMessages).toEqual([]);
+		expect(sentMessages).toEqual([]);
 
 		setJobsClientConnectorForTests(
 			() =>
@@ -210,8 +219,8 @@ describe("pipesExtension: subscribed-jobs widget", () => {
 		);
 		await fire("session_start", { hasUI: true, ui }); // same overlay instance (memoized) -- ticker sees the vanish
 
-		expect(userMessages).toHaveLength(1);
-		expect(userMessages[0]?.content).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
-		expect(userMessages[0]?.options).toEqual({ deliverAs: "steer" });
+		expect(sentMessages).toHaveLength(1);
+		expect(sentMessages[0]?.message.content).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
+		expect(sentMessages[0]?.options).toEqual({ deliverAs: "followUp" });
 	});
 });

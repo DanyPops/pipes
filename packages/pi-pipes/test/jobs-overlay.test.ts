@@ -152,7 +152,7 @@ describe("JobsOverlay", () => {
 
 			expect(notifier.calls).toHaveLength(1);
 			expect(notifier.calls[0]?.content).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
-			expect(notifier.calls[0]?.options).toEqual({ deliverAs: "steer" });
+			expect(notifier.calls[0]?.options).toEqual({ deliverAs: "followUp" }); // reportAgentPollTick's own default, since createAgentNotifier now forwards to the gentler pi.sendMessage()
 		});
 
 		it("does not treat a failed fetch as every job having vanished -- ticker state is untouched by a fetch error", async () => {

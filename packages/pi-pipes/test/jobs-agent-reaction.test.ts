@@ -10,12 +10,14 @@
  *
  * This started out proving a gap (pi-pipes only ever updated the widget). jobs-overlay.ts and
  * job-ticker.ts now wire a subscribed job's terminal transition -- and, on a slower throttle, a
- * "still in flight" reminder -- through to pi.sendUserMessage(..., {deliverAs: "steer"}), which
- * per docs/extensions.md "Always triggers a turn" (immediately when idle; queued to run right
- * after the current turn's tool calls when streaming, never throwing either way). This file is now
- * the reproducible proof that the wiring actually reaches the agent, not just the widget -- see
- * job-ticker.test.ts and jobs-overlay.test.ts for the unit-level coverage of the decision logic
- * itself.
+ * "still in flight" reminder -- through to pi.sendMessage(..., {deliverAs: "followUp"})
+ * (@danypops/vehicle-client-pi's createAgentNotifier/reportAgentPollTick), a custom message that
+ * participates in LLM context but -- unlike pi.sendUserMessage(), which always triggers a turn --
+ * only forces an immediate turn if triggerTurn is explicitly set true, which this never does. This
+ * file is now the reproducible proof that the wiring actually reaches the agent (via h.sentMessages,
+ * the harness's own recording of pi.sendMessage() calls -- a distinct channel from h.userMessages),
+ * not just the widget -- see job-ticker.test.ts and jobs-overlay.test.ts for the unit-level coverage
+ * of the decision logic itself.
  *
  * Separately (not covered here): packages/pipes' daemon does already publish a push channel for
  * this (PushChannel.publish("ci", ...) in process/daemon.ts's pool-sync wiring), but pi-pipes' own
@@ -81,7 +83,7 @@ describe("ci_subscribe's status transitions and the agent -- deterministic, mock
 		await h.boot(); // fires session_start -- first refresh() sees the "running" job, widget registers
 
 		expect(registeredFactory).toBeDefined();
-		expect(h.userMessages).toEqual([]); // nothing sent to the agent just from subscribing/observing -- no baseline transition yet
+		expect(h.sentMessages).toEqual([]); // nothing sent to the agent just from subscribing/observing -- no baseline transition yet
 
 		// Simulate the daemon's background sync loop having moved the job to "success" between polls
 		// -- fires the exact same session_start handler (and therefore the exact same
@@ -90,10 +92,12 @@ describe("ci_subscribe's status transitions and the agent -- deterministic, mock
 		currentStatus = "success";
 		await h.emit("session_start", {});
 
-		expect(h.userMessages).toHaveLength(1);
-		expect(h.userMessages[0]?.content).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
-		expect(String(h.userMessages[0]?.content).toLowerCase()).toContain("finished");
-		expect(h.userMessages[0]?.options).toEqual({ deliverAs: "steer" });
+		expect(h.sentMessages).toHaveLength(1);
+		expect(h.sentMessages[0]?.message.content).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
+		expect(String(h.sentMessages[0]?.message.content).toLowerCase()).toContain("finished");
+		expect(h.sentMessages[0]?.message.display).toBe(true);
+		expect(h.sentMessages[0]?.options).toEqual({ deliverAs: "followUp" });
+		expect(h.userMessages).toEqual([]); // never the always-turn-triggering sendUserMessage channel
 	});
 
 	it("does not nudge the agent again on the very next tick once the finish has already been reported", async () => {
@@ -114,9 +118,9 @@ describe("ci_subscribe's status transitions and the agent -- deterministic, mock
 
 		runs = [];
 		await h.emit("session_start", {});
-		expect(h.userMessages).toHaveLength(1);
+		expect(h.sentMessages).toHaveLength(1);
 
 		await h.emit("session_start", {}); // still empty -- nothing new vanished, no reminder due yet
-		expect(h.userMessages).toHaveLength(1);
+		expect(h.sentMessages).toHaveLength(1);
 	});
 });

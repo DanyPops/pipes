@@ -89,8 +89,8 @@ describe("multiple Pi sessions, each with its own subscribed job, against one sh
 
 		// Baseline: both sessions observe both jobs (the shared, unscoped connector), but nothing
 		// has transitioned yet, so neither agent has been notified of anything.
-		expect(sessionA.userMessages).toEqual([]);
-		expect(sessionB.userMessages).toEqual([]);
+		expect(sessionA.sentMessages).toEqual([]);
+		expect(sessionB.sentMessages).toEqual([]);
 
 		// Only session A's own job (deploy-a) finishes.
 		runs[0]!.status = "success";
@@ -101,7 +101,7 @@ describe("multiple Pi sessions, each with its own subscribed job, against one sh
 		// finishing -- ci.subscribed now honors subscriberId (see packages/pipes' own
 		// RunPool.watchedRunsWithProjectLabels), and JobsOverlay passes this exact session's own real
 		// id on every fetch (see index.ts).
-		expect(sessionA.userMessages.some((m) => String(m.content).includes("deploy-a"))).toBe(true);
-		expect(sessionB.userMessages.some((m) => String(m.content).includes("deploy-a"))).toBe(false);
+		expect(sessionA.sentMessages.some((m) => String(m.message.content).includes("deploy-a"))).toBe(true);
+		expect(sessionB.sentMessages.some((m) => String(m.message.content).includes("deploy-a"))).toBe(false);
 	});
 });
