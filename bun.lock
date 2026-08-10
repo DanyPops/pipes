@@ -21,7 +21,7 @@
     },
     "packages/pi-pipes": {
       "name": "@danypops/pi-pipes",
-      "version": "0.16.0",
+      "version": "0.16.1",
       "dependencies": {
         "@danypops/pipes": "^0.17.0",
         "@danypops/vehicle-client": "^0.8.1",
