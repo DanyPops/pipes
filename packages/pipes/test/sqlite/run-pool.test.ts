@@ -43,6 +43,24 @@ describe("createRunPool", () => {
 		expect(pool.get("gh", "job", "999")).toBeUndefined();
 	});
 
+	it("round-trips progressPercent/estimatedMs/overdue when the caller provides them", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.upsert(snapshot({ progressPercent: 42.5, estimatedMs: 60_000, overdue: true }));
+		const got = pool.get("gh", "job", "1");
+		expect(got?.progressPercent).toBe(42.5);
+		expect(got?.estimatedMs).toBe(60_000);
+		expect(got?.overdue).toBe(true);
+	});
+
+	it("leaves progressPercent/estimatedMs/overdue undefined, not a misleading 0/false, when the caller omits them (e.g. GitLab's own estimateDuration always returning 0)", () => {
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.upsert(snapshot());
+		const got = pool.get("gh", "job", "1");
+		expect(got?.progressPercent).toBeUndefined();
+		expect(got?.estimatedMs).toBeUndefined();
+		expect(got?.overdue).toBeUndefined();
+	});
+
 	it("upsert overwrites the same (backend, jobRef, runId) row rather than duplicating it", () => {
 		const pool = createRunPool(openPipesDb(":memory:"));
 		pool.upsert(snapshot({ status: "running", watched: true }));

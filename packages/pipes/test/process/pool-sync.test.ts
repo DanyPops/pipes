@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { Orchestrator } from "../../src/orchestrator.ts";
 import { syncRunPool } from "../../src/process/pool-sync.ts";
+import { Capability } from "../../src/run/ci-backend.ts";
 import type { CIRun } from "../../src/run/ci-run.ts";
 import { openPipesDb } from "../../src/sqlite/db.ts";
 import { createRunPool } from "../../src/sqlite/run-pool.ts";
@@ -245,5 +246,44 @@ describe("syncRunPool", () => {
 		await syncRunPool(orchestrator, pool, undefined, (t) => transitions.push(t));
 
 		expect(transitions).toHaveLength(1);
+	});
+});
+
+describe("syncRunPool: persists real-time progress (Orchestrator.ciGetRunWithProgress), for the subscribed-jobs widget", () => {
+	it("stores progressPercent/estimatedMs/overdue on the snapshot when the backend has a real estimate", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } },
+				estimatedDurationMs: 100_000,
+			}),
+		);
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "job");
+
+		await syncRunPool(orchestrator, pool, undefined, undefined, () => 50_000);
+
+		const snapshot = pool.get("gh", "job", "1");
+		expect(snapshot?.progressPercent).toBe(50);
+		expect(snapshot?.estimatedMs).toBe(100_000);
+		expect(snapshot?.overdue).toBe(false);
+	});
+
+	it("leaves progress fields undefined, not a misleading 0/false, when the backend has no real estimate (no CITriggerable capability -- matches GitLab's own estimateDuration() always returning 0)", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gl", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } } }),
+		);
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gl", "job");
+
+		await syncRunPool(orchestrator, pool);
+
+		const snapshot = pool.get("gl", "job", "1");
+		expect(snapshot?.progressPercent).toBeUndefined();
+		expect(snapshot?.estimatedMs).toBeUndefined();
+		expect(snapshot?.overdue).toBeUndefined();
 	});
 });

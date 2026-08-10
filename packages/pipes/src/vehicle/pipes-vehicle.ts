@@ -182,6 +182,14 @@ const OPERATIONS: readonly OperationSpec[] = [
 		required: ["backend", "jobRef"],
 	},
 	{
+		action: "ci.subscribed",
+		description:
+			"Every currently-subscribed job across every backend/jobRef -- never a live backend call, cheap to call frequently. Unlike ci.pool (one job's own recent history), this is the full 'what's subscribed right now' listing.",
+		effect: "read",
+		properties: {},
+		required: [],
+	},
+	{
 		action: "ci.subscribe",
 		description:
 			"Has the daemon keep following a job's run in the background -- auto-unsubscribes once terminal. Idempotent. ci.trigger already subscribes automatically, pinned to the run it produced. subscriberId scopes this watch to one caller (defaults to a shared anonymous subscriber); scheduleMs bounds how often that subscriber's watch is refreshed, in milliseconds (omit to refresh on every background sync tick). runId pins the watch to that exact run instead of always re-resolving latest -- use this whenever you already have a concrete run id (e.g. from ci.trigger or ci.status), especially on a job that might have other unrelated concurrent triggers; without it, ci.subscribe always follows whatever 'latest' currently means for the job, auto-refocusing onto a new run if one supersedes the last.",

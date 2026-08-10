@@ -22,6 +22,13 @@ export interface RunSnapshot {
 	fetchedAt: Date;
 	/** Whether the background sync loop should keep refreshing this row. Cleared once terminal. */
 	watched: boolean;
+	/** Real-time progress, same elapsed/estimated math orchestrator.ts's ciWatch already reports live
+	 * for ci_wait -- see ciGetRunWithProgress. Undefined (not 0/false) when the backend has no real
+	 * estimate to compute from (e.g. GitLab's estimateDuration() always returns 0), so a consumer can
+	 * tell "no progress data" apart from "0% progress". */
+	progressPercent?: number;
+	estimatedMs?: number;
+	overdue?: boolean;
 }
 
 export interface RunPool {
@@ -82,6 +89,9 @@ interface RunRow {
 	duration_ms: number | null;
 	fetched_at: number;
 	watched: number;
+	progress_percent: number | null;
+	estimated_ms: number | null;
+	overdue: number | null;
 }
 
 function toSnapshot(row: RunRow): RunSnapshot {
@@ -96,6 +106,9 @@ function toSnapshot(row: RunRow): RunSnapshot {
 		durationMs: row.duration_ms ?? undefined,
 		fetchedAt: new Date(row.fetched_at),
 		watched: row.watched === 1,
+		progressPercent: row.progress_percent ?? undefined,
+		estimatedMs: row.estimated_ms ?? undefined,
+		overdue: row.overdue === null ? undefined : row.overdue === 1,
 	};
 }
 
@@ -103,12 +116,13 @@ export function createRunPool(db: Database): RunPool {
 	return {
 		upsert(snapshot: RunSnapshot): void {
 			db.query(`
-				INSERT INTO run_snapshots (backend, job_ref, run_id, status, result, url, started_at, duration_ms, fetched_at, watched)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				INSERT INTO run_snapshots (backend, job_ref, run_id, status, result, url, started_at, duration_ms, fetched_at, watched, progress_percent, estimated_ms, overdue)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT(backend, job_ref, run_id) DO UPDATE SET
 					status = excluded.status, result = excluded.result, url = excluded.url,
 					started_at = excluded.started_at, duration_ms = excluded.duration_ms,
-					fetched_at = excluded.fetched_at, watched = excluded.watched
+					fetched_at = excluded.fetched_at, watched = excluded.watched,
+					progress_percent = excluded.progress_percent, estimated_ms = excluded.estimated_ms, overdue = excluded.overdue
 			`).run(
 				snapshot.backend,
 				snapshot.jobRef,
@@ -120,6 +134,9 @@ export function createRunPool(db: Database): RunPool {
 				snapshot.durationMs ?? null,
 				snapshot.fetchedAt.getTime(),
 				snapshot.watched ? 1 : 0,
+				snapshot.progressPercent ?? null,
+				snapshot.estimatedMs ?? null,
+				snapshot.overdue === undefined ? null : snapshot.overdue ? 1 : 0,
 			);
 		},
 

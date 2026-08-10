@@ -49,6 +49,7 @@ export type OperationName =
 	| "ci.stages"
 	| "ci.chain"
 	| "ci.pool"
+	| "ci.subscribed"
 	| "ci.subscribe"
 	| "ci.unsubscribe"
 	| "ci.tail"
@@ -97,6 +98,9 @@ export interface OperationInputs {
 	"ci.stages": { backend: string; jobRef: string; runId: string; steps?: boolean; includeFailedLog?: boolean };
 	"ci.chain": { backend: string; jobRef: string; runId: string; depth?: number; artifacts?: boolean };
 	"ci.pool": { backend: string; jobRef: string; limit?: number };
+	/** Every currently-subscribed job across every backend/jobRef -- unlike ci.pool (one job's own recent
+	 * history), this is the "what's subscribed right now" listing a jobs-overview widget polls. */
+	"ci.subscribed": Record<string, never>;
 	/** subscriberId defaults to "" -- the same anonymous subscriber every pre-existing caller implicitly uses. scheduleMs, when set, is this subscriber's own minimum check cadence; omitted checks on every background sync tick. runId, when set, pins this watch to that exact run forever instead of always re-resolving "latest" -- use this whenever you already have a concrete run id, especially on a job with other unrelated concurrent triggers. */
 	"ci.subscribe": { backend: string; jobRef: string; subscriberId?: string; scheduleMs?: number; runId?: string };
 	/** subscriberId defaults to "", removing only that one subscription -- another subscriber's independent watch on the same job is untouched. */
@@ -140,6 +144,9 @@ export interface OperationOutputs {
 	"ci.chain": CIRunNode;
 	/** Reads only the local pool — never a live backend call, safe to call frequently. Empty when no pool is configured. */
 	"ci.pool": { runs: RunSnapshot[] };
+	/** Every currently-watched run (RunPool.watchedRuns()) -- never a live backend call, safe to poll
+	 * frequently. Empty when no pool is configured. */
+	"ci.subscribed": { runs: RunSnapshot[] };
 	/** Idempotent: seeds an immediate fetch and starts background refreshing that job's latest run. */
 	"ci.subscribe": { subscribed: true; run?: RunSnapshot };
 	/** Idempotent: no error if the job wasn't subscribed. */
@@ -198,6 +205,7 @@ export const OPERATION_NAMES: OperationName[] = [
 	"ci.stages",
 	"ci.chain",
 	"ci.pool",
+	"ci.subscribed",
 	"ci.subscribe",
 	"ci.unsubscribe",
 	"ci.tail",
@@ -403,6 +411,8 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 					const pooled = input as OperationInputs["ci.pool"];
 					return { runs: pool ? pool.recent(pooled.backend, pooled.jobRef, pooled.limit ?? 20) : [] } as OperationOutputs[Name];
 				}
+				case "ci.subscribed":
+					return { runs: pool ? pool.watchedRuns() : [] } as OperationOutputs[Name];
 				case "ci.subscribe":
 					return (await handleSubscribe(input as OperationInputs["ci.subscribe"])) as OperationOutputs[Name];
 				case "ci.unsubscribe":

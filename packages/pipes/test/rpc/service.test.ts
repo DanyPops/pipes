@@ -402,6 +402,57 @@ describe("ci.pool", () => {
 	});
 });
 
+describe("ci.subscribed", () => {
+	it("returns an empty list when no run pool is configured, rather than throwing", async () => {
+		const service = createPipesService(new Orchestrator());
+		const result = await service.execute("ci.subscribed", {});
+		expect(result.runs).toEqual([]);
+	});
+
+	it("returns every currently-watched run across every backend/jobRef, not scoped to one job like ci.pool", async () => {
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		runPool.upsert({
+			backend: "gh",
+			jobRef: "job-a",
+			runId: "1",
+			status: "running",
+			result: "",
+			url: "",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: true,
+		});
+		runPool.upsert({
+			backend: "jenkins",
+			jobRef: "job-b",
+			runId: "2",
+			status: "running",
+			result: "",
+			url: "",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: true,
+		});
+		// A terminal, no-longer-watched run must not appear -- watchedRuns() is the whole point.
+		runPool.upsert({
+			backend: "gh",
+			jobRef: "job-c",
+			runId: "3",
+			status: "success",
+			result: "SUCCESS",
+			url: "",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: false,
+		});
+		const service = createPipesService(new Orchestrator(), { runPool });
+
+		const result = await service.execute("ci.subscribed", {});
+
+		expect(result.runs.map((r) => r.runId).sort()).toEqual(["1", "2"]);
+	});
+});
+
 describe("ci.subscribe / ci.unsubscribe", () => {
 	it("throws a clear error when no run pool is configured", async () => {
 		const service = createPipesService(new Orchestrator());

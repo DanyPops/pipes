@@ -79,7 +79,11 @@ export async function syncRunPool(
 	await Promise.all(
 		dueGroups.map(async ({ backend, jobRef, targetRunId, subscriptions }) => {
 			try {
-				const run = await orchestrator.ciGetRun(backend, jobRef, targetRunId);
+				// ciGetRunWithProgress, not ciGetRun: same one live fetch, decorated with the same
+				// elapsed/estimated progress fields ci_wait already computes via ciWatch -- see its own
+				// doc comment. Lets the subscribed-jobs widget (pi-pipes) read progress straight off
+				// ci.pool instead of one ci.wait-shaped call per row on every poll tick.
+				const run = await orchestrator.ciGetRunWithProgress(backend, jobRef, targetRunId, now);
 				const log = await orchestrator.ciGetRawLog(backend, jobRef, run.id);
 				const fetchedAt = new Date(nowMs);
 				const previous = pool.get(backend, jobRef, run.id);
@@ -94,6 +98,9 @@ export async function syncRunPool(
 					durationMs: run.durationMs,
 					fetchedAt,
 					watched: !isTerminalStatus(run.status),
+					progressPercent: run.progressPercent,
+					estimatedMs: run.estimatedMs,
+					overdue: run.overdue,
 				});
 				pool.upsertLog(backend, jobRef, run.id, log);
 				if (previous?.status !== run.status) {

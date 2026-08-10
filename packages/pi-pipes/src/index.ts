@@ -11,9 +11,10 @@
 import { createPipesClient } from "@danypops/pipes";
 import { registerSharedSecretsCommand } from "@danypops/vehicle-client-pi/secrets-tui";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { JobsOverlay } from "./jobs-overlay.ts";
 import { runPipesCommand } from "./pipes-tui.ts";
 import { buildPipesSecretsBackends } from "./secrets.ts";
-import { registerPipesVehicle } from "./vehicle-client.ts";
+import { registerPipesVehicle, resolvePipesProgressBarStyle } from "./vehicle-client.ts";
 
 export interface PiPipesDeps {
 	/** Overridden in tests instead of exercising the real (daemon-talking) registerPipesVehicle. */
@@ -35,6 +36,23 @@ export default async function pipesExtension(pi: ExtensionAPI, deps: PiPipesDeps
 	// claiming the real command registration, and all three still show up
 	// in it regardless of load order.
 	registerSharedSecretsCommand(pi, { source: "pipes", resolve: () => ({ backends: buildPipesSecretsBackends() }) });
+
+	// Persistent "Jobs · N subscribed" widget above the editor, mirroring pi-papyrus's own
+	// TaskOverlay/NoteOverlay pattern -- see jobs-overlay.ts. Poll-only (no push channel wired up
+	// for "ci" yet); never spawns the daemon (jobs-client.ts's fetchSubscribedJobs uses
+	// connectPipesClient, not createPipesClient), so a session with the daemon not running just
+	// shows nothing instead of starting one for a passive background widget.
+	let jobsOverlay: JobsOverlay | undefined;
+	pi.on("session_start", async (_event, ctx) => {
+		if (!ctx.hasUI) return;
+		jobsOverlay ??= new JobsOverlay(resolvePipesProgressBarStyle());
+		jobsOverlay.setUI(ctx.ui);
+		await jobsOverlay.refresh();
+		jobsOverlay.startPolling();
+	});
+	pi.on("session_shutdown", async () => {
+		jobsOverlay?.dispose();
+	});
 
 	// Pi awaits async extension factories before replaying the transcript, so
 	// Vehicle renderers must be registered here rather than in session_start.

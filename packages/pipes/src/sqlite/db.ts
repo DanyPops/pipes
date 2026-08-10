@@ -79,6 +79,18 @@ const MIGRATION_5_PINNED_RUN_ID = `
 ALTER TABLE job_watches ADD COLUMN pinned_run_id TEXT;
 `;
 
+// Real-time progress (see orchestrator.ts's ciWatch/ciGetRunWithProgress -- elapsed vs. estimated
+// duration, same math ci_wait already reports live) persisted per snapshot so the subscribed-jobs
+// widget (pi-pipes) can read it straight off ci.pool instead of issuing one ci.wait-shaped call per
+// row on every poll tick. All three are nullable: a pre-migration row reads back as null rather than
+// a misleading 0, and a backend with no real estimate (GitLab's estimateDuration() always returns 0)
+// leaves them null too rather than a fake 0%.
+const MIGRATION_6_PROGRESS = `
+ALTER TABLE run_snapshots ADD COLUMN progress_percent REAL;
+ALTER TABLE run_snapshots ADD COLUMN estimated_ms INTEGER;
+ALTER TABLE run_snapshots ADD COLUMN overdue INTEGER;
+`;
+
 export function openPipesDb(path: string): Database {
 	return openSqliteWithPragmas(path, {
 		databaseOptions: { create: true, strict: true },
@@ -88,6 +100,7 @@ export function openPipesDb(path: string): Database {
 			{ version: 3, up: (db) => db.exec(MIGRATION_3_JOB_WATCHES) },
 			{ version: 4, up: (db) => db.exec(MIGRATION_4_SUBSCRIBER_SCHEDULES) },
 			{ version: 5, up: (db) => db.exec(MIGRATION_5_PINNED_RUN_ID) },
+			{ version: 6, up: (db) => db.exec(MIGRATION_6_PROGRESS) },
 		],
 	});
 }

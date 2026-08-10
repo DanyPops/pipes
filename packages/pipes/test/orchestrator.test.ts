@@ -286,6 +286,70 @@ describe("Orchestrator.ciWatch: real-time progress", () => {
 	});
 });
 
+describe("Orchestrator.ciGetRunWithProgress: same elapsed/estimated math as ciWatch, but on a plain CIRun for the pool-sync path", () => {
+	it("computes progressPercent/estimatedMs/overdue exactly like ciWatch does, for a still-running run", async () => {
+		const orchestrator = new Orchestrator();
+		const run: CIRun = { id: "1", name: "run", status: "running", startedAt: new Date(0), durationMs: 999_999 };
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, run, estimatedDurationMs: 120_000 }));
+
+		const withProgress = await orchestrator.ciGetRunWithProgress("gh", "job", "1", () => 60_000);
+
+		expect(withProgress.id).toBe("1");
+		expect(withProgress.progressPercent).toBe(50);
+		expect(withProgress.estimatedMs).toBe(120_000);
+		expect(withProgress.overdue).toBe(false);
+	});
+
+	it("flags overdue once elapsed exceeds 1.5x the estimate, matching ciWatch", async () => {
+		const orchestrator = new Orchestrator();
+		const run: CIRun = { id: "1", name: "run", status: "running", startedAt: new Date(0) };
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, run, estimatedDurationMs: 100_000 }));
+
+		const withProgress = await orchestrator.ciGetRunWithProgress("gh", "job", "1", () => 200_000);
+		expect(withProgress.overdue).toBe(true);
+	});
+
+	it("uses the backend's own durationMs once terminal, not a live now()-startedAt computation, matching ciWatch", async () => {
+		const orchestrator = new Orchestrator();
+		const run: CIRun = { id: "1", name: "run", status: "success", startedAt: new Date(0), durationMs: 60_000 };
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, run, estimatedDurationMs: 120_000 }));
+
+		const withProgress = await orchestrator.ciGetRunWithProgress("gh", "job", "1", () => 10_000_000);
+		expect(withProgress.progressPercent).toBe(50);
+	});
+
+	it("omits progressPercent/estimatedMs/overdue entirely (not a misleading 0/false) when the backend has no real estimate -- e.g. GitLab's estimateDuration() always returning 0", async () => {
+		const orchestrator = new Orchestrator();
+		const run: CIRun = { id: "1", name: "run", status: "running", startedAt: new Date(0) };
+		orchestrator.addAdapter(createStubCIBackend({ name: "gl", capabilities: Capability.Trigger, run, estimatedDurationMs: 0 }));
+
+		const withProgress = await orchestrator.ciGetRunWithProgress("gl", "job", "1");
+
+		expect(withProgress.progressPercent).toBeUndefined();
+		expect(withProgress.estimatedMs).toBeUndefined();
+		expect(withProgress.overdue).toBeUndefined();
+	});
+
+	it("omits progress fields for a backend with no CITriggerable capability at all (no estimateDuration to call)", async () => {
+		const orchestrator = new Orchestrator();
+		const run: CIRun = { id: "1", name: "run", status: "running", startedAt: new Date(0) };
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", run })); // no Capability.Trigger -- asTriggerable(...) resolves undefined
+
+		const withProgress = await orchestrator.ciGetRunWithProgress("gh", "job", "1");
+		expect(withProgress.progressPercent).toBeUndefined();
+	});
+
+	it("still carries every plain CIRun field through unchanged", async () => {
+		const orchestrator = new Orchestrator();
+		const run: CIRun = { id: "1", name: "run", status: "running", startedAt: new Date(0), url: "https://ci.example/gh/job/1", result: "" };
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", capabilities: Capability.Trigger, run, estimatedDurationMs: 100_000 }));
+
+		const withProgress = await orchestrator.ciGetRunWithProgress("gh", "job", "1");
+		expect(withProgress.url).toBe("https://ci.example/gh/job/1");
+		expect(withProgress.name).toBe("run");
+	});
+});
+
 describe("Orchestrator.ciSearch: passes a backend's SearchResult straight through", () => {
 	it("forwards both runs and truncated unchanged, rather than unwrapping to just the run list", async () => {
 		const orchestrator = new Orchestrator();

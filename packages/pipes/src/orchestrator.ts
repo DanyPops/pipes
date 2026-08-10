@@ -24,6 +24,7 @@ import {
 	isTerminalStatus,
 	type LogFilter,
 	type LogResult,
+	type RunStatus,
 	type SearchResult,
 } from "./run/ci-run.ts";
 import { classifyLog } from "./run/classify.ts";
@@ -78,6 +79,25 @@ export class NotOwnedError extends Error {
 }
 
 const TRIGGER_RESOLVE_POLL_MS = 2_000;
+
+/**
+ * Shared by ciWatch and ciGetRunWithProgress so the two can never drift: elapsed time comes from
+ * the backend's own durationMs once terminal (most backends report 0 while still running), or
+ * from startedAt otherwise. progressPercent/overdue are 0/false whenever there's no real estimate
+ * (estimatedMs <= 0) -- callers that need to distinguish "no estimate" from "a real 0%" (see
+ * ciGetRunWithProgress) check estimatedMs themselves before trusting these.
+ */
+function computeRunProgress(
+	status: RunStatus,
+	startedAt: Date,
+	durationMs: number | undefined,
+	estimatedMs: number,
+	now: () => number,
+): { elapsedMs: number; progressPercent: number; overdue: boolean } {
+	const elapsedMs = isTerminalStatus(status) ? (durationMs ?? 0) : Math.max(0, now() - startedAt.getTime());
+	if (estimatedMs <= 0) return { elapsedMs, progressPercent: 0, overdue: false };
+	return { elapsedMs, progressPercent: (elapsedMs / estimatedMs) * 100, overdue: elapsedMs > estimatedMs * 1.5 };
+}
 
 export class Orchestrator {
 	private readonly adapters = new Map<string, CIBackend>();
@@ -355,27 +375,49 @@ export class Orchestrator {
 	async ciWatch(backendName: string, jobRef: string, runId: string, now: () => number = Date.now): Promise<WatchStatus> {
 		const backend = this.adapter(backendName);
 		const run = await backend.getRun(jobRef, runId);
+		const estimatedMs = await this.estimateDurationFor(backend, jobRef);
+		const { elapsedMs, progressPercent, overdue } = computeRunProgress(run.status, run.startedAt, run.durationMs, estimatedMs, now);
 
-		const triggerable = asTriggerable(backend);
-		const estimatedMs = triggerable ? await triggerable.estimateDuration(jobRef) : 0;
-		const elapsedMs = isTerminalStatus(run.status) ? (run.durationMs ?? 0) : Math.max(0, now() - run.startedAt.getTime());
-
-		const watch: WatchStatus = {
+		return {
 			buildNumber: run.id,
 			jobRef,
 			backend: backendName,
 			status: run.status,
-			progressPercent: 0,
+			progressPercent,
 			elapsedMs,
 			estimatedMs,
-			overdue: false,
+			overdue,
 			url: run.url,
 		};
-		if (estimatedMs > 0) {
-			watch.progressPercent = (elapsedMs / estimatedMs) * 100;
-			watch.overdue = elapsedMs > estimatedMs * 1.5;
-		}
-		return watch;
+	}
+
+	private async estimateDurationFor(backend: CIBackend, jobRef: string): Promise<number> {
+		const triggerable = asTriggerable(backend);
+		return triggerable ? triggerable.estimateDuration(jobRef) : 0;
+	}
+
+	/**
+	 * The pool-sync path's counterpart to ciWatch: a plain `getRun`, decorated with the same
+	 * elapsed/estimated progress fields when a real estimate exists, so the background sync loop
+	 * (see process/pool-sync.ts) can persist progress per subscribed job without a second, redundant
+	 * ci.wait-shaped call per row. Unlike WatchStatus's always-present 0/false defaults, the three
+	 * progress fields here are omitted entirely (not a misleading 0%/false) when there's no real
+	 * estimate to compute from -- e.g. GitLab's own estimateDuration() unconditionally returning 0,
+	 * or a backend with no CITriggerable capability at all.
+	 */
+	async ciGetRunWithProgress(
+		backendName: string,
+		jobRef: string,
+		runId: string,
+		now: () => number = Date.now,
+	): Promise<CIRun & { progressPercent?: number; estimatedMs?: number; overdue?: boolean }> {
+		const backend = this.adapter(backendName);
+		const run = await backend.getRun(jobRef, runId);
+		const estimatedMs = await this.estimateDurationFor(backend, jobRef);
+		if (estimatedMs <= 0) return run;
+
+		const { progressPercent, overdue } = computeRunProgress(run.status, run.startedAt, run.durationMs, estimatedMs, now);
+		return { ...run, progressPercent, estimatedMs, overdue };
 	}
 
 	// ── Trigger / cancel with session ownership ─────────────────────────────
