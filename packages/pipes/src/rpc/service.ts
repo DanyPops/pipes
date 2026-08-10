@@ -313,18 +313,31 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 		return orchestrator.ciLog(input.backend, input.jobRef, input.runId ?? "", filter);
 	}
 
-	async function handleTrigger(input: OperationInputs["ci.trigger"]): Promise<OperationOutputs["ci.trigger"]> {
+	async function handleTrigger(
+		input: OperationInputs["ci.trigger"],
+		callContext?: PipesCallContext,
+	): Promise<OperationOutputs["ci.trigger"]> {
+		// ci.trigger's own auto-subscribe is pure bookkeeping (the caller never passes a subscriberId/
+		// projectRoot here -- ci.trigger's own input schema has neither field), so it's attributed the
+		// exact same way ci.subscribe's own default is: this call's own real session id when present,
+		// falling back to the shared anonymous subscriber for a raw RPC client with no session at all.
+		// Without this, a job triggered from a live session never shows up in that same session's own
+		// ci.subscribed({subscriberId}) view (e.g. the Jobs widget) until it's also explicitly
+		// ci.subscribe'd -- a real, observed gap the multi-session scoping fix exposed.
+		const subscriberId = callContext?.callerSessionId;
+		const projectRoot = callContext?.callerProjectRoot;
+		if (projectRoot && options.projectStore) registerVehicleProject(options.projectStore, { projectRoot });
 		if (input.pipeline) {
 			// Per-invocation override, merged onto every step's own baked-in params -- lets a preset
 			// whose values legitimately change between runs (a release image, a branch) stay usable
 			// without needing to be re-bookmarked just to update one value each time.
 			const pipelineRun = await orchestrator.triggerPipeline(input.pipeline, input.params ?? {});
-			if (pool) seedPoolFromPipelineRun(pool, orchestrator.pipelineBackendName(input.pipeline), pipelineRun);
+			if (pool) seedPoolFromPipelineRun(pool, orchestrator.pipelineBackendName(input.pipeline), pipelineRun, subscriberId, projectRoot);
 			return { pipelineRun };
 		}
 		if (!input.backend || !input.jobRef) throw new Error("backend and jobRef are required when pipeline is not set");
 		const result = await orchestrator.ciTrigger(input.backend, input.jobRef, input.params ?? {});
-		if (pool && result.buildNumber) seedPoolFromTrigger(pool, input.backend, input.jobRef, result.buildNumber);
+		if (pool && result.buildNumber) seedPoolFromTrigger(pool, input.backend, input.jobRef, result.buildNumber, subscriberId, projectRoot);
 		return { result };
 	}
 
@@ -510,7 +523,7 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 					return { repos: await orchestrator.ciListRepos(discover.backend) } as OperationOutputs[Name];
 				}
 				case "ci.trigger":
-					return (await handleTrigger(input as OperationInputs["ci.trigger"])) as OperationOutputs[Name];
+					return (await handleTrigger(input as OperationInputs["ci.trigger"], callContext)) as OperationOutputs[Name];
 				case "ci.wait":
 					return (await handleWait(input as OperationInputs["ci.wait"])) as OperationOutputs[Name];
 				case "ci.cancel": {
@@ -618,12 +631,18 @@ function sleep(ms: number): Promise<void> {
 
 /** Seeds one row per resolved step so the background sync loop picks them up on its next tick, without waiting for a caller to ask ci.status first. */
 /** Pins each step's auto-subscription to the exact run id that step itself produced, not "latest" -- same reasoning as seedPoolFromTrigger. */
-function seedPoolFromPipelineRun(pool: RunPool, backend: string, pipelineRun: PipelineRun): void {
+function seedPoolFromPipelineRun(
+	pool: RunPool,
+	backend: string,
+	pipelineRun: PipelineRun,
+	subscriberId?: string,
+	projectRoot?: string,
+): void {
 	const fetchedAt = new Date();
 	for (const step of pipelineRun.steps) {
 		if (!step.runId) continue;
-		pool.subscribeJob(backend, step.jobName, { runId: step.runId });
-		if (isTerminalStatus(step.status)) pool.unsubscribeJob(backend, step.jobName);
+		pool.subscribeJob(backend, step.jobName, { runId: step.runId, subscriberId, projectRoot });
+		if (isTerminalStatus(step.status)) pool.unsubscribeJob(backend, step.jobName, subscriberId);
 		pool.upsert({
 			backend,
 			jobRef: step.jobName,
@@ -641,9 +660,16 @@ function seedPoolFromPipelineRun(pool: RunPool, backend: string, pipelineRun: Pi
 
 /** Seeds an approximate "pending" row immediately after trigger — the background sync loop corrects it to the real status on its first tick. */
 /** Pins the auto-subscription to the exact run this trigger just produced, not "latest" -- a shared job can have other unrelated concurrent triggers, and "latest" has no way to tell them apart from the run this call actually started. */
-function seedPoolFromTrigger(pool: RunPool, backend: string, jobRef: string, runId: string): void {
+function seedPoolFromTrigger(
+	pool: RunPool,
+	backend: string,
+	jobRef: string,
+	runId: string,
+	subscriberId?: string,
+	projectRoot?: string,
+): void {
 	const now = new Date();
-	pool.subscribeJob(backend, jobRef, { runId });
+	pool.subscribeJob(backend, jobRef, { runId, subscriberId, projectRoot });
 	pool.upsert({ backend, jobRef, runId, status: "pending", result: "", url: "", startedAt: now, fetchedAt: now, watched: true });
 }
 

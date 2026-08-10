@@ -105,6 +105,57 @@ describe("ci.trigger", () => {
 
 		expect(backend.calls.trigger).toEqual([{ jobRef: "build", params: { ENV: "prod" } }]);
 	});
+
+	// Reproduces a real, observed gap: ci.subscribe already defaults subscriberId to
+	// callContext.callerSessionId (see "defaults subscriberId to the caller's own real session id"
+	// below), but ci.trigger's own auto-subscribe convenience path (seedPoolFromTrigger,
+	// seedPoolFromPipelineRun) never got the same treatment -- handleTrigger isn't even given
+	// callContext today. A live session that triggers a job never sees it in its own
+	// ci.subscribed({subscriberId: <its own session id>}) view -- e.g. a Jobs widget -- even though
+	// it's the very session that started the run, because the auto-subscription lands in the
+	// anonymous "" bucket instead.
+	it("attributes ci.trigger's own auto-subscription to the triggering session (callContext.callerSessionId), not the anonymous bucket", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "7" },
+			}),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		await service.execute("ci.trigger", { backend: "gh", jobRef: "job", params: {} }, { callerSessionId: "session-42" });
+
+		expect(runPool.isJobSubscribed("gh", "job", "session-42")).toBe(true);
+		expect(runPool.isJobSubscribed("gh", "job", "")).toBe(false);
+		expect(runPool.watchedRunsWithProjectLabels("session-42").some((run) => run.jobRef === "job")).toBe(true);
+	});
+
+	// Same gap, pipeline-trigger flavor: seedPoolFromPipelineRun seeds one row per resolved step,
+	// also always into the anonymous bucket regardless of who triggered the pipeline.
+	it("attributes a pipeline trigger's own auto-subscription (each step) to the triggering session too", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				// Deliberately "running", not "success" -- a terminal status would immediately
+				// self-unsubscribe right after the auto-subscribe this test is trying to observe.
+				run: { id: "1", name: "run", status: "running", startedAt: new Date(0) },
+				triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "build", runId: "5" },
+			}),
+		);
+		orchestrator.registerPipeline({ name: "deploy", backend: "gh", steps: [{ jobName: "build" }] });
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		await service.execute("ci.trigger", { pipeline: "deploy" }, { callerSessionId: "session-42" });
+
+		expect(runPool.isJobSubscribed("gh", "build", "session-42")).toBe(true);
+		expect(runPool.isJobSubscribed("gh", "build", "")).toBe(false);
+	});
 });
 
 describe("ci.wait", () => {
