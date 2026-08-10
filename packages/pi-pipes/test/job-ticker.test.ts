@@ -1,12 +1,13 @@
 /**
- * TDD: written before src/job-ticker.ts exists. JobTicker is the pure decision step behind "wire
- * the job overlay to notify the agent" -- given each refresh's freshly fetched rows, it decides
- * whether this tick is worth interrupting the agent for, and returns the message text to send (or
- * undefined). No I/O, no ExtensionAPI, no timers -- see jobs-overlay.ts for the stateful class that
- * actually calls pi.sendUserMessage with whatever this returns.
+ * pi-pipes' own domain config over @danypops/vehicle-client-pi's generic AgentPollTicker -- the
+ * vanish/reminder/throttle state machine itself is exhaustively covered by that package's own
+ * test/agent-poll-ticker.test.ts now (see ~/Projects/vehicle). What's tested here is only what's
+ * genuinely pi-pipes-specific: the CI job row key format and message wording, and that
+ * createJobTicker() really does wire up to the shared ticker (not a full re-test of its state
+ * machine).
  */
 import { describe, expect, it } from "bun:test";
-import { JobTicker, resolveJobTickerReminderIntervalMs } from "../src/job-ticker.ts";
+import { createJobTicker, resolveJobTickerReminderIntervalMs } from "../src/job-ticker.ts";
 import type { JobsWidgetRow } from "../src/jobs-widget.ts";
 
 function row(overrides: Partial<JobsWidgetRow> = {}): JobsWidgetRow {
@@ -19,101 +20,56 @@ function row(overrides: Partial<JobsWidgetRow> = {}): JobsWidgetRow {
 	};
 }
 
-describe("JobTicker", () => {
-	it("says nothing on the very first tick, even with active rows -- no prior baseline to diff against, and too soon for a reminder", () => {
-		const ticker = new JobTicker({ now: () => 0 });
+describe("createJobTicker", () => {
+	it("says nothing on the very first tick -- delegates the no-baseline-yet rule to the shared AgentPollTicker", () => {
+		const ticker = createJobTicker({ now: () => 0 });
 		expect(ticker.tick([row()])).toBeUndefined();
 	});
 
-	it("says nothing when there is nothing subscribed and nothing was ever subscribed", () => {
-		const ticker = new JobTicker({ now: () => 0 });
-		expect(ticker.tick([])).toBeUndefined();
-		expect(ticker.tick([])).toBeUndefined();
-	});
-
-	it("immediately reports a job that disappears between two ticks, regardless of elapsed time", () => {
+	it("reports a vanished job by its backend/jobRef/runId key, asking the agent to probe rather than guessing its result", () => {
 		let now = 0;
-		const ticker = new JobTicker({ now: () => now });
-		ticker.tick([row()]); // baseline: tracking jenkins-auto/ocp-baremetal-ipi-deployment #40531
+		const ticker = createJobTicker({ now: () => now });
+		ticker.tick([row()]); // baseline
+		now += 1;
 
-		now += 1; // barely any time has passed -- must not matter for a vanish report
 		const message = ticker.tick([]);
 
-		expect(message).toBeDefined();
 		expect(message).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
 		expect(message?.toLowerCase()).toContain("finished");
+		expect(message?.toLowerCase()).toContain("probe");
 	});
 
-	it("reports every job that vanished in the same tick, not just one", () => {
+	it("reports every vanished job's key together in one message", () => {
 		let now = 0;
-		const ticker = new JobTicker({ now: () => now });
+		const ticker = createJobTicker({ now: () => now });
 		ticker.tick([row(), row({ jobRef: "other-job", runId: "99" })]);
-
 		now += 1;
+
 		const message = ticker.tick([]);
 
 		expect(message).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
 		expect(message).toContain("jenkins-auto/other-job/99");
 	});
 
-	it("does not report a reminder before reminderIntervalMs has elapsed since the ticker started", () => {
+	it("reports a still-in-flight reminder once reminderIntervalMs has elapsed with nothing vanished", () => {
 		let now = 0;
-		const ticker = new JobTicker({ now: () => now, reminderIntervalMs: 1000 });
-		ticker.tick([row()]); // first tick: no baseline yet
-
-		now = 999;
-		expect(ticker.tick([row()])).toBeUndefined();
-	});
-
-	it("reports a still-in-flight reminder once reminderIntervalMs has elapsed with no vanish to report", () => {
-		let now = 0;
-		const ticker = new JobTicker({ now: () => now, reminderIntervalMs: 1000 });
+		const ticker = createJobTicker({ now: () => now, reminderIntervalMs: 1000 });
 		ticker.tick([row()]);
-
 		now = 1000;
+
 		const message = ticker.tick([row()]);
 
-		expect(message).toBeDefined();
 		expect(message).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
-		expect(message?.toLowerCase()).toContain("progress");
+		expect(message?.toLowerCase()).toContain("probe");
+		expect(message?.toLowerCase()).not.toContain("finished");
 	});
 
-	it("resets the reminder clock after firing -- does not fire again on the very next tick", () => {
+	it("defaults reminderIntervalMs to resolveJobTickerReminderIntervalMs()'s own value", () => {
 		let now = 0;
-		const ticker = new JobTicker({ now: () => now, reminderIntervalMs: 1000 });
+		const ticker = createJobTicker({ now: () => now });
 		ticker.tick([row()]);
-		now = 1000;
-		expect(ticker.tick([row()])).toBeDefined();
-
-		now = 1001;
+		now = 15_000; // well under the 5-minute default -- must still be quiet
 		expect(ticker.tick([row()])).toBeUndefined();
-
-		now = 2000;
-		expect(ticker.tick([row()])).toBeDefined();
-	});
-
-	it("prefers reporting a vanish over a reminder when both would otherwise fire on the same tick", () => {
-		let now = 0;
-		const ticker = new JobTicker({ now: () => now, reminderIntervalMs: 1000 });
-		ticker.tick([row(), row({ jobRef: "other-job", runId: "99" })]);
-
-		now = 1000; // reminder is also due now
-		const message = ticker.tick([row({ jobRef: "other-job", runId: "99" })]); // one of the two vanished
-
-		expect(message).toContain("finished");
-		expect(message).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
-		expect(message).not.toContain("other-job"); // still running -- not part of the vanish report
-	});
-
-	it("defaults to a multi-minute reminder interval so a long-running job does not nag every widget poll", () => {
-		const ticker = new JobTicker({ now: () => 0 });
-		// 15s (JOBS_WIDGET_POLL_INTERVAL_MS) later, well under any sane default, must still be quiet.
-		let now = 0;
-		const t2 = new JobTicker({ now: () => now });
-		t2.tick([row()]);
-		now = 15_000;
-		expect(t2.tick([row()])).toBeUndefined();
-		void ticker;
 	});
 });
 

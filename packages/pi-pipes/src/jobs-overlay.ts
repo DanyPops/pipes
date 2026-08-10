@@ -9,21 +9,18 @@
  * Deliberately poll-only, no session/project-root scoping: subscribed jobs are daemon-global, not
  * tied to one session's CWD the way pi-papyrus's task/note widgets are.
  */
+import type { AgentNotifier, AgentPollTicker } from "@danypops/vehicle-client-pi/agent-poll-ticker";
+import { reportAgentPollTick } from "@danypops/vehicle-client-pi/agent-poll-ticker";
 import type { ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { ProgressBarGlyphStyle, ProgressBarGlyphs } from "malevich-tui-components";
 import { BoundedPoll } from "./bounded-poll.ts";
-import { JobTicker } from "./job-ticker.ts";
+import { createJobTicker } from "./job-ticker.ts";
 import { fetchSubscribedJobs } from "./jobs-client.ts";
 import { buildJobsWidgetProjection, type JobsWidgetRow, renderJobsWidgetLines } from "./jobs-widget.ts";
 
-const WIDGET_KEY = "pi-pipes-jobs";
+export type { AgentNotifier } from "@danypops/vehicle-client-pi/agent-poll-ticker";
 
-/** Narrow seam over pi.sendUserMessage -- real callers pass a thin wrapper around the live
- * ExtensionAPI (see index.ts); tests pass a plain recording fake. Kept separate from the full
- * ExtensionAPI type the same way ExtensionUIContext already is for setUI(). */
-export interface AgentNotifier {
-	sendUserMessage(content: string, options?: { deliverAs?: "steer" | "followUp" }): void;
-}
+const WIDGET_KEY = "pi-pipes-jobs";
 
 /** Matches packages/pipes' own RUN_POOL_SYNC_INTERVAL_MS's order of magnitude (30s) -- polling much
  * faster than the daemon's own background sync refreshes the pool would just re-read stale data. */
@@ -36,12 +33,12 @@ export class JobsOverlay {
 	private tui: any | undefined;
 	private rows: JobsWidgetRow[] = [];
 	private readonly poll = new BoundedPoll();
-	private readonly ticker: JobTicker;
+	private readonly ticker: AgentPollTicker<JobsWidgetRow>;
 
 	constructor(
 		private readonly progressBarGlyphs: ProgressBarGlyphs | ProgressBarGlyphStyle = "blocks",
 		private readonly notifier?: AgentNotifier,
-		ticker: JobTicker = new JobTicker(),
+		ticker: AgentPollTicker<JobsWidgetRow> = createJobTicker(),
 	) {
 		this.ticker = ticker;
 	}
@@ -79,20 +76,7 @@ export class JobsOverlay {
 	}
 
 	private notifyAgentIfNeeded(): void {
-		if (!this.notifier) return;
-		let message: string | undefined;
-		try {
-			message = this.ticker.tick(this.rows);
-		} catch {
-			return;
-		}
-		if (!message) return;
-		try {
-			this.notifier.sendUserMessage(message, { deliverAs: "steer" });
-		} catch {
-			// Best-effort -- a session mid-shutdown or otherwise unable to accept a message must not
-			// crash the widget.
-		}
+		reportAgentPollTick(this.ticker, this.rows, this.notifier);
 	}
 
 	private render(): void {

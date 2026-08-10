@@ -9,6 +9,7 @@
  */
 
 import { createPipesClient } from "@danypops/pipes";
+import { createAgentNotifier } from "@danypops/vehicle-client-pi/agent-poll-ticker";
 import { registerSharedSecretsCommand } from "@danypops/vehicle-client-pi/secrets-tui";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { JobsOverlay } from "./jobs-overlay.ts";
@@ -50,9 +51,7 @@ export default async function pipesExtension(pi: ExtensionAPI, deps: PiPipesDeps
 	let jobsOverlay: JobsOverlay | undefined;
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
-		jobsOverlay ??= new JobsOverlay(resolvePipesProgressBarStyle(), {
-			sendUserMessage: (content, options) => pi.sendUserMessage(content, options),
-		});
+		jobsOverlay ??= new JobsOverlay(resolvePipesProgressBarStyle(), createAgentNotifier(pi));
 		jobsOverlay.setUI(ctx.ui);
 		await jobsOverlay.refresh();
 		jobsOverlay.startPolling();
