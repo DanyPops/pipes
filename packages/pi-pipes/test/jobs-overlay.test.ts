@@ -119,4 +119,82 @@ describe("JobsOverlay", () => {
 		overlay.dispose();
 		expect(setWidgetCalls.at(-1)).toBeUndefined();
 	});
+
+	describe("notifying the agent", () => {
+		function fakeNotifier() {
+			const calls: Array<{ content: string; options?: { deliverAs?: "steer" | "followUp" } }> = [];
+			return {
+				calls,
+				sendUserMessage: (content: string, options?: { deliverAs?: "steer" | "followUp" }) => calls.push({ content, options }),
+			};
+		}
+
+		it("never calls the notifier on the very first refresh -- no baseline transition yet", async () => {
+			setJobsClientConnectorForTests(() => fakeClient([subscribedRun()]));
+			const notifier = fakeNotifier();
+			const overlay = new JobsOverlay("blocks", notifier);
+			overlay.setUI({ setWidget: () => {} } as unknown as ExtensionUIContext);
+
+			await overlay.refresh();
+
+			expect(notifier.calls).toEqual([]);
+		});
+
+		it("notifies once a previously-subscribed job disappears (finished) between refreshes", async () => {
+			setJobsClientConnectorForTests(() => fakeClient([subscribedRun()]));
+			const notifier = fakeNotifier();
+			const overlay = new JobsOverlay("blocks", notifier);
+			overlay.setUI({ setWidget: () => {} } as unknown as ExtensionUIContext);
+			await overlay.refresh();
+
+			setJobsClientConnectorForTests(() => fakeClient([]));
+			await overlay.refresh();
+
+			expect(notifier.calls).toHaveLength(1);
+			expect(notifier.calls[0]?.content).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
+			expect(notifier.calls[0]?.options).toEqual({ deliverAs: "steer" });
+		});
+
+		it("does not treat a failed fetch as every job having vanished -- ticker state is untouched by a fetch error", async () => {
+			setJobsClientConnectorForTests(() => fakeClient([subscribedRun()]));
+			const notifier = fakeNotifier();
+			const overlay = new JobsOverlay("blocks", notifier);
+			overlay.setUI({ setWidget: () => {} } as unknown as ExtensionUIContext);
+			await overlay.refresh(); // baseline: tracking the job
+
+			setJobsClientConnectorForTests(() => {
+				throw new Error("Pipes daemon is not running; run `pipes serve`.");
+			});
+			await overlay.refresh(); // transient daemon hiccup -- must not read as a vanish
+
+			expect(notifier.calls).toEqual([]);
+
+			setJobsClientConnectorForTests(() => fakeClient([])); // now genuinely gone
+			await overlay.refresh();
+
+			expect(notifier.calls).toHaveLength(1); // exactly once, not lost and not duplicated
+		});
+
+		it("never throws when no notifier is configured (default construction, matches every other test in this file)", async () => {
+			setJobsClientConnectorForTests(() => fakeClient([subscribedRun()]));
+			const overlay = new JobsOverlay();
+			overlay.setUI({ setWidget: () => {} } as unknown as ExtensionUIContext);
+			await overlay.refresh();
+			setJobsClientConnectorForTests(() => fakeClient([]));
+			await expect(overlay.refresh()).resolves.toBeUndefined();
+		});
+
+		it("a notifier that itself throws never crashes the widget", async () => {
+			setJobsClientConnectorForTests(() => fakeClient([subscribedRun()]));
+			const overlay = new JobsOverlay("blocks", {
+				sendUserMessage: () => {
+					throw new Error("session is mid-shutdown");
+				},
+			});
+			overlay.setUI({ setWidget: () => {} } as unknown as ExtensionUIContext);
+			await overlay.refresh();
+			setJobsClientConnectorForTests(() => fakeClient([]));
+			await expect(overlay.refresh()).resolves.toBeUndefined();
+		});
+	});
 });

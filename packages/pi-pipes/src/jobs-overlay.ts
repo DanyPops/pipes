@@ -12,10 +12,18 @@
 import type { ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { ProgressBarGlyphStyle, ProgressBarGlyphs } from "malevich-tui-components";
 import { BoundedPoll } from "./bounded-poll.ts";
+import { JobTicker } from "./job-ticker.ts";
 import { fetchSubscribedJobs } from "./jobs-client.ts";
 import { buildJobsWidgetProjection, type JobsWidgetRow, renderJobsWidgetLines } from "./jobs-widget.ts";
 
 const WIDGET_KEY = "pi-pipes-jobs";
+
+/** Narrow seam over pi.sendUserMessage -- real callers pass a thin wrapper around the live
+ * ExtensionAPI (see index.ts); tests pass a plain recording fake. Kept separate from the full
+ * ExtensionAPI type the same way ExtensionUIContext already is for setUI(). */
+export interface AgentNotifier {
+	sendUserMessage(content: string, options?: { deliverAs?: "steer" | "followUp" }): void;
+}
 
 /** Matches packages/pipes' own RUN_POOL_SYNC_INTERVAL_MS's order of magnitude (30s) -- polling much
  * faster than the daemon's own background sync refreshes the pool would just re-read stale data. */
@@ -28,8 +36,15 @@ export class JobsOverlay {
 	private tui: any | undefined;
 	private rows: JobsWidgetRow[] = [];
 	private readonly poll = new BoundedPoll();
+	private readonly ticker: JobTicker;
 
-	constructor(private readonly progressBarGlyphs: ProgressBarGlyphs | ProgressBarGlyphStyle = "blocks") {}
+	constructor(
+		private readonly progressBarGlyphs: ProgressBarGlyphs | ProgressBarGlyphStyle = "blocks",
+		private readonly notifier?: AgentNotifier,
+		ticker: JobTicker = new JobTicker(),
+	) {
+		this.ticker = ticker;
+	}
 
 	setUI(ctx: ExtensionUIContext): void {
 		if (ctx !== this.uiCtx) {
@@ -45,15 +60,38 @@ export class JobsOverlay {
 	 * or a rendering bug.
 	 */
 	async refresh(): Promise<void> {
+		let fetched = true;
 		try {
 			this.rows = await fetchSubscribedJobs();
 		} catch {
 			this.rows = [];
+			fetched = false;
 		}
+		// A failed fetch must never reach the ticker: an empty result from a transient daemon hiccup
+		// would otherwise read as every subscribed job having just finished. Skip the tick entirely
+		// (not feed it []) so the ticker's own baseline survives the hiccup unchanged.
+		if (fetched) this.notifyAgentIfNeeded();
 		try {
 			this.render();
 		} catch {
 			// A rendering bug must not crash the extension host over a best-effort status widget.
+		}
+	}
+
+	private notifyAgentIfNeeded(): void {
+		if (!this.notifier) return;
+		let message: string | undefined;
+		try {
+			message = this.ticker.tick(this.rows);
+		} catch {
+			return;
+		}
+		if (!message) return;
+		try {
+			this.notifier.sendUserMessage(message, { deliverAs: "steer" });
+		} catch {
+			// Best-effort -- a session mid-shutdown or otherwise unable to accept a message must not
+			// crash the widget.
 		}
 	}
 

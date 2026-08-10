@@ -1,20 +1,25 @@
 /**
- * Answers a real question: does a ci_subscribe'd job's status transition ever reach the *agent*
- * (a message the LLM sees, or something that wakes it up on its own), or only the human-facing
- * "Jobs" widget? Uses @danypops/pi-extension-harness (packages/pi-extension-harness in
- * ~/Projects/pi-integral) -- an in-process ExtensionAPI/ExtensionContext stub, no real
- * AgentSession, LLM, daemon, or timer. Deterministic: every "poll tick" here is a direct
- * h.emit("session_start", ...) call driven by a hand-controlled fake connector, never a real
- * setInterval or network call.
+ * Answers a real question raised against a live session: does a ci_subscribe'd job's status
+ * transition ever reach the *agent* (a message the LLM sees, or something that wakes it up on its
+ * own), or only the human-facing "Jobs" widget?
  *
- * Pi's own extension API does have the mechanism that *would* be needed for this --
- * pi.sendUserMessage()/pi.sendMessage({..., triggerTurn: true}) "always triggers a turn" (see
- * docs/extensions.md's own wording) even when the agent is idle. pipesExtension never calls
- * either. This file is the reproducible proof of that gap, not a spec for what should replace it
- * -- see the "not yet wired" assertions below and the conversation's own written answer for the
- * fuller picture (the daemon does have a push channel, packages/pipes' PushChannel.publish("ci",
- * ...) in process/daemon.ts, but pi-pipes' own client -- jobs-client.ts -- never subscribes to
- * it; JobsOverlay is poll-only).
+ * Uses @danypops/pi-extension-harness (packages/pi-extension-harness in ~/Projects/pi-integral) --
+ * an in-process ExtensionAPI/ExtensionContext stub, no real AgentSession, LLM, daemon, or timer.
+ * Deterministic: every "poll tick" here is a direct h.emit("session_start", ...) call driven by a
+ * hand-controlled fake connector, never a real setInterval or network call.
+ *
+ * This started out proving a gap (pi-pipes only ever updated the widget). jobs-overlay.ts and
+ * job-ticker.ts now wire a subscribed job's terminal transition -- and, on a slower throttle, a
+ * "still in flight" reminder -- through to pi.sendUserMessage(..., {deliverAs: "steer"}), which
+ * per docs/extensions.md "Always triggers a turn" (immediately when idle; queued to run right
+ * after the current turn's tool calls when streaming, never throwing either way). This file is now
+ * the reproducible proof that the wiring actually reaches the agent, not just the widget -- see
+ * job-ticker.test.ts and jobs-overlay.test.ts for the unit-level coverage of the decision logic
+ * itself.
+ *
+ * Separately (not covered here): packages/pipes' daemon does already publish a push channel for
+ * this (PushChannel.publish("ci", ...) in process/daemon.ts's pool-sync wiring), but pi-pipes' own
+ * jobs-client.ts never subscribes to it -- JobsOverlay is still poll-only (JOBS_WIDGET_POLL_INTERVAL_MS).
  */
 import { afterEach, describe, expect, it } from "bun:test";
 import { createExtensionHarness } from "@danypops/pi-extension-harness";
@@ -49,7 +54,7 @@ function harnessFactory(): (pi: ExtensionAPI) => Promise<void> {
 describe("ci_subscribe's status transitions and the agent -- deterministic, mocked, no real daemon/timer/side effects", () => {
 	afterEach(resetJobsClientConnectorForTests);
 
-	it("a subscribed job finishing (running -> success) updates the widget but sends the agent no message at all", async () => {
+	it("a subscribed job finishing (running -> success) both updates the widget and sends the agent a real user message", async () => {
 		let currentStatus = "running";
 		setJobsClientConnectorForTests(
 			() =>
@@ -76,7 +81,7 @@ describe("ci_subscribe's status transitions and the agent -- deterministic, mock
 		await h.boot(); // fires session_start -- first refresh() sees the "running" job, widget registers
 
 		expect(registeredFactory).toBeDefined();
-		expect(h.userMessages).toEqual([]); // nothing sent to the agent just from subscribing/observing
+		expect(h.userMessages).toEqual([]); // nothing sent to the agent just from subscribing/observing -- no baseline transition yet
 
 		// Simulate the daemon's background sync loop having moved the job to "success" between polls
 		// -- fires the exact same session_start handler (and therefore the exact same
@@ -85,29 +90,33 @@ describe("ci_subscribe's status transitions and the agent -- deterministic, mock
 		currentStatus = "success";
 		await h.emit("session_start", {});
 
-		expect(h.userMessages).toEqual([]); // still nothing -- a status transition reaches only the widget
-		expect(h.notifications).toEqual([]); // not even a ui.notify()
-		expect(h.appendedEntries).toEqual([]); // not even a durable pi.appendEntry()
+		expect(h.userMessages).toHaveLength(1);
+		expect(h.userMessages[0]?.content).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
+		expect(String(h.userMessages[0]?.content).toLowerCase()).toContain("finished");
+		expect(h.userMessages[0]?.options).toEqual({ deliverAs: "steer" });
 	});
 
-	it("Pi's own extension API does expose the mechanism that would be needed here (sendUserMessage) -- pipesExtension just never calls it", async () => {
+	it("does not nudge the agent again on the very next tick once the finish has already been reported", async () => {
+		let runs: unknown[] = [subscribedRun("running")];
 		setJobsClientConnectorForTests(
 			() =>
 				({
 					async call() {
-						return { runs: [] };
+						return { runs };
 					},
 					// biome-ignore lint/suspicious/noExplicitAny: minimal test double, not the real PipesClient shape
 				}) as any,
 		);
+
 		const h = createExtensionHarness(harnessFactory());
+		Object.assign(h.ctx, { hasUI: true, ui: { ...h.ctx.ui, setWidget: () => {} } });
 		await h.boot();
 
-		// docs/extensions.md: pi.sendUserMessage() "Always triggers a turn" -- even while idle --
-		// which is exactly the capability a background poll would need to wake the agent up on a
-		// subscribed job's completion. It's a real, callable function on this session's api;
-		// pipesExtension's own jobs-overlay.ts simply never reaches for it (h.userMessages is empty
-		// throughout the previous test, confirming that by omission rather than assertion alone).
-		expect(typeof h.api.sendUserMessage).toBe("function");
+		runs = [];
+		await h.emit("session_start", {});
+		expect(h.userMessages).toHaveLength(1);
+
+		await h.emit("session_start", {}); // still empty -- nothing new vanished, no reminder due yet
+		expect(h.userMessages).toHaveLength(1);
 	});
 });

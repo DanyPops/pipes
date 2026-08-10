@@ -15,12 +15,14 @@ function fakePi(): {
 	pi: ExtensionAPI;
 	commands: string[];
 	tools: string[];
+	userMessages: Array<{ content: unknown; options?: { deliverAs?: "steer" | "followUp" } }>;
 	// biome-ignore lint/suspicious/noExplicitAny: see FakeEventHandler
 	fire: (event: string, ctx?: any) => Promise<void>;
 } {
 	const commands: string[] = [];
 	const tools: string[] = [];
 	const handlers: Record<string, FakeEventHandler[]> = {};
+	const userMessages: Array<{ content: unknown; options?: { deliverAs?: "steer" | "followUp" } }> = [];
 	const pi = {
 		registerCommand: (name: string) => commands.push(name),
 		registerTool: (def: { name: string }) => tools.push(def.name),
@@ -31,12 +33,13 @@ function fakePi(): {
 		getAllTools: () => [],
 		getActiveTools: () => [],
 		setActiveTools: () => {},
+		sendUserMessage: (content: unknown, options?: { deliverAs?: "steer" | "followUp" }) => userMessages.push({ content, options }),
 	} as unknown as ExtensionAPI;
 	// biome-ignore lint/suspicious/noExplicitAny: see FakeEventHandler
 	const fire = async (event: string, ctx: any = {}) => {
 		for (const handler of handlers[event] ?? []) await handler({ type: event }, ctx);
 	};
-	return { pi, commands, tools, fire };
+	return { pi, commands, tools, userMessages, fire };
 }
 
 describe("pipesExtension", () => {
@@ -160,5 +163,52 @@ describe("pipesExtension: subscribed-jobs widget", () => {
 
 		await fire("session_shutdown", {});
 		expect(registeredKey).toBeUndefined();
+	});
+
+	it("wires the widget's notifier to pi.sendUserMessage -- a subscribed job finishing between polls sends the agent a message", async () => {
+		setJobsClientConnectorForTests(
+			() =>
+				({
+					async call() {
+						return {
+							runs: [
+								{
+									backend: "jenkins-auto",
+									jobRef: "ocp-baremetal-ipi-deployment",
+									runId: "40531",
+									status: "running",
+									result: "",
+									url: "",
+									startedAt: new Date(0),
+									fetchedAt: new Date(0),
+									watched: true,
+								},
+							],
+						};
+					},
+					// biome-ignore lint/suspicious/noExplicitAny: minimal test double, not the real PipesClient shape
+				}) as any,
+		);
+		const { pi, fire, userMessages } = fakePi();
+		await pipesExtension(pi, { registerVehicle: async () => undefined });
+
+		const ui = { setWidget: () => {} };
+		await fire("session_start", { hasUI: true, ui }); // baseline: tracking the job -- no message yet
+		expect(userMessages).toEqual([]);
+
+		setJobsClientConnectorForTests(
+			() =>
+				({
+					async call() {
+						return { runs: [] };
+					},
+					// biome-ignore lint/suspicious/noExplicitAny: minimal test double, not the real PipesClient shape
+				}) as any,
+		);
+		await fire("session_start", { hasUI: true, ui }); // same overlay instance (memoized) -- ticker sees the vanish
+
+		expect(userMessages).toHaveLength(1);
+		expect(userMessages[0]?.content).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
+		expect(userMessages[0]?.options).toEqual({ deliverAs: "steer" });
 	});
 });

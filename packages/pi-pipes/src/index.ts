@@ -42,10 +42,17 @@ export default async function pipesExtension(pi: ExtensionAPI, deps: PiPipesDeps
 	// for "ci" yet); never spawns the daemon (jobs-client.ts's fetchSubscribedJobs uses
 	// connectPipesClient, not createPipesClient), so a session with the daemon not running just
 	// shows nothing instead of starting one for a passive background widget.
+	//
+	// Also wired to pi.sendUserMessage (see job-ticker.ts): a subscribed job disappearing between
+	// polls (the daemon's own terminal-status signal) or a slow "still in flight" reminder both
+	// reach the agent itself, not just this widget -- otherwise ci_subscribe's own background
+	// watch never wakes the agent up on its own; see this extension's own jobs-agent-reaction.test.ts.
 	let jobsOverlay: JobsOverlay | undefined;
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
-		jobsOverlay ??= new JobsOverlay(resolvePipesProgressBarStyle());
+		jobsOverlay ??= new JobsOverlay(resolvePipesProgressBarStyle(), {
+			sendUserMessage: (content, options) => pi.sendUserMessage(content, options),
+		});
 		jobsOverlay.setUI(ctx.ui);
 		await jobsOverlay.refresh();
 		jobsOverlay.startPolling();
