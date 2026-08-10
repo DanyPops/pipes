@@ -452,6 +452,44 @@ describe("ci.subscribed", () => {
 
 		expect(result.runs.map((r) => r.runId).sort()).toEqual(["1", "2"]);
 	});
+
+	it("an explicit subscriberId scopes the result to only that caller's own subscribed jobs -- the cross-session leak fix", async () => {
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		runPool.subscribeJob("jenkins", "deploy-a", { subscriberId: "session-a" });
+		runPool.subscribeJob("gh", "build-b", { subscriberId: "session-b" });
+		runPool.upsert({
+			backend: "jenkins",
+			jobRef: "deploy-a",
+			runId: "1",
+			status: "running",
+			result: "",
+			url: "",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: true,
+		});
+		runPool.upsert({
+			backend: "gh",
+			jobRef: "build-b",
+			runId: "2",
+			status: "running",
+			result: "",
+			url: "",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: true,
+		});
+		const service = createPipesService(new Orchestrator(), { runPool });
+
+		const forA = await service.execute("ci.subscribed", { subscriberId: "session-a" });
+		expect(forA.runs.map((r) => r.jobRef)).toEqual(["deploy-a"]);
+
+		const forB = await service.execute("ci.subscribed", { subscriberId: "session-b" });
+		expect(forB.runs.map((r) => r.jobRef)).toEqual(["build-b"]);
+
+		const unscoped = await service.execute("ci.subscribed", {});
+		expect(unscoped.runs.map((r) => r.jobRef).sort()).toEqual(["build-b", "deploy-a"]);
+	});
 });
 
 describe("ci.subscribe / ci.unsubscribe", () => {

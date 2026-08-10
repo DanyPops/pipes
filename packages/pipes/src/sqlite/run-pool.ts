@@ -89,8 +89,15 @@ export interface RunPool {
 	 * this daemon's own "one label is enough, this isn't a set-membership feature" scope); both
 	 * fields are undefined when no subscription on this job ever carried a projectRoot, or the
 	 * root it carried was never actually registered as a project.
+	 *
+	 * subscriberId, when given, scopes the result to only jobs that exact subscriber is itself
+	 * watching (a real job_watches row for that backend/jobRef/subscriber_id) -- the fix for a
+	 * real, proven cross-session leak: ci.subscribed used to return every watched run globally to
+	 * any caller, so one Pi session's own job-finished notification reached every other session's
+	 * ticker too. Omitted (the default), this keeps today's global, unscoped view -- e.g. a raw
+	 * RPC client with no session identity to filter by.
 	 */
-	watchedRunsWithProjectLabels(): Array<RunSnapshot & { projectRoot?: string; projectName?: string }>;
+	watchedRunsWithProjectLabels(subscriberId?: string): Array<RunSnapshot & { projectRoot?: string; projectName?: string }>;
 }
 
 export interface JobSubscription {
@@ -270,8 +277,21 @@ export function createRunPool(db: Database): RunPool {
 			);
 		},
 
-		watchedRunsWithProjectLabels(): Array<RunSnapshot & { projectRoot?: string; projectName?: string }> {
-			const rows = db.query("SELECT * FROM run_snapshots WHERE watched = 1").all() as RunRow[];
+		watchedRunsWithProjectLabels(subscriberId?: string): Array<RunSnapshot & { projectRoot?: string; projectName?: string }> {
+			const rows = (
+				subscriberId === undefined
+					? db.query("SELECT * FROM run_snapshots WHERE watched = 1").all()
+					: db
+							.query(
+								`SELECT * FROM run_snapshots WHERE watched = 1 AND EXISTS (
+									SELECT 1 FROM job_watches
+									WHERE job_watches.backend = run_snapshots.backend
+									  AND job_watches.job_ref = run_snapshots.job_ref
+									  AND job_watches.subscriber_id = ?
+								)`,
+							)
+							.all(subscriberId)
+			) as RunRow[];
 			return rows.map((row) => {
 				const snapshot = toSnapshot(row);
 				const subscription = db

@@ -184,9 +184,9 @@ const OPERATIONS: readonly OperationSpec[] = [
 	{
 		action: "ci.subscribed",
 		description:
-			"Every currently-subscribed job across every backend/jobRef -- never a live backend call, cheap to call frequently. Unlike ci.pool (one job's own recent history), this is the full 'what's subscribed right now' listing.",
+			"Every currently-subscribed job across every backend/jobRef -- never a live backend call, cheap to call frequently. Unlike ci.pool (one job's own recent history), this is the full 'what's subscribed right now' listing. subscriberId, when given, scopes the result to only that subscriber's own watched jobs instead of the global view -- e.g. a jobs-overview widget passing its own Pi session id so one session's notifications never leak into another's.",
 		effect: "read",
-		properties: {},
+		properties: { subscriberId: stringProp },
 		required: [],
 	},
 	{

@@ -24,10 +24,15 @@ export function resetJobsClientConnectorForTests(): void {
 
 /** ci.subscribed's own RunSnapshot-shaped runs, narrowed to exactly what the widget renders --
  * pi-pipes never imports packages/pipes' domain types directly (same boundary ci-render.ts already
- * keeps for every other tool result). */
-export async function fetchSubscribedJobs(): Promise<JobsWidgetRow[]> {
+ * keeps for every other tool result).
+ *
+ * subscriberId, when given, scopes the request to only that caller's own subscribed jobs -- the fix
+ * for a real, proven cross-session leak where every Pi session's own widget/ticker saw (and got
+ * notified about) every other session's subscribed jobs too, since ci.subscribed previously had no
+ * scoping input at all. Omitted keeps the daemon's default global, unscoped view. */
+export async function fetchSubscribedJobs(subscriberId?: string): Promise<JobsWidgetRow[]> {
 	const client = connector();
-	const { runs } = await client.call("ci.subscribed", {});
+	const { runs } = await client.call("ci.subscribed", subscriberId === undefined ? {} : { subscriberId });
 	return runs.map((run) => ({
 		backend: run.backend,
 		jobRef: run.jobRef,

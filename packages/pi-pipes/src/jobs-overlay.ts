@@ -6,8 +6,11 @@
  * channel yet for "ci" (packages/pipes' own PushChannel.publish("ci", ...) exists daemon-side but
  * nothing here subscribes to it -- see the filed task's own note on this).
  *
- * Deliberately poll-only, no session/project-root scoping: subscribed jobs are daemon-global, not
- * tied to one session's CWD the way pi-papyrus's task/note widgets are.
+ * Deliberately poll-only (no push channel wired up for "ci" yet), but IS session-scoped: each
+ * overlay instance is constructed with its own real Pi session id (see index.ts) and passes it as
+ * ci.subscribed's subscriberId on every fetch, so this session's own widget/ticker only ever sees
+ * (and gets notified about) the jobs *this* session itself subscribed to -- fixing a real, proven
+ * leak where any session's finished job notified every other concurrently-running session too.
  */
 import type { AgentNotifier, AgentPollTicker } from "@danypops/vehicle-client-pi/agent-poll-ticker";
 import { reportAgentPollTick } from "@danypops/vehicle-client-pi/agent-poll-ticker";
@@ -39,6 +42,10 @@ export class JobsOverlay {
 		private readonly progressBarGlyphs: ProgressBarGlyphs | ProgressBarGlyphStyle = "blocks",
 		private readonly notifier?: AgentNotifier,
 		ticker: AgentPollTicker<JobsWidgetRow> = createJobTicker(),
+		/** This session's own real Pi session id, threaded into every ci.subscribed fetch as
+		 * subscriberId. Undefined falls back to the daemon's global, unscoped view (e.g. a caller with
+		 * no real session identity to scope by). */
+		private readonly subscriberId?: string,
 	) {
 		this.ticker = ticker;
 	}
@@ -59,7 +66,7 @@ export class JobsOverlay {
 	async refresh(): Promise<void> {
 		let fetched = true;
 		try {
-			this.rows = await fetchSubscribedJobs();
+			this.rows = await fetchSubscribedJobs(this.subscriberId);
 		} catch {
 			this.rows = [];
 			fetched = false;

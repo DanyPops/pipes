@@ -100,8 +100,16 @@ export interface OperationInputs {
 	"ci.chain": { backend: string; jobRef: string; runId: string; depth?: number; artifacts?: boolean };
 	"ci.pool": { backend: string; jobRef: string; limit?: number };
 	/** Every currently-subscribed job across every backend/jobRef -- unlike ci.pool (one job's own recent
-	 * history), this is the "what's subscribed right now" listing a jobs-overview widget polls. */
-	"ci.subscribed": Record<string, never>;
+	 * history), this is the "what's subscribed right now" listing a jobs-overview widget polls.
+	 * subscriberId, when given, scopes the result to only that subscriber's own watched jobs -- the
+	 * fix for a real, proven cross-session leak where every Pi session's own jobs-overview widget
+	 * saw (and got notified about) every OTHER session's subscribed jobs too, since this had no
+	 * scoping input at all. Deliberately NOT auto-derived from callContext the way ci.subscribe/
+	 * ci.unsubscribe default subscriberId -- this is a read, and an explicit tool call asking "what's
+	 * subscribed" (e.g. the model itself, via the ci_subscribed tool) reasonably still wants the full
+	 * global view by default; only a caller that explicitly wants its own scoped view (the jobs widget's
+	 * own background poll) passes this. Omitted keeps today's global, unscoped view. */
+	"ci.subscribed": { subscriberId?: string };
 	/** subscriberId defaults to the calling Pi session's own real id (PipesCallContext.callerSessionId,
 	 * auto-derived from context.sessionManager.getSessionId() -- see vehicle-client-pi's own doc comment)
 	 * when the caller doesn't pass one explicitly, falling back further to "" -- the shared anonymous
@@ -458,8 +466,10 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 					const pooled = input as OperationInputs["ci.pool"];
 					return { runs: pool ? pool.recent(pooled.backend, pooled.jobRef, pooled.limit ?? 20) : [] } as OperationOutputs[Name];
 				}
-				case "ci.subscribed":
-					return { runs: pool ? pool.watchedRunsWithProjectLabels() : [] } as OperationOutputs[Name];
+				case "ci.subscribed": {
+					const subscribed = input as OperationInputs["ci.subscribed"];
+					return { runs: pool ? pool.watchedRunsWithProjectLabels(subscribed.subscriberId) : [] } as OperationOutputs[Name];
+				}
 				case "ci.subscribe":
 					return (await handleSubscribe(input as OperationInputs["ci.subscribe"], callContext)) as OperationOutputs[Name];
 				case "ci.unsubscribe":

@@ -37,7 +37,10 @@ function fakePi(): {
 	} as unknown as ExtensionAPI;
 	// biome-ignore lint/suspicious/noExplicitAny: see FakeEventHandler
 	const fire = async (event: string, ctx: any = {}) => {
-		for (const handler of handlers[event] ?? []) await handler({ type: event }, ctx);
+		// Real Pi's ExtensionContext always carries a sessionManager -- default one here so a test that
+		// doesn't care about the exact session id (most of them) doesn't need to repeat this everywhere.
+		const fullCtx = { sessionManager: { getSessionId: () => "test-session" }, ...ctx };
+		for (const handler of handlers[event] ?? []) await handler({ type: event }, fullCtx);
 	};
 	return { pi, commands, tools, userMessages, fire };
 }

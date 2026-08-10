@@ -396,4 +396,46 @@ describe("createRunPool: watchedRunsWithProjectLabels", () => {
 		expect(rows.find((r) => r.jobRef === "job-a")?.projectName).toBe("pipes");
 		expect(rows.find((r) => r.jobRef === "job-b")?.projectName).toBeUndefined();
 	});
+
+	it("an optional subscriberId filter returns only runs that subscriber itself is watching -- the cross-session leak fix", () => {
+		const db = openPipesDb(":memory:");
+		const pool = createRunPool(db);
+		pool.subscribeJob("jenkins", "deploy-a", { subscriberId: "session-a" });
+		pool.subscribeJob("github", "build-b", { subscriberId: "session-b" });
+		pool.upsert(snapshot({ backend: "jenkins", jobRef: "deploy-a", runId: "1", watched: true }));
+		pool.upsert(snapshot({ backend: "github", jobRef: "build-b", runId: "2", watched: true }));
+
+		const rowsForA = pool.watchedRunsWithProjectLabels("session-a");
+		expect(rowsForA.map((r) => r.jobRef)).toEqual(["deploy-a"]);
+
+		const rowsForB = pool.watchedRunsWithProjectLabels("session-b");
+		expect(rowsForB.map((r) => r.jobRef)).toEqual(["build-b"]);
+	});
+
+	it("a job with more than one subscriber (including the filtered-for one) still shows up for that subscriber", () => {
+		const db = openPipesDb(":memory:");
+		const pool = createRunPool(db);
+		pool.subscribeJob("jenkins", "job", { subscriberId: "session-a" });
+		pool.subscribeJob("jenkins", "job", { subscriberId: "session-b" });
+		pool.upsert(snapshot({ backend: "jenkins", jobRef: "job", runId: "1", watched: true }));
+
+		expect(pool.watchedRunsWithProjectLabels("session-a").map((r) => r.jobRef)).toEqual(["job"]);
+		expect(pool.watchedRunsWithProjectLabels("session-c")).toEqual([]);
+	});
+
+	it("omitting subscriberId keeps today's global, unscoped view -- back-compat", () => {
+		const db = openPipesDb(":memory:");
+		const pool = createRunPool(db);
+		pool.subscribeJob("jenkins", "deploy-a", { subscriberId: "session-a" });
+		pool.subscribeJob("github", "build-b", { subscriberId: "session-b" });
+		pool.upsert(snapshot({ backend: "jenkins", jobRef: "deploy-a", runId: "1", watched: true }));
+		pool.upsert(snapshot({ backend: "github", jobRef: "build-b", runId: "2", watched: true }));
+
+		expect(
+			pool
+				.watchedRunsWithProjectLabels()
+				.map((r) => r.jobRef)
+				.sort(),
+		).toEqual(["build-b", "deploy-a"]);
+	});
 });

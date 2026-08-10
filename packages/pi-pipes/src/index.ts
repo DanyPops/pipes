@@ -51,7 +51,10 @@ export default async function pipesExtension(pi: ExtensionAPI, deps: PiPipesDeps
 	let jobsOverlay: JobsOverlay | undefined;
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
-		jobsOverlay ??= new JobsOverlay(resolvePipesProgressBarStyle(), createAgentNotifier(pi));
+		// This session's own real id, so ci.subscribed only ever returns (and the ticker only ever
+		// reacts to) jobs *this* session itself subscribed to -- see jobs-overlay.ts's own doc comment
+		// on the cross-session leak this fixes.
+		jobsOverlay ??= new JobsOverlay(resolvePipesProgressBarStyle(), createAgentNotifier(pi), undefined, ctx.sessionManager.getSessionId());
 		jobsOverlay.setUI(ctx.ui);
 		await jobsOverlay.refresh();
 		jobsOverlay.startPolling();
