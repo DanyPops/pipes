@@ -164,6 +164,9 @@ describe("registerPipesVehicle", () => {
 				throw new Error("connection refused");
 			},
 			manifestCache,
+			// Unrelated to broker/shell mode -- disabled so this test's registered-tool-names
+			// assertion stays about the manifest-cache fallback, not shell's own meta-tools.
+			shell: undefined,
 		};
 		const result = await registerPipesVehicle(pi, deps);
 		expect(result?.stale).toBe(true);
@@ -178,6 +181,7 @@ describe("registerPipesVehicle", () => {
 			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "t" }),
 			createClient: () => client,
 			manifestCache: fakeManifestCache(),
+			shell: undefined,
 		};
 		const result = await registerPipesVehicle(pi, deps);
 		expect(result?.tools.map((t) => t.toolName).sort()).toEqual(["ci_presets_list", "ci_status"]);
@@ -199,6 +203,23 @@ describe("registerPipesVehicle", () => {
 	});
 });
 
+describe("registerPipesVehicle: Vehicle Shell broker mode", () => {
+	it("defaults to shell mode on: core operations active immediately, everything else behind tools_man, and returns a shell handle for broker discovery", async () => {
+		const { pi, active } = fakePi();
+		const client = new FakeClient(manifest([operation("ci.status"), operation("ci.chain"), operation("rp.launches")]));
+		const deps: PipesVehicleDeps = {
+			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "t" }),
+			createClient: () => client,
+			manifestCache: fakeManifestCache(),
+		};
+
+		const result = await registerPipesVehicle(pi, deps);
+
+		expect(result?.shell).toBeDefined();
+		expect(active().sort()).toEqual(["ci_status", "tools_list", "tools_man"].sort());
+	});
+});
+
 describe("registerPipesVehicle's availability refresh", () => {
 	it("re-syncs tool availability after one of its own tools runs, picking up a newly-unavailable operation", async () => {
 		const { pi, active, fire } = fakePi();
@@ -207,6 +228,9 @@ describe("registerPipesVehicle's availability refresh", () => {
 			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "t" }),
 			createClient: () => client,
 			manifestCache: fakeManifestCache(),
+			// Unrelated to broker/shell mode -- disabled here so this test's own active-set assertions
+			// stay about availability refresh, not which operations happen to be "core".
+			shell: undefined,
 		};
 		await registerPipesVehicle(pi, deps);
 		expect(active().sort()).toEqual(["ci_discover", "ci_status"]);
@@ -224,6 +248,7 @@ describe("registerPipesVehicle's availability refresh", () => {
 			resolveTarget: () => ({ baseUrl: "http://127.0.0.1:9", token: "t" }),
 			createClient: () => client,
 			manifestCache: fakeManifestCache(),
+			shell: undefined,
 		};
 		await registerPipesVehicle(pi, deps);
 

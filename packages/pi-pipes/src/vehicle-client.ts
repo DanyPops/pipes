@@ -22,7 +22,13 @@
  * exact same hand-tuned rendering the mega-tool already had.
  */
 import { join } from "node:path";
-import { resolvePipesCredentialPaths, resolvePipesPaths, resolveVehicleClientTarget, type VehicleClientTarget } from "@danypops/pipes";
+import {
+	resolvePipesCredentialPaths,
+	resolvePipesPaths,
+	resolveVehicleClientTarget,
+	VEHICLE_NAME,
+	type VehicleClientTarget,
+} from "@danypops/pipes";
 import { createReconnectingVehicleClient } from "@danypops/vehicle-client/daemon-client";
 import { RemoteVehicleClient } from "@danypops/vehicle-client/http";
 import {
@@ -57,6 +63,11 @@ export { withConnectorDiagnostics } from "./connector-diagnostics.ts";
 
 /** Every Vehicle-projected tool name starts with "ci_" (ci_help, ci_status, ci_presets_list, ...) or "rp_" (rp_launches, rp_search, ...) -- one prefix per daemon operation namespace (see ../../pipes/src/rpc/service.ts's OperationName). */
 export const PIPES_TOOL_PREFIXES = ["ci_", "rp_"];
+
+/** Boot active with no tools_man call needed -- the handful of operations actually exercised
+ * every session, mirroring papyrus's own CORE_OPERATIONS selection (vehicle-notes-client.ts).
+ * Everything else (rp.*, ci.presets.*, ci.chain, ...) boots inactive, reachable via tools_man. */
+const PIPES_CORE_OPERATIONS = ["ci.status", "ci.log", "ci.wait", "ci.trigger", "ci.subscribe", "ci.tail"];
 
 export function isPipesVehicleTool(toolName: string): boolean {
 	return PIPES_TOOL_PREFIXES.some((prefix) => toolName.startsWith(prefix));
@@ -238,7 +249,16 @@ export interface PipesVehicleDeps {
 	manifestCache?: { filePath: string; fs: AtomicJsonFsAdapter };
 	/** Human-selected progress glyphs. Defaults to PIPES_PROGRESS_BAR_STYLE, then the bordered `blocks` style. */
 	progressBarGlyphs?: ProgressBarGlyphs | ProgressBarGlyphStyle;
+	/** Overridden in tests that need shell mode off to isolate an unrelated behavior -- pass `shell: undefined`
+	 * explicitly to disable it. Omitting this field entirely (not present on deps at all) keeps the real
+	 * default: core operations active, everything else behind tools_man, broker mode on under VEHICLE_NAME. */
+	shell?: RegisterVehicleToolsOptions["shell"];
 }
+
+const DEFAULT_SHELL_OPTIONS: RegisterVehicleToolsOptions["shell"] = {
+	coreOperations: PIPES_CORE_OPERATIONS,
+	broker: { ownVehicleName: VEHICLE_NAME },
+};
 
 export async function registerPipesVehicle(pi: ExtensionAPI, deps: PipesVehicleDeps = {}): Promise<RegisteredPiVehicle | undefined> {
 	const resolveTarget = deps.resolveTarget ?? resolveVehicleClientTarget;
@@ -262,6 +282,7 @@ export async function registerPipesVehicle(pi: ExtensionAPI, deps: PipesVehicleD
 		const options: RegisterVehicleToolsOptions = {
 			permissions: ["pipes:read", "pipes:write"],
 			principal: { id: "pi-pipes" },
+			shell: "shell" in deps ? deps.shell : DEFAULT_SHELL_OPTIONS,
 			renderers: (descriptor) => ({
 				renderCall: (args, theme) => renderCiCall(descriptor.name, args, theme),
 				renderResult: (result, resultOptions, theme, context) =>

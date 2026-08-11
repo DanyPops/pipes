@@ -7,7 +7,7 @@ import { PushChannel } from "@danypops/vehicle-server/push-channel";
 import { buildConfiguredAdapters } from "../config/config.ts";
 import { defaultPresetsPath, loadPresets } from "../config/presets.ts";
 import { defaultRepoConfigPath, loadRepoConfig } from "../config/repo-config.ts";
-import { RUN_POOL_SYNC_INTERVAL_MS } from "../constants.ts";
+import { RUN_POOL_SYNC_INTERVAL_MS, VEHICLE_NAME } from "../constants.ts";
 import { Orchestrator } from "../orchestrator.ts";
 import { resolvePipesCredentialPaths, resolvePipesPaths } from "../paths.ts";
 import { buildConfiguredReportPortalAdapter } from "../reportportal/init.ts";
@@ -47,6 +47,13 @@ export async function serveMain(): Promise<void> {
 	runDaemonProcess({
 		daemonLabel: "Pipes",
 		handlePath: paths.handle,
+		// Registers Pipes into the shared, cross-package Vehicle Handle Directory (see
+		// @danypops/vehicle-server's startDaemon) -- the seam Vehicle Shell broker mode discovers
+		// Pipes through, alongside its own private handle above. tokenPath lets a discovering
+		// broker authenticate; write/remove failures are logged, never fatal (startDaemon's own
+		// contract).
+		vehicleName: VEHICLE_NAME,
+		tokenPath: paths.token,
 		logger,
 		pushChannel,
 		buildApp: () => createApp({ service, token }),
