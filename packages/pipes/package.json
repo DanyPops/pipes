@@ -1,6 +1,6 @@
 {
 	"name": "@danypops/pipes",
-	"version": "0.17.6",
+	"version": "0.17.7",
 	"license": "MIT",
 	"description": "Supervised Bun daemon for pi-pipes: authenticated loopback CI status/trigger/log operations across GitHub, GitLab, and Jenkins",
 	"type": "module",
