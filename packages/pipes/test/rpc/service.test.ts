@@ -800,6 +800,29 @@ describe("ci.subscribe / ci.unsubscribe", () => {
 		expect(runPool.watchedSubscriptions().find((s) => s.subscriberId === "")?.pinnedRunId).toBe("9191");
 	});
 
+	it("ci.subscribe with no runId auto-pins to whatever 'latest' resolves right now -- immune to a later unrelated trigger stealing this subscription", async () => {
+		const orchestrator = new Orchestrator();
+		const runsById: Record<string, CIRun> = {
+			"10": { id: "10", name: "job", status: "running", startedAt: new Date(0) },
+			latest: { id: "10", name: "job", status: "running", startedAt: new Date(0) },
+		};
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh", runsById }));
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		const result = await service.execute("ci.subscribe", { backend: "gh", jobRef: "job" });
+
+		expect(result.run?.runId).toBe("10");
+		expect(runPool.watchedSubscriptions().find((s) => s.subscriberId === "")?.pinnedRunId).toBe("10");
+
+		// Someone else's unrelated build ("11") supersedes "latest" on this shared job.
+		runsById.latest = { id: "11", name: "job", status: "running", startedAt: new Date(0) };
+		await syncRunPool(orchestrator, runPool);
+
+		expect(runPool.get("gh", "job", "10")).toBeDefined();
+		expect(runPool.get("gh", "job", "11")).toBeUndefined();
+	});
+
 	it("ci.subscribe with a runId that's already terminal on the very first fetch unsubscribes just that subscription, not the whole job", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(

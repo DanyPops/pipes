@@ -387,7 +387,17 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 		return { result };
 	}
 
-	/** Idempotent: subscribing an already-watched job just re-seeds it with a fresh immediate fetch. */
+	/**
+	 * Idempotent: subscribing an already-watched job just re-seeds it with a fresh immediate fetch.
+	 *
+	 * Always pins to a concrete run id when one can be resolved -- even when the caller omitted
+	 * runId. Resolving "latest" once, right now, and pinning to whatever that turns out to be gives
+	 * the same convenience (no need to already know a run id) without the live bug this used to
+	 * cause: leaving the subscription unpinned meant every later background sync tick re-resolved
+	 * "latest" itself, so an unrelated concurrent trigger on the same job could silently steal an
+	 * existing subscription mid-flight. Matches seedPoolFromTrigger/seedPoolFromPipelineRun, which
+	 * already pin to the run id they just produced for exactly this reason.
+	 */
 	async function handleSubscribe(
 		input: OperationInputs["ci.subscribe"],
 		callContext?: PipesCallContext,
@@ -396,12 +406,10 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 		const subscriberId = input.subscriberId ?? callContext?.callerSessionId ?? "";
 		const projectRoot = input.projectRoot ?? callContext?.callerProjectRoot;
 		if (projectRoot && options.projectStore) registerVehicleProject(options.projectStore, { projectRoot });
-		pool.subscribeJob(input.backend, input.jobRef, { subscriberId, scheduleMs: input.scheduleMs, runId: input.runId, projectRoot });
-		// A pinned subscription's very first fetch must already reflect the pinned run, not "latest" --
-		// this is the exact confusion a bare "latest" resolve caused live on a job with other concurrent triggers.
 		const targetRunId = input.runId ?? "latest";
 		try {
 			const run = await orchestrator.ciGetRun(input.backend, input.jobRef, targetRunId);
+			pool.subscribeJob(input.backend, input.jobRef, { subscriberId, scheduleMs: input.scheduleMs, runId: run.id, projectRoot });
 			const log = await orchestrator.ciGetRawLog(input.backend, input.jobRef, run.id);
 			const snapshot: RunSnapshot = {
 				backend: input.backend,
@@ -424,8 +432,10 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 			}
 			return { subscribed: true, run: snapshot };
 		} catch {
-			// The job watch is still recorded -- the next background sync tick retries. Subscribing to a job that
-			// doesn't exist yet (e.g. about to be triggered) is not itself an error.
+			// No run could be resolved yet (e.g. subscribing to a job that's about to be triggered) --
+			// record the watch unpinned so the next background sync tick retries "latest" until a real
+			// run appears. Not itself an error.
+			pool.subscribeJob(input.backend, input.jobRef, { subscriberId, scheduleMs: input.scheduleMs, runId: input.runId, projectRoot });
 			return { subscribed: true };
 		}
 	}
