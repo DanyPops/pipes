@@ -17,6 +17,17 @@
 		"test": "bun test",
 		"check": "bun x tsc --noEmit"
 	},
+	"packed": {
+		"daemonService": {
+			"name": "pipes",
+			"displayName": "Pipes CI daemon",
+			"binPath": "src/cli/index.ts",
+			"args": ["serve"],
+			"handleFilename": "daemon.json",
+			"restartOnFailure": true,
+			"restartSec": 2
+		}
+	},
 	"dependencies": {
 		"@danypops/enigma-client": "^0.6.1",
 		"@danypops/vehicle-client": "^0.8.1",
