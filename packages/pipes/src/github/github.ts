@@ -185,13 +185,19 @@ export function createGitHubAdapter(
 		capabilities: (): CapabilitySet =>
 			Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Discover,
 
-		/** "latest" is an explicit sentinel routed to a dedicated query; any other runId always fetches that exact run, never a substitute. */
+		/** "latest" is an explicit sentinel routed to a dedicated query, scoped to this exact workflow file
+		 * (not the repo's most recent run across every workflow -- two different workflow files resolving
+		 * "latest" must never collapse onto the same run just because one of them happened to run more
+		 * recently repo-wide). Any other runId always fetches that exact run, never a substitute. */
 		async getRun(jobRef: string, runId: string): Promise<CIRun> {
-			const { repo } = resolveJobRef(jobRef);
+			const { repo, workflow } = resolveJobRef(jobRef);
 			if (runId === "latest") {
-				const page = await api<{ workflow_runs: GhWorkflowRun[] }>("GET", `/repos/${owner}/${repo}/actions/runs?per_page=1`);
+				const page = await api<{ workflow_runs: GhWorkflowRun[] }>(
+					"GET",
+					`/repos/${owner}/${repo}/actions/workflows/${workflow}/runs?per_page=1`,
+				);
 				const run = page?.workflow_runs[0];
-				if (!run) throw new GitHubNotFoundError(`/repos/${owner}/${repo}/actions/runs (latest)`);
+				if (!run) throw new GitHubNotFoundError(`/repos/${owner}/${repo}/actions/workflows/${workflow}/runs (latest)`);
 				return toCIRun(run);
 			}
 			const run = await api<GhWorkflowRun>("GET", `/repos/${owner}/${repo}/actions/runs/${runId}`);

@@ -50,7 +50,7 @@ describe("createGitHubAdapter.getRun: explicit run_id fidelity", () => {
 		expect(runB.status).toBe("failure");
 	});
 
-	it("routes runId=latest to a dedicated query, not a guess at the most recently cached run", async () => {
+	it("routes runId=latest to a dedicated query, scoped to this exact workflow file -- not a guess at the most recently cached run, and not the repo's most recent run across every workflow", async () => {
 		let requestedUrl = "";
 		const fetchImpl: FetchLike = async (url) => {
 			requestedUrl = url;
@@ -60,8 +60,23 @@ describe("createGitHubAdapter.getRun: explicit run_id fidelity", () => {
 
 		const run = await adapter.getRun("workflow.yml", "latest");
 		expect(run.id).toBe("9999");
-		expect(requestedUrl).toContain("/actions/runs?per_page=1");
+		expect(requestedUrl).toContain("/actions/workflows/workflow.yml/runs?");
 		expect(requestedUrl).not.toContain("/runs/latest");
+	});
+
+	it("getRun('latest') for two different workflow files in the same repo never collapses onto the same run -- confirmed live: ci.yml and publish.yml both resolving 'latest' to the identical run id", async () => {
+		const fetchImpl: FetchLike = async (url) => {
+			if (url.includes("/actions/workflows/ci.yml/runs")) return jsonResponse({ workflow_runs: [ghRun(111)] });
+			if (url.includes("/actions/workflows/publish.yml/runs")) return jsonResponse({ workflow_runs: [ghRun(222)] });
+			throw new Error(`unexpected url: ${url}`);
+		};
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl });
+
+		const ciRun = await adapter.getRun("ci.yml", "latest");
+		const publishRun = await adapter.getRun("publish.yml", "latest");
+
+		expect(ciRun.id).toBe("111");
+		expect(publishRun.id).toBe("222");
 	});
 
 	it("throws GitHubNotFoundError, not a silent empty result, for a 404", async () => {

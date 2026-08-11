@@ -151,8 +151,8 @@ describe("buildConfiguredAdapters > multi-repo config (repos.json)", () => {
 			await first?.getRun("workflow.yml", "latest");
 			await second?.getRun("workflow.yml", "latest");
 
-			expect(requestedUrls[0]).toContain("/repos/octocat/repo-a/actions/runs");
-			expect(requestedUrls[1]).toContain("/repos/octocat/repo-b/actions/runs");
+			expect(requestedUrls[0]).toContain("/repos/octocat/repo-a/actions/workflows/workflow.yml/runs");
+			expect(requestedUrls[1]).toContain("/repos/octocat/repo-b/actions/workflows/workflow.yml/runs");
 		} finally {
 			globalThis.fetch = originalFetch;
 			rmSync(dir, { recursive: true, force: true });
@@ -187,8 +187,8 @@ describe("buildConfiguredAdapters > multi-repo config (repos.json)", () => {
 			const backend = adapters[0]!;
 			await backend.getRun("pipes/publish.yml", "latest");
 			await backend.getRun("other-repo/ci.yml", "latest");
-			expect(requestedUrls[0]).toContain("/repos/DanyPops/pipes/actions/runs");
-			expect(requestedUrls[1]).toContain("/repos/DanyPops/other-repo/actions/runs");
+			expect(requestedUrls[0]).toContain("/repos/DanyPops/pipes/actions/workflows/publish.yml/runs");
+			expect(requestedUrls[1]).toContain("/repos/DanyPops/other-repo/actions/workflows/ci.yml/runs");
 
 			await expect(backend.getRun("publish.yml", "latest")).rejects.toThrow("is account-scoped");
 		} finally {
