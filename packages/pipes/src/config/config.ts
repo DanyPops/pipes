@@ -3,8 +3,26 @@
  * stores. Each backend is entirely optional — the daemon boots fine with
  * zero, one, two, or three configured (no eager network probing either
  * way, since none of the three adapter constructors do I/O). Unconfigured
- * backends are still reported via BackendInfo so ci.help lists all three
- * backend types even when only some are usable right now.
+ * backends are still reported via BackendInfo so ci.help lists every
+ * registered backend type even when only some are usable right now.
+ *
+ * Backend resolution is a small, explicit registry (DEFAULT_BACKEND_RESOLVERS,
+ * composed via buildConfiguredAdapters's own resolvers parameter), not a fixed
+ * three-way if-chain: each backend type's resolver is a standalone function of
+ * the same shape (BackendResolverContext) -> Promise<ConfiguredBackends>, and
+ * buildConfiguredAdapters just merges every resolver's output in order. The
+ * three built-in resolvers below are byte-identical extractions of the logic
+ * this file used to inline directly -- this change does not alter what a
+ * fourth backend would need to look like, only that adding one no longer
+ * requires editing this function's own body, just passing a longer resolvers
+ * array in. Deliberately a parameter, not a mutable module-level registration
+ * function: a bare `registerX()` mutator here would be shared, unscoped global
+ * state across every buildConfiguredAdapters() call in the same process --
+ * including two unrelated test files running back to back -- for a registry
+ * this small and this rarely extended, explicit composition is simpler and
+ * has no such cross-call leakage risk. No actual discovery mechanism
+ * (config-array loading, npm-package scanning) is added here -- that's a
+ * deliberate, separate follow-up.
  */
 
 import { tryEnigmaAccessToken } from "@danypops/enigma-client";
@@ -31,12 +49,18 @@ export interface ConfiguredBackends {
 
 const NO_REPO_TARGETS: RepoConfigFile = { github: [], gitlab: [], jenkins: [] };
 
-export async function buildConfiguredAdapters(
-	credentialPaths: PipesCredentialPaths,
-	env: Record<string, string | undefined> = process.env,
-	tryEnigma: typeof tryEnigmaAccessToken = tryEnigmaAccessToken,
-	repoConfig: RepoConfigFile = NO_REPO_TARGETS,
-): Promise<ConfiguredBackends> {
+/** Everything a backend resolver needs -- the same four inputs buildConfiguredAdapters itself takes, bundled so a resolver's own signature doesn't grow every time a new backend needs one more ambient input. */
+export interface BackendResolverContext {
+	credentialPaths: PipesCredentialPaths;
+	env: Record<string, string | undefined>;
+	tryEnigma: typeof tryEnigmaAccessToken;
+	repoConfig: RepoConfigFile;
+}
+
+/** One backend type's own resolution logic -- given the shared context, produces whatever adapters it could configure plus a BackendInfo for each target it recognized but couldn't (missing credentials, etc.). Never throws for a merely-unconfigured backend; a thrown error is a real bug in that resolver, not a normal "not set up yet" outcome. */
+export type BackendResolver = (context: BackendResolverContext) => Promise<ConfiguredBackends>;
+
+async function resolveGitHubBackends({ credentialPaths, env, tryEnigma, repoConfig }: BackendResolverContext): Promise<ConfiguredBackends> {
 	const adapters: CIBackend[] = [];
 	const unconfigured: BackendInfo[] = [];
 	const dir = credentialPaths.credentialsDir;
@@ -81,6 +105,14 @@ export async function buildConfiguredAdapters(
 		unconfigured.push({ name: "github", type: "github" });
 	}
 
+	return { adapters, unconfigured };
+}
+
+async function resolveGitLabBackends({ credentialPaths, env, tryEnigma, repoConfig }: BackendResolverContext): Promise<ConfiguredBackends> {
+	const adapters: CIBackend[] = [];
+	const unconfigured: BackendInfo[] = [];
+	const dir = credentialPaths.credentialsDir;
+
 	const gitlabTargets: (GitLabRepoTarget & { baseUrl: string })[] =
 		repoConfig.gitlab.length > 0
 			? repoConfig.gitlab
@@ -115,6 +147,14 @@ export async function buildConfiguredAdapters(
 		unconfigured.push({ name: "gitlab", type: "gitlab" });
 	}
 
+	return { adapters, unconfigured };
+}
+
+async function resolveJenkinsBackends({ credentialPaths, env, repoConfig }: BackendResolverContext): Promise<ConfiguredBackends> {
+	const adapters: CIBackend[] = [];
+	const unconfigured: BackendInfo[] = [];
+	const dir = credentialPaths.credentialsDir;
+
 	if (repoConfig.jenkins.length > 0) {
 		// Multiple named Jenkins servers -- env.JENKINS_URL is the single-instance legacy
 		// default's own signal and is not consulted per-target here, since one ambient env
@@ -141,5 +181,26 @@ export async function buildConfiguredAdapters(
 		}
 	}
 
+	return { adapters, unconfigured };
+}
+
+/** The three backends this package ships with, in their original resolution order. Exported (readonly) so a caller building its own resolvers array for buildConfiguredAdapters can spread these in alongside a fourth, rather than reimplementing github/gitlab/jenkins resolution to add one more backend. */
+export const DEFAULT_BACKEND_RESOLVERS: readonly BackendResolver[] = [resolveGitHubBackends, resolveGitLabBackends, resolveJenkinsBackends];
+
+export async function buildConfiguredAdapters(
+	credentialPaths: PipesCredentialPaths,
+	env: Record<string, string | undefined> = process.env,
+	tryEnigma: typeof tryEnigmaAccessToken = tryEnigmaAccessToken,
+	repoConfig: RepoConfigFile = NO_REPO_TARGETS,
+	resolvers: readonly BackendResolver[] = DEFAULT_BACKEND_RESOLVERS,
+): Promise<ConfiguredBackends> {
+	const context: BackendResolverContext = { credentialPaths, env, tryEnigma, repoConfig };
+	const adapters: CIBackend[] = [];
+	const unconfigured: BackendInfo[] = [];
+	for (const resolver of resolvers) {
+		const resolved = await resolver(context);
+		adapters.push(...resolved.adapters);
+		unconfigured.push(...resolved.unconfigured);
+	}
 	return { adapters, unconfigured };
 }

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TryEnigmaAccessToken } from "@danypops/enigma-client";
-import { buildConfiguredAdapters } from "../../src/config/config.ts";
+import { type BackendResolver, buildConfiguredAdapters, DEFAULT_BACKEND_RESOLVERS } from "../../src/config/config.ts";
 
 function credentialPaths(dir: string) {
 	return { credentialsDir: dir };
@@ -452,5 +452,36 @@ describe("buildConfiguredAdapters > Enigma as an optional, additive credential s
 			globalThis.fetch = originalFetch;
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+
+	describe("resolvers composition -- the registry a fourth backend would join", () => {
+		it("merges a caller-supplied resolver's output alongside the three built-in ones, in order, with zero global/module state involved", async () => {
+			const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
+			try {
+				const fakeCircleCiResolver: BackendResolver = async () => ({
+					adapters: [{ name: () => "circleci", type: () => "circleci", capabilities: () => 0 } as never],
+					unconfigured: [],
+				});
+				const { adapters, unconfigured } = await buildConfiguredAdapters(credentialPaths(dir), {}, noEnigma, undefined, [
+					...DEFAULT_BACKEND_RESOLVERS,
+					fakeCircleCiResolver,
+				]);
+				expect(adapters.map((a) => a.name())).toEqual(["circleci"]);
+				expect(unconfigured.map((b) => b.name).sort()).toEqual(["github", "gitlab", "jenkins"]);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
+
+		it("omitting the resolvers parameter still resolves exactly the three built-in backends -- DEFAULT_BACKEND_RESOLVERS is the real default, not a parallel list", async () => {
+			const dir = mkdtempSync(join(tmpdir(), "pipes-config-"));
+			try {
+				const { unconfigured } = await buildConfiguredAdapters(credentialPaths(dir), {}, noEnigma);
+				expect(unconfigured.map((b) => b.name).sort()).toEqual(["github", "gitlab", "jenkins"]);
+				expect(DEFAULT_BACKEND_RESOLVERS).toHaveLength(3);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
 	});
 });
