@@ -21,11 +21,11 @@
     },
     "packages/pi-pipes": {
       "name": "@danypops/pi-pipes",
-      "version": "0.16.4",
+      "version": "0.16.5",
       "dependencies": {
         "@danypops/pipes": "^0.17.0",
         "@danypops/vehicle-client": "^0.8.1",
-        "@danypops/vehicle-client-pi": "^0.33.1",
+        "@danypops/vehicle-client-pi": "^0.34.0",
         "@danypops/vehicle-core": "^0.15.0",
         "@danypops/vehicle-server": "^0.23.1",
         "malevich-tui-components": "^0.25.0",
@@ -46,7 +46,7 @@
     },
     "packages/pipes": {
       "name": "@danypops/pipes",
-      "version": "0.17.7",
+      "version": "0.17.8",
       "bin": {
         "pipes": "src/cli/index.ts",
       },
@@ -156,7 +156,7 @@
 
     "@danypops/vehicle-client": ["@danypops/vehicle-client@0.8.1", "", { "dependencies": { "@danypops/vehicle-core": "^0.15.0", "@danypops/vehicle-server": "^0.21.1" } }, "sha512-1rdh5NtKrGOkUuAY4I29TjaJbdk7yvNwgR8spBEscyUW6SoxcYp+QmW6gSSLj/6zJQKBfJ77WaQC8zUiu16fiQ=="],
 
-    "@danypops/vehicle-client-pi": ["@danypops/vehicle-client-pi@0.33.1", "", { "dependencies": { "@danypops/pi-extension-harness": "^0.7.0", "@danypops/vehicle-client": "^0.9.0", "@danypops/vehicle-core": "^0.16.0", "@danypops/vehicle-server": "^0.23.1", "malevich-tui-components": "^0.25.0" }, "peerDependencies": { "@earendil-works/pi-agent-core": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-tui"] }, "sha512-Mx30HE4qdiJDmJfdy5AXsTaPZ+ldfONpvvCkr3FZnNndk2sBA5VJOlTggC8KQ7DBFmZ5R21FukiRlPScRIn8nw=="],
+    "@danypops/vehicle-client-pi": ["@danypops/vehicle-client-pi@0.34.0", "", { "dependencies": { "@danypops/pi-extension-harness": "^0.7.0", "@danypops/vehicle-client": "^0.9.0", "@danypops/vehicle-core": "^0.16.0", "@danypops/vehicle-server": "^0.23.1", "malevich-tui-components": "^0.26.0" }, "peerDependencies": { "@earendil-works/pi-agent-core": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-tui"] }, "sha512-23JoAEJpnNYDPCep8MmLLJl/r2I5XP8ybkToVmKoumxpF6vTNNSPBeSf5pbZKw8GC8LW2MRIKUYn5Js3cG71NA=="],
 
     "@danypops/vehicle-core": ["@danypops/vehicle-core@0.15.0", "", {}, "sha512-2IWDriuNZmndpgpqCJ5DF56ZCBTxjJL7kxyws9H9jkLjxF5U412R4GNpdcbNvYY0NHmL5P5lk4/oCFZHC+XXOA=="],
 
@@ -671,6 +671,8 @@
     "@danypops/vehicle-client-pi/@danypops/vehicle-client": ["@danypops/vehicle-client@0.9.0", "", { "dependencies": { "@danypops/vehicle-core": "^0.16.0", "@danypops/vehicle-server": "^0.23.0" } }, "sha512-AaHwCVv1FHoeVPeFEZwdtZtvB6rHm32q5I5kT0WVNcO1xm20pZ48Z3q8UF557pit9sVvlNKeX4tnHjlbaZtdbw=="],
 
     "@danypops/vehicle-client-pi/@danypops/vehicle-core": ["@danypops/vehicle-core@0.16.0", "", {}, "sha512-G6eQo0GwRTHRvG5sZiUs/gs6ukSLCP/W4cn2xQPnHpEyx3SLrbU5rM/1Qv1EQYu/J/42illLi7L0vn2LBR4M1w=="],
+
+    "@danypops/vehicle-client-pi/malevich-tui-components": ["malevich-tui-components@0.26.0", "", {}, "sha512-NIsZru+ugZ5i8ywlUr/yn+GPKEh6rOw06PphbztpB7IowTBjf4rH6r2fXJBXJrVa1AIy5YIr/A8GVuquVla77g=="],
 
     "@danypops/vehicle-server/@danypops/vehicle-core": ["@danypops/vehicle-core@0.16.0", "", {}, "sha512-G6eQo0GwRTHRvG5sZiUs/gs6ukSLCP/W4cn2xQPnHpEyx3SLrbU5rM/1Qv1EQYu/J/42illLi7L0vn2LBR4M1w=="],
 
