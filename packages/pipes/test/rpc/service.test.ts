@@ -316,6 +316,119 @@ describe("ci.wait", () => {
 		const result = await service.execute("ci.wait", { backend: "gh", opaqueRef: "queue-1" });
 		expect(result).toEqual({ buildNumber: "99" });
 	});
+
+	it("auto-unsubscribes the caller's own subscription once it's pinned to exactly the run ci.wait just watched to a terminal status -- a caller that also subscribed to the same run it's synchronously waiting on already has the answer in hand, so the background sync's own later notification would be pure noise", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+			}),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool, waitPollIntervalMs: 1 });
+
+		await service.execute("ci.subscribe", { backend: "gh", jobRef: "job", runId: "1" }, { callerSessionId: "session-42" });
+		// The stub always answers with a terminal run, so ci.subscribe's own immediate-terminal path
+		// already unsubscribed it -- re-subscribe by hand to exercise ci.wait's own cleanup in isolation.
+		runPool.subscribeJob("gh", "job", { subscriberId: "session-42", runId: "1" });
+		expect(runPool.isJobSubscribed("gh", "job", "session-42")).toBe(true);
+
+		await service.execute("ci.wait", { backend: "gh", jobRef: "job", runId: "1", timeoutS: 5 }, { callerSessionId: "session-42" });
+
+		expect(runPool.isJobSubscribed("gh", "job", "session-42")).toBe(false);
+	});
+
+	it("leaves a DIFFERENT subscriber's own subscription on the same job untouched", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+			}),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool, waitPollIntervalMs: 1 });
+		runPool.subscribeJob("gh", "job", { subscriberId: "someone-else", runId: "1" });
+
+		await service.execute("ci.wait", { backend: "gh", jobRef: "job", runId: "1", timeoutS: 5 }, { callerSessionId: "session-42" });
+
+		expect(runPool.isJobSubscribed("gh", "job", "someone-else")).toBe(true);
+	});
+
+	it("leaves the caller's own subscription untouched when it's pinned to a DIFFERENT run than the one just waited on", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+			}),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool, waitPollIntervalMs: 1 });
+		runPool.subscribeJob("gh", "job", { subscriberId: "session-42", runId: "999" });
+
+		await service.execute("ci.wait", { backend: "gh", jobRef: "job", runId: "1", timeoutS: 5 }, { callerSessionId: "session-42" });
+
+		expect(runPool.isJobSubscribed("gh", "job", "session-42")).toBe(true);
+	});
+
+	it("leaves an unpinned (still tracking 'latest') subscription untouched -- only an exact pinned-run match is safe to auto-clear", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+			}),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool, waitPollIntervalMs: 1 });
+		runPool.subscribeJob("gh", "job", { subscriberId: "session-42" });
+
+		await service.execute("ci.wait", { backend: "gh", jobRef: "job", runId: "1", timeoutS: 5 }, { callerSessionId: "session-42" });
+
+		expect(runPool.isJobSubscribed("gh", "job", "session-42")).toBe(true);
+	});
+
+	it("does not touch any subscription when ci.wait times out without reaching a terminal status", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				run: { id: "1", name: "run", status: "running", startedAt: new Date(0) },
+			}),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool, waitPollIntervalMs: 5 });
+		runPool.subscribeJob("gh", "job", { subscriberId: "session-42", runId: "1" });
+
+		await service.execute("ci.wait", { backend: "gh", jobRef: "job", runId: "1", timeoutS: 0.02 }, { callerSessionId: "session-42" });
+
+		expect(runPool.isJobSubscribed("gh", "job", "session-42")).toBe(true);
+	});
+
+	it('falls back to the shared anonymous subscriber (subscriberId "") when ci.wait carries no callContext, matching ci.subscribe\'s own default', async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+			}),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool, waitPollIntervalMs: 1 });
+		runPool.subscribeJob("gh", "job", { runId: "1" });
+
+		await service.execute("ci.wait", { backend: "gh", jobRef: "job", runId: "1", timeoutS: 5 });
+
+		expect(runPool.isJobSubscribed("gh", "job", "")).toBe(false);
+	});
 });
 
 describe("ci.cancel", () => {

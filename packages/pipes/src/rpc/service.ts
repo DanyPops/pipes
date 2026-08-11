@@ -486,8 +486,26 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 		return { runId: run.id, status: run.status, url: run.url, ...(note ? { note } : {}), ...tail };
 	}
 
-	/** Genuinely blocking: polls ciWatch on an interval until a terminal status or timeout, exactly like conty's wait action. */
-	async function handleWait(input: OperationInputs["ci.wait"]): Promise<OperationOutputs["ci.wait"]> {
+	/**
+	 * Only when the caller's own subscription is pinned to exactly this run -- an unpinned (still
+	 * tracking "latest") or differently-pinned subscription is left alone, since ci.wait's own
+	 * answer says nothing about what either of those will eventually resolve to.
+	 */
+	function unsubscribeIfOwnPinnedMatch(backend: string, jobRef: string, runId: string, callContext: PipesCallContext | undefined): void {
+		if (!pool) return;
+		const subscriberId = callContext?.callerSessionId ?? "";
+		const own = pool.watchedSubscriptions().find((s) => s.backend === backend && s.jobRef === jobRef && s.subscriberId === subscriberId);
+		if (own?.pinnedRunId === runId) pool.unsubscribeJob(backend, jobRef, subscriberId);
+	}
+
+	/**
+	 * Genuinely blocking: polls ciWatch on an interval until a terminal status or timeout, exactly
+	 * like conty's wait action. Also clears the caller's own subscription once it's pinned to
+	 * exactly this run -- a caller that both subscribed and waited on the same run already has the
+	 * answer in hand, so leaving the subscription live would only produce a redundant, later
+	 * background-sync notification for something the caller already knows.
+	 */
+	async function handleWait(input: OperationInputs["ci.wait"], callContext?: PipesCallContext): Promise<OperationOutputs["ci.wait"]> {
 		if (input.opaqueRef) {
 			return { buildNumber: await orchestrator.ciPoll(input.backend, input.opaqueRef) };
 		}
@@ -497,7 +515,10 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 		const deadline = Date.now() + (input.timeoutS ?? DEFAULT_WAIT_TIMEOUT_S) * 1000;
 		for (;;) {
 			const status = await orchestrator.ciWatch(input.backend, input.jobRef, input.runId);
-			if (status.status !== "running" && status.status !== "pending") return status;
+			if (status.status !== "running" && status.status !== "pending") {
+				unsubscribeIfOwnPinnedMatch(input.backend, input.jobRef, input.runId, callContext);
+				return status;
+			}
 			if (Date.now() >= deadline) return status;
 			await sleep(Math.min(pollIntervalMs, Math.max(deadline - Date.now(), 0)));
 		}
@@ -582,7 +603,7 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 				case "ci.trigger":
 					return (await handleTrigger(input as OperationInputs["ci.trigger"], callContext)) as OperationOutputs[Name];
 				case "ci.wait":
-					return (await handleWait(input as OperationInputs["ci.wait"])) as OperationOutputs[Name];
+					return (await handleWait(input as OperationInputs["ci.wait"], callContext)) as OperationOutputs[Name];
 				case "ci.cancel": {
 					const cancel = input as OperationInputs["ci.cancel"];
 					await orchestrator.ciCancel(cancel.backend, cancel.jobRef, cancel.runId);

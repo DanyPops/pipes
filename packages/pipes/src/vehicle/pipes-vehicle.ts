@@ -145,7 +145,7 @@ const OPERATIONS: readonly OperationSpec[] = [
 	{
 		action: "ci.wait",
 		description:
-			"Blocks until a run reaches a terminal status or timeoutS elapses. Given backend+jobRef+runId (watching a real run), streams a live status+log-tail snapshot every ~20s while it waits. Given opaqueRef instead (resolving a fresh trigger's receipt to a real run id), returns once resolved with no streaming. Bounded by timeoutS -- if the run outlives it, this returns the last-known (still non-terminal) status rather than throwing, so a job that might run longer than you want to hold this call open for is better tracked with ci_subscribe (persistent, survives this call ending) than by calling ci_wait again.",
+			"Blocks until a run reaches a terminal status or timeoutS elapses. Given backend+jobRef+runId (watching a real run), streams a live status+log-tail snapshot every ~20s while it waits. Given opaqueRef instead (resolving a fresh trigger's receipt to a real run id), returns once resolved with no streaming. Bounded by timeoutS -- if the run outlives it, this returns the last-known (still non-terminal) status rather than throwing, so a job that might run longer than you want to hold this call open for is better tracked with ci_subscribe (persistent, survives this call ending) than by calling ci_wait again. Already ci_subscribed to this exact run? No need to unsubscribe first -- reaching a terminal status here auto-clears that subscription so you don't also get a redundant background notification for an answer you already have.",
 		effect: "read",
 		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, opaqueRef: stringProp, timeoutS: numberProp },
 		required: ["backend"],
