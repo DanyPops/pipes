@@ -82,7 +82,7 @@ const OPERATIONS: readonly OperationSpec[] = [
 	{
 		action: "ci.status",
 		description:
-			'A run\'s current verdict: status plus, on failure, a classified cause and log excerpt in one call. Call with pipeline for a bookmarked preset, or backend+jobRef directly (GitLab: a job name; Jenkins: a folder-nested job path; GitHub: a workflow file name, or "repo/workflow.yml" for an account-scoped backend -- use ci_discover if unsure). runId is optional -- omit it for the latest run.',
+			'A run\'s current verdict: status plus, on failure, a classified cause and log excerpt in one call. Call with pipeline for a bookmarked preset, or backend+jobRef directly (GitLab: a job name; Jenkins: a folder-nested job path; GitHub: a workflow file name, or "repo/workflow.yml" for an account-scoped backend -- use ci_discover if unsure). runId is optional -- omit it for the latest run. Planning to check back on a still-running job across more than one turn? Call ci_subscribe once instead of re-polling this -- it gets the job onto the persistent Jobs widget and a background completion ping, and the response itself says so (via `note`) whenever it notices you doing that.',
 		effect: "read",
 		properties: {
 			backend: stringProp,
@@ -144,7 +144,7 @@ const OPERATIONS: readonly OperationSpec[] = [
 	{
 		action: "ci.wait",
 		description:
-			"Blocks until a run reaches a terminal status or timeoutS elapses. Given backend+jobRef+runId (watching a real run), streams a live status+log-tail snapshot every ~20s while it waits. Given opaqueRef instead (resolving a fresh trigger's receipt to a real run id), returns once resolved with no streaming.",
+			"Blocks until a run reaches a terminal status or timeoutS elapses. Given backend+jobRef+runId (watching a real run), streams a live status+log-tail snapshot every ~20s while it waits. Given opaqueRef instead (resolving a fresh trigger's receipt to a real run id), returns once resolved with no streaming. Bounded by timeoutS -- if the run outlives it, this returns the last-known (still non-terminal) status rather than throwing, so a job that might run longer than you want to hold this call open for is better tracked with ci_subscribe (persistent, survives this call ending) than by calling ci_wait again.",
 		effect: "read",
 		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, opaqueRef: stringProp, timeoutS: numberProp },
 		required: ["backend"],
@@ -215,7 +215,7 @@ const OPERATIONS: readonly OperationSpec[] = [
 	{
 		action: "ci.tail",
 		description:
-			'A subscribed job\'s most recent cached log output, token-budgeted -- cheaper than ci.log for repeated polling. Explicit runId reuses a cached terminal log; omitted always re-resolves "latest" live.',
+			"A subscribed job's most recent cached log output, token-budgeted -- cheaper than ci.log for repeated polling. Explicit runId reuses a cached terminal log; omitted always re-resolves \"latest\" live. Still calling this on the same non-terminal run turn after turn? Call ci_subscribe once instead -- the Jobs widget and a background completion ping replace the need to keep re-tailing by hand, and the response's own `note` field will point this out whenever it applies.",
 		effect: "read",
 		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, maxTokens: numberProp },
 		required: ["backend", "jobRef"],

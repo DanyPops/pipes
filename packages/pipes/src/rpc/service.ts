@@ -25,7 +25,7 @@ import type {
 	WidgetAddInput,
 } from "../reportportal/launch.ts";
 import type { LaunchBackend } from "../reportportal/launch-backend.ts";
-import type { CIRunNode, CIStageNode, LogResult, RunResult } from "../run/ci-run.ts";
+import type { CIRunNode, CIStageNode, LogResult, RunResult, RunStatus } from "../run/ci-run.ts";
 import type { RepoInfo, WorkflowInfo } from "../run/discovery.ts";
 import type { Pipeline, PipelineRun } from "../run/pipeline.ts";
 import type { TriggerResult, WatchStatus } from "../run/trigger.ts";
@@ -148,7 +148,14 @@ export type RpTestItemFilterInput = Omit<TestItemFilter, "since" | "before"> & {
 
 export interface OperationOutputs {
 	"ci.help": { backends: ReturnType<Orchestrator["backendInfo"]>; pipelines: string[] };
-	"ci.status": { pipelineRun?: PipelineRun; verdict?: unknown; params?: Record<string, string>; truncatedParamKeys?: string[] };
+	/** note is present only when this run is still in progress and this call's own session (callContext.callerSessionId) hasn't subscribed to it yet -- see subscribeNudgeFor's own doc comment. */
+	"ci.status": {
+		pipelineRun?: PipelineRun;
+		verdict?: unknown;
+		params?: Record<string, string>;
+		truncatedParamKeys?: string[];
+		note?: string;
+	};
 	"ci.log": LogResult;
 	/** truncated mirrors SearchResult.truncated -- true when the backend gave up at a page-cap safety valve before `since`/`limit` was conclusively satisfied. See run/ci-run.ts's SearchResult doc comment. */
 	"ci.search": { builds: unknown[]; truncated: boolean };
@@ -171,7 +178,17 @@ export interface OperationOutputs {
 	"ci.subscribe": { subscribed: true; run?: RunSnapshot };
 	/** Idempotent: no error if the job wasn't subscribed. */
 	"ci.unsubscribe": { unsubscribed: true };
-	"ci.tail": { runId: string; status: string; text: string; truncated: boolean; totalTokens: number; outputTokens: number; url?: string };
+	/** note is present only when this run is still in progress and this call's own session (callContext.callerSessionId) hasn't subscribed to it yet -- see subscribeNudgeFor's own doc comment. */
+	"ci.tail": {
+		runId: string;
+		status: string;
+		text: string;
+		truncated: boolean;
+		totalTokens: number;
+		outputTokens: number;
+		url?: string;
+		note?: string;
+	};
 	"ci.downstream": { runs: unknown[] };
 	"ci.presets.list": { presets: Pipeline[] };
 	"ci.presets.set": { preset: Pipeline };
@@ -208,7 +225,9 @@ export class ReportPortalNotConfiguredError extends Error {
  * (see pipes-vehicle.ts's own operation loop for where these are read off a real Vehicle call and
  * forwarded here). Optional and additive: a raw RPC client (PipesClient, no Pi session behind it)
  * simply never supplies one, and every operation that doesn't care about caller identity ignores
- * it -- only ci.subscribe/ci.subscribed read it today.
+ * it -- ci.subscribe/ci.subscribed/ci.trigger use it to attribute a subscription; ci.status/ci.tail
+ * use it (read-only, see subscribeNudgeFor) to notice when *this* session is watching an in-progress
+ * job it hasn't subscribed to and say so in the response.
  */
 export interface PipesCallContext {
 	readonly callerSessionId?: string;
@@ -279,6 +298,31 @@ export interface CreatePipesServiceOptions {
 	projectStore?: VehicleProjectStore;
 }
 
+/**
+ * Surfaces the exact gap a real live session hit: a job this session is watching by repeatedly
+ * calling ci.status/ci.tail (rather than one it itself triggered, or explicitly ci.subscribe'd to)
+ * never shows up in that session's own "Jobs · N subscribed" widget, and the session has no signal
+ * telling it that's fixable -- so it just keeps polling by hand instead. Only fires when there's a
+ * real Pi session (callContext.callerSessionId) to subscribe as, the run is still non-terminal, and
+ * that exact session isn't already subscribed -- never for a raw RPC client, a terminal run, or a
+ * session that's already subscribed. Deliberately read-only: this never subscribes on the caller's
+ * behalf (see ci.subscribed's own doc comment on why reads don't auto-derive/auto-mutate from
+ * callContext) -- it only tells the caller (and, since these are LLM-facing tool results, the model
+ * itself) that ci.subscribe is the better next move than calling this again.
+ */
+function subscribeNudgeFor(
+	pool: RunPool | undefined,
+	backend: string,
+	jobRef: string,
+	status: RunStatus,
+	callContext?: PipesCallContext,
+): string | undefined {
+	if (!pool || !callContext?.callerSessionId) return undefined;
+	if (isTerminalStatus(status)) return undefined;
+	if (pool.isJobSubscribed(backend, jobRef, callContext.callerSessionId)) return undefined;
+	return "This run is still in progress and this session hasn't subscribed to it -- call ci_subscribe once to get the Jobs widget and a background completion notice instead of polling ci_status/ci_tail again.";
+}
+
 export function createPipesService(orchestrator: Orchestrator, options: CreatePipesServiceOptions = {}): PipesService {
 	const pollIntervalMs = options.waitPollIntervalMs ?? DEFAULT_WAIT_POLL_MS;
 	const pool = options.runPool;
@@ -291,7 +335,7 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 		return options.launchBackend;
 	}
 
-	async function handleStatus(input: OperationInputs["ci.status"]): Promise<OperationOutputs["ci.status"]> {
+	async function handleStatus(input: OperationInputs["ci.status"], callContext?: PipesCallContext): Promise<OperationOutputs["ci.status"]> {
 		if (input.pipeline) {
 			return { pipelineRun: await orchestrator.getPipelineStatus(input.pipeline) };
 		}
@@ -303,6 +347,8 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 			out.params = params;
 			if (truncatedKeys.length > 0) out.truncatedParamKeys = truncatedKeys;
 		}
+		const note = subscribeNudgeFor(pool, input.backend, input.jobRef, verdict.check.status, callContext);
+		if (note) out.note = note;
 		return out;
 	}
 
@@ -394,7 +440,7 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 	}
 
 	/** Explicit runId reuses a cached terminal (finished, won't change further) log; omitted runId always re-resolves "latest" live, matching the same autofocus the background sync applies. */
-	async function handleTail(input: OperationInputs["ci.tail"]): Promise<OperationOutputs["ci.tail"]> {
+	async function handleTail(input: OperationInputs["ci.tail"], callContext?: PipesCallContext): Promise<OperationOutputs["ci.tail"]> {
 		const maxTokens = input.maxTokens ?? DEFAULT_LOG_TAIL_TOKENS;
 
 		if (input.runId && pool) {
@@ -426,7 +472,8 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 			pool.upsertLog(input.backend, input.jobRef, run.id, log);
 		}
 		const tail = tailByTokenBudget(log, maxTokens);
-		return { runId: run.id, status: run.status, url: run.url, ...tail };
+		const note = subscribeNudgeFor(pool, input.backend, input.jobRef, run.status, callContext);
+		return { runId: run.id, status: run.status, url: run.url, ...(note ? { note } : {}), ...tail };
 	}
 
 	/** Genuinely blocking: polls ciWatch on an interval until a terminal status or timeout, exactly like conty's wait action. */
@@ -488,7 +535,7 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 				case "ci.unsubscribe":
 					return handleUnsubscribe(input as OperationInputs["ci.unsubscribe"]) as OperationOutputs[Name];
 				case "ci.tail":
-					return (await handleTail(input as OperationInputs["ci.tail"])) as OperationOutputs[Name];
+					return (await handleTail(input as OperationInputs["ci.tail"], callContext)) as OperationOutputs[Name];
 				case "ci.downstream": {
 					const downstream = input as OperationInputs["ci.downstream"];
 					const runs = await orchestrator.ciDownstream(
@@ -502,7 +549,7 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 				case "ci.help":
 					return { backends: orchestrator.backendInfo(), pipelines: orchestrator.listPipelines() } as OperationOutputs[Name];
 				case "ci.status":
-					return (await handleStatus(input as OperationInputs["ci.status"])) as OperationOutputs[Name];
+					return (await handleStatus(input as OperationInputs["ci.status"], callContext)) as OperationOutputs[Name];
 				case "ci.log":
 					return (await handleLog(input as OperationInputs["ci.log"])) as OperationOutputs[Name];
 				case "ci.search": {

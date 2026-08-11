@@ -73,6 +73,117 @@ describe("ci.status", () => {
 	});
 });
 
+// Reproduces a real, observed gap: a live session watching a job it didn't itself trigger (found
+// via conversation context, not ci.trigger/ci.subscribe) has nothing telling it to ci.subscribe --
+// it just keeps calling ci.status/ci.tail by hand, and the job never shows up in that session's own
+// Jobs widget. subscribeNudgeFor's job is to say so, in-band, exactly when it's relevant.
+describe("ci.status / ci.tail: subscribe nudge", () => {
+	it("ci.status attaches a note when a real session polls a non-terminal run it hasn't subscribed to", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } } }),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		const result = await service.execute("ci.status", { backend: "gh", jobRef: "job" }, { callerSessionId: "session-42" });
+
+		expect(result.note).toMatch(/ci_subscribe/);
+	});
+
+	it("ci.status omits the note once that same session has actually subscribed", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } } }),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+		await service.execute("ci.subscribe", { backend: "gh", jobRef: "job" }, { callerSessionId: "session-42" });
+
+		const result = await service.execute("ci.status", { backend: "gh", jobRef: "job" }, { callerSessionId: "session-42" });
+
+		expect(result.note).toBeUndefined();
+	});
+
+	it("ci.status omits the note once the run is terminal, subscribed or not", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "success", startedAt: new Date(0) } } }),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		const result = await service.execute("ci.status", { backend: "gh", jobRef: "job" }, { callerSessionId: "session-42" });
+
+		expect(result.note).toBeUndefined();
+	});
+
+	it("ci.status omits the note for a raw RPC client with no real session id", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } } }),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		const result = await service.execute("ci.status", { backend: "gh", jobRef: "job" });
+
+		expect(result.note).toBeUndefined();
+	});
+
+	it("ci.status omits the note when no run pool is configured at all -- nothing to subscribe against", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({ name: "gh", runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } } }),
+		);
+		const service = createPipesService(orchestrator);
+
+		const result = await service.execute("ci.status", { backend: "gh", jobRef: "job" }, { callerSessionId: "session-42" });
+
+		expect(result.note).toBeUndefined();
+	});
+
+	it("ci.tail attaches the same note on a live-fetched non-terminal run when this session isn't subscribed", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				runsById: { latest: { id: "1", name: "job", status: "running", startedAt: new Date(0) } },
+				log: "still going",
+			}),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		const result = await service.execute("ci.tail", { backend: "gh", jobRef: "job" }, { callerSessionId: "session-42" });
+
+		expect(result.note).toMatch(/ci_subscribe/);
+	});
+
+	it("ci.tail never attaches a note on a cached-terminal hit -- already done, nothing to subscribe to", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(createStubCIBackend({ name: "gh" }));
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		runPool.upsert({
+			backend: "gh",
+			jobRef: "job",
+			runId: "1",
+			status: "success",
+			result: "SUCCESS",
+			url: "",
+			startedAt: new Date(0),
+			fetchedAt: new Date(0),
+			watched: false,
+		});
+		runPool.upsertLog("gh", "job", "1", "cached log");
+		const service = createPipesService(orchestrator, { runPool });
+
+		const result = await service.execute("ci.tail", { backend: "gh", jobRef: "job", runId: "1" }, { callerSessionId: "session-42" });
+
+		expect(result.note).toBeUndefined();
+	});
+});
+
 describe("ci.trigger", () => {
 	it("returns a TriggerResult for a raw backend+jobRef trigger", async () => {
 		const orchestrator = new Orchestrator();
