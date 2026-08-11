@@ -14,7 +14,19 @@ export type { BackendInfo } from "./run/backend.ts";
 // six optional capability interfaces, the Capability bitmask, and the asXxx()/unwrapBackend() guards
 // -- previously unreachable from outside this package (see the config.ts registry alongside this).
 export * from "./run/ci-backend.ts";
-export type { BuildFilter, CIArtifact, CIJob, CIRun, CIRunNode, CIStageNode, LogFilter, LogResult, RunResult, RunStatus, SearchResult } from "./run/ci-run.ts";
+export type {
+	BuildFilter,
+	CIArtifact,
+	CIJob,
+	CIRun,
+	CIRunNode,
+	CIStageNode,
+	LogFilter,
+	LogResult,
+	RunResult,
+	RunStatus,
+	SearchResult,
+} from "./run/ci-run.ts";
 export type { RepoInfo, WorkflowInfo } from "./run/discovery.ts";
 export type { Pipeline, PipelineRun, PipelineStep } from "./run/pipeline.ts";
 export type { TriggerReceipt, TriggerResult, WatchStatus } from "./run/trigger.ts";
