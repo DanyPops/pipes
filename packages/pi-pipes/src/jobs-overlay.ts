@@ -46,6 +46,17 @@ export class JobsOverlay {
 		 * subscriberId. Undefined falls back to the daemon's global, unscoped view (e.g. a caller with
 		 * no real session identity to scope by). */
 		private readonly subscriberId?: string,
+		/**
+		 * A real ExtensionContext.isIdle() reading, captured once at session_start (see index.ts) and
+		 * reused across every later poll tick -- startPolling()'s own BoundedPoll fires refresh() on a
+		 * fixed interval with no ExtensionContext of its own to ask. Without this, a poll landing while
+		 * a tool call was still executing queued a "this job just finished" notification for a job that
+		 * died entirely within one long blocking turn, based on data collected before the turn's own
+		 * real state was settled -- see @danypops/vehicle-client-pi's reportAgentPollTick own doc
+		 * comment for the full mechanism. Undefined (e.g. an older/test caller not yet passing it)
+		 * preserves the old always-tick behavior unchanged.
+		 */
+		private readonly isIdle?: () => boolean,
 	) {
 		this.ticker = ticker;
 	}
@@ -83,7 +94,7 @@ export class JobsOverlay {
 	}
 
 	private notifyAgentIfNeeded(): void {
-		reportAgentPollTick(this.ticker, this.rows, this.notifier);
+		reportAgentPollTick(this.ticker, this.rows, this.notifier, { isIdle: this.isIdle });
 	}
 
 	private render(): void {

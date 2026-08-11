@@ -196,5 +196,39 @@ describe("JobsOverlay", () => {
 			setJobsClientConnectorForTests(() => fakeClient([]));
 			await expect(overlay.refresh()).resolves.toBeUndefined();
 		});
+
+		it("does not notify a job vanishing while a real turn is still blocking (isIdle() false) -- the isIdle predicate is threaded all the way through to reportAgentPollTick", async () => {
+			setJobsClientConnectorForTests(() => fakeClient([subscribedRun()]));
+			const notifier = fakeNotifier();
+			let idle = true;
+			const overlay = new JobsOverlay("blocks", notifier, undefined, undefined, () => idle);
+			overlay.setUI({ setWidget: () => {} } as unknown as ExtensionUIContext);
+			await overlay.refresh(); // baseline, while idle
+
+			idle = false; // a tool call is now executing -- the turn is blocking
+			setJobsClientConnectorForTests(() => fakeClient([])); // the job died mid-turn
+			await overlay.refresh();
+
+			expect(notifier.calls).toEqual([]); // must stay silent: never observed while idle
+
+			idle = true; // turn ends, agent goes idle again
+			await overlay.refresh(); // the diff resumes cleanly and reports the vanish fresh
+
+			expect(notifier.calls).toHaveLength(1);
+			expect(notifier.calls[0]?.content).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
+		});
+
+		it("still notifies normally when no isIdle predicate is given at all -- backward compatible with every other test in this file", async () => {
+			setJobsClientConnectorForTests(() => fakeClient([subscribedRun()]));
+			const notifier = fakeNotifier();
+			const overlay = new JobsOverlay("blocks", notifier);
+			overlay.setUI({ setWidget: () => {} } as unknown as ExtensionUIContext);
+			await overlay.refresh();
+
+			setJobsClientConnectorForTests(() => fakeClient([]));
+			await overlay.refresh();
+
+			expect(notifier.calls).toHaveLength(1);
+		});
 	});
 });

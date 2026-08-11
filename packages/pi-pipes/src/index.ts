@@ -54,7 +54,16 @@ export default async function pipesExtension(pi: ExtensionAPI, deps: PiPipesDeps
 		// This session's own real id, so ci.subscribed only ever returns (and the ticker only ever
 		// reacts to) jobs *this* session itself subscribed to -- see jobs-overlay.ts's own doc comment
 		// on the cross-session leak this fixes.
-		jobsOverlay ??= new JobsOverlay(resolvePipesProgressBarStyle(), createAgentNotifier(pi), undefined, ctx.sessionManager.getSessionId());
+		// ctx.isIdle is captured once here and reused by every later poll tick (startPolling()'s own
+		// BoundedPoll has no ExtensionContext of its own to ask) -- see jobs-overlay.ts's own doc
+		// comment for the blocking-turn bug this closes.
+		jobsOverlay ??= new JobsOverlay(
+			resolvePipesProgressBarStyle(),
+			createAgentNotifier(pi),
+			undefined,
+			ctx.sessionManager.getSessionId(),
+			() => ctx.isIdle(),
+		);
 		jobsOverlay.setUI(ctx.ui);
 		await jobsOverlay.refresh();
 		jobsOverlay.startPolling();
