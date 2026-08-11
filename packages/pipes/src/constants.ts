@@ -1,3 +1,12 @@
+/** This package's own Vehicle manifest identity name -- the exact string createPipesVehicleRegistry
+ * constructs its VehicleRegistry with (vehicle/pipes-vehicle.ts). Exported so a consumer that needs
+ * to name "the Vehicle behind Pipes" (e.g. pi-pipes's own persistent widget headers, via
+ * @danypops/vehicle-client-pi's vehicleWidgetTitle) has one real source instead of a second
+ * hand-typed "pipes" literal that could silently drift from the registry's own. Deliberately its
+ * own constant, not a reuse of STATE_DIRECTORY_NAME below -- the two happen to share a value today
+ * but name unrelated concepts (Vehicle identity vs. on-disk directory layout). */
+export const VEHICLE_NAME = "pipes";
+
 /** XDG state-directory name shared by paths.ts (daemon side) and the
  * pi-pipes' duplicated client (see pi-pipes/src/daemon-client.ts
  * for why it's a duplicate, not an import). Keep these two in sync by hand. */

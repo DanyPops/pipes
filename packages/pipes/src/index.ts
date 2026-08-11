@@ -7,6 +7,7 @@ export {
 	resolveVehicleClientTarget,
 	type VehicleClientTarget,
 } from "./cli/client.ts";
+export { VEHICLE_NAME } from "./constants.ts";
 export { type PipesCredentialPaths, profiledBackend, resolvePipesCredentialPaths, resolvePipesPaths } from "./paths.ts";
 export type { OperationInputs, OperationName, OperationOutputs } from "./rpc/service.ts";
 export type { BackendInfo } from "./run/backend.ts";

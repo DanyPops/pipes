@@ -17,11 +17,10 @@ describe("renderJobsWidgetLines", () => {
 		expect(lines).toEqual([]);
 	});
 
-	it("renders a header naming the subscribed count, plus one line per row", () => {
+	it("renders a header naming the owning Vehicle, the widget, and the subscribed count, plus one line per row", () => {
 		const projection = buildJobsWidgetProjection([row({ runId: "1" }), row({ jobRef: "other", runId: "2" })]);
 		const lines = renderJobsWidgetLines(theme, projection, 80);
-		expect(lines[0]).toContain("Jobs");
-		expect(lines[0]).toContain("2");
+		expect(lines[0]).toBe("Pipes · Jobs · 2 subscribed");
 		expect(lines).toHaveLength(3);
 	});
 

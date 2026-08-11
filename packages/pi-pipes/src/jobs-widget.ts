@@ -6,6 +6,8 @@
  * these from a live ci.subscribed poll.
  */
 
+import { VEHICLE_NAME } from "@danypops/pipes";
+import { vehicleWidgetTitle } from "@danypops/vehicle-client-pi/widget-header";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { ProgressBar, type ProgressBarGlyphStyle, type ProgressBarGlyphs } from "malevich-tui-components";
 import { effectiveWatchPercent, statusGlyph } from "./ci-render.ts";
@@ -59,7 +61,8 @@ export function renderJobsWidgetLines(
 ): string[] {
 	if (projection.total === 0) return [];
 
-	const lines: string[] = [theme.fg("muted", `Jobs · ${projection.total} subscribed`)];
+	const header = truncateToWidth(theme.fg("muted", vehicleWidgetTitle(VEHICLE_NAME, "Jobs", `${projection.total} subscribed`)), width, "…");
+	const lines: string[] = [header];
 	for (const row of projection.rows) {
 		let line = `${statusGlyph(row.status, theme)} ${theme.fg("accent", `${row.backend}/${row.jobRef}`)} ${theme.fg("dim", `#${row.runId}`)}`;
 		if (row.projectName) line += ` ${theme.fg("dim", `(${row.projectName})`)}`;

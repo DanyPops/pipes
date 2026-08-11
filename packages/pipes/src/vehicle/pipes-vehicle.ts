@@ -21,6 +21,7 @@ import {
 	type VehicleEffect,
 } from "@danypops/vehicle-core";
 import { VehicleRegistry } from "@danypops/vehicle-server";
+import { VEHICLE_NAME } from "../constants.ts";
 import { BackendUnavailableError } from "../orchestrator.ts";
 import { statusForKnownPipesError } from "../rpc/error-status.ts";
 import type { OperationInputs, OperationName, PipesService } from "../rpc/service.ts";
@@ -394,7 +395,7 @@ async function waitWithProgress(
 
 export function createPipesVehicleRegistry(service: PipesService): VehicleRegistry {
 	const registry = new VehicleRegistry({
-		name: "pipes",
+		name: VEHICLE_NAME,
 		packageJsonUrl: new URL("../../package.json", import.meta.url),
 		description: "Cross-platform CI operations across GitHub Actions, GitLab CI, Jenkins, and Prow.",
 	});
