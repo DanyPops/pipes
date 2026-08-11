@@ -423,6 +423,32 @@ describe("createRunPool: watchedRunsWithProjectLabels", () => {
 		expect(pool.watchedRunsWithProjectLabels("session-c")).toEqual([]);
 	});
 
+	it("stops returning a superseded pinned run's stale watched=1 row once the same subscriber re-pins to a new run -- the live 'no longer being tracked'/'still in flight' flapping bug (a real run's own watched flag lingered from before the daemon's own background sync got a chance to correct it, and the EXISTS join never checked which run was actually still pinned)", () => {
+		const db = openPipesDb(":memory:");
+		const pool = createRunPool(db);
+		pool.subscribeJob("github", "repo/publish.yml", { subscriberId: "session-a", runId: "1" });
+		pool.upsert(snapshot({ backend: "github", jobRef: "repo/publish.yml", runId: "1", watched: true }));
+		// Re-pins the very same subscription to a new run (exactly what a second ci_subscribe call with
+		// a different runId does) -- but run "1"'s own row is never explicitly told it's no longer
+		// relevant; only the sync loop's own next tick against run "1" would eventually flip it, and
+		// that tick may not have happened yet.
+		pool.subscribeJob("github", "repo/publish.yml", { subscriberId: "session-a", runId: "2" });
+		pool.upsert(snapshot({ backend: "github", jobRef: "repo/publish.yml", runId: "2", watched: true }));
+
+		const rows = pool.watchedRunsWithProjectLabels("session-a");
+		expect(rows.map((r) => r.runId)).toEqual(["2"]);
+	});
+
+	it("an unpinned ('latest') subscription is untouched by the pinned-run filter -- still returns every watched=1 row for that job", () => {
+		const db = openPipesDb(":memory:");
+		const pool = createRunPool(db);
+		pool.subscribeJob("github", "repo/publish.yml", { subscriberId: "session-a" });
+		pool.upsert(snapshot({ backend: "github", jobRef: "repo/publish.yml", runId: "1", watched: true }));
+
+		const rows = pool.watchedRunsWithProjectLabels("session-a");
+		expect(rows.map((r) => r.runId)).toEqual(["1"]);
+	});
+
 	it("omitting subscriberId keeps today's global, unscoped view -- back-compat", () => {
 		const db = openPipesDb(":memory:");
 		const pool = createRunPool(db);

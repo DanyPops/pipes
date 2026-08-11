@@ -278,6 +278,17 @@ export function createRunPool(db: Database): RunPool {
 		},
 
 		watchedRunsWithProjectLabels(subscriberId?: string): Array<RunSnapshot & { projectRoot?: string; projectName?: string }> {
+			// pinned_run_id IS NULL OR pinned_run_id = run_id: an unpinned ('latest') subscription is
+			// untouched (still every watched=1 row for the job, today's existing behavior), but a
+			// *pinned* subscription only ever matches its own currently-pinned run -- the fix for a
+			// real, live-reproduced bug where re-pinning the same subscription to a new runId (a second
+			// ci_subscribe call, exactly what happens across two releases of the same job in one
+			// session) left the *previous* run's own watched=1 row still matching this EXISTS join
+			// (which only checked backend/job_ref/subscriber_id, never which run was actually still
+			// pinned) until the background sync loop's own next tick against that stale run happened to
+			// correct it -- a real window where an already-superseded, often already-terminal run kept
+			// reappearing in ci.subscribed's results and hence pi-pipes' own background job-ticker
+			// notifications ('no longer being tracked' / 'still in flight' flapping for the same run).
 			const rows = (
 				subscriberId === undefined
 					? db.query("SELECT * FROM run_snapshots WHERE watched = 1").all()
@@ -288,6 +299,7 @@ export function createRunPool(db: Database): RunPool {
 									WHERE job_watches.backend = run_snapshots.backend
 									  AND job_watches.job_ref = run_snapshots.job_ref
 									  AND job_watches.subscriber_id = ?
+									  AND (job_watches.pinned_run_id IS NULL OR job_watches.pinned_run_id = run_snapshots.run_id)
 								)`,
 							)
 							.all(subscriberId)
