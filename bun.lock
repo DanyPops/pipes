@@ -21,11 +21,11 @@
     },
     "packages/pi-pipes": {
       "name": "@danypops/pi-pipes",
-      "version": "0.16.7",
+      "version": "0.16.8",
       "dependencies": {
         "@danypops/pipes": "^0.17.0",
         "@danypops/vehicle-client": "^0.8.1",
-        "@danypops/vehicle-client-pi": "^0.36.0",
+        "@danypops/vehicle-client-pi": "^0.39.0",
         "@danypops/vehicle-core": "^0.15.0",
         "@danypops/vehicle-server": "^0.23.1",
         "malevich-tui-components": "^0.25.0",
@@ -156,7 +156,7 @@
 
     "@danypops/vehicle-client": ["@danypops/vehicle-client@0.8.1", "", { "dependencies": { "@danypops/vehicle-core": "^0.15.0", "@danypops/vehicle-server": "^0.21.1" } }, "sha512-1rdh5NtKrGOkUuAY4I29TjaJbdk7yvNwgR8spBEscyUW6SoxcYp+QmW6gSSLj/6zJQKBfJ77WaQC8zUiu16fiQ=="],
 
-    "@danypops/vehicle-client-pi": ["@danypops/vehicle-client-pi@0.36.0", "", { "dependencies": { "@danypops/pi-extension-harness": "^0.7.0", "@danypops/vehicle-client": "^0.9.1", "@danypops/vehicle-core": "^0.17.0", "@danypops/vehicle-server": "^0.24.1", "malevich-tui-components": "^0.27.0" }, "peerDependencies": { "@earendil-works/pi-agent-core": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-tui"] }, "sha512-yumy6GtmPKa2EcZIeHaPfPnniaSy1jBnCosAE1rtEv9VY+qiydBReXv4MawNGsVUMJfzCtQ0z7gnRKzWitLPWA=="],
+    "@danypops/vehicle-client-pi": ["@danypops/vehicle-client-pi@0.39.0", "", { "dependencies": { "@danypops/pi-extension-harness": "^0.7.0", "@danypops/vehicle-client": "^0.9.1", "@danypops/vehicle-core": "^0.17.0", "@danypops/vehicle-server": "^0.24.1", "malevich-tui-components": "^0.27.0" }, "peerDependencies": { "@earendil-works/pi-agent-core": "*", "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-tui": "*", "typebox": "*" }, "optionalPeers": ["@earendil-works/pi-tui"] }, "sha512-+QeRjLlHGV7uUf+TT8rFGXcg5GKB7x5l/Ta0JIN/RNe97ZbC2op6J6UQJVYcE6eDAVWCDQD7wrfnef2AZibvsg=="],
 
     "@danypops/vehicle-core": ["@danypops/vehicle-core@0.15.0", "", {}, "sha512-2IWDriuNZmndpgpqCJ5DF56ZCBTxjJL7kxyws9H9jkLjxF5U412R4GNpdcbNvYY0NHmL5P5lk4/oCFZHC+XXOA=="],
 
