@@ -1,8 +1,15 @@
-import { describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { renderToTerminal } from "@danypops/pi-tui-harness";
+import { __resetInProcessVehicleRegistryForTests, __resetVehicleShellHandleForTests } from "@danypops/vehicle-client-pi/test-utils";
 import type { AtomicJsonFsAdapter, VehicleClient, VehicleInvocationOptions, VehicleManifest } from "@danypops/vehicle-core";
 import type { AgentToolResult, ExtensionAPI, Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { registerPipesVehicle } from "../src/vehicle-client.ts";
+
+// See vehicle-client.test.ts's own identical beforeEach for why this is needed.
+beforeEach(() => {
+	__resetVehicleShellHandleForTests();
+	__resetInProcessVehicleRegistryForTests();
+});
 
 /** An in-memory AtomicJsonFsAdapter -- registerPipesVehicle now touches a manifest cache file by default; this suite injects one instead of the real on-disk default. */
 function fakeManifestCache(): { filePath: string; fs: AtomicJsonFsAdapter } {

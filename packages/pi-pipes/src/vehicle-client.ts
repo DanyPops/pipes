@@ -22,13 +22,7 @@
  * exact same hand-tuned rendering the mega-tool already had.
  */
 import { join } from "node:path";
-import {
-	resolvePipesCredentialPaths,
-	resolvePipesPaths,
-	resolveVehicleClientTarget,
-	VEHICLE_NAME,
-	type VehicleClientTarget,
-} from "@danypops/pipes";
+import { resolvePipesCredentialPaths, resolvePipesPaths, resolveVehicleClientTarget, type VehicleClientTarget } from "@danypops/pipes";
 import { createReconnectingVehicleClient } from "@danypops/vehicle-client/daemon-client";
 import { RemoteVehicleClient } from "@danypops/vehicle-client/http";
 import {
@@ -251,13 +245,14 @@ export interface PipesVehicleDeps {
 	progressBarGlyphs?: ProgressBarGlyphs | ProgressBarGlyphStyle;
 	/** Overridden in tests that need shell mode off to isolate an unrelated behavior -- pass `shell: undefined`
 	 * explicitly to disable it. Omitting this field entirely (not present on deps at all) keeps the real
-	 * default: core operations active, everything else behind tools_man, broker mode on under VEHICLE_NAME. */
+	 * default: core operations active, everything else behind tools_man. Discovery of every other Vehicle
+	 * in the process is unconditional now (vehicle-client-pi's own neutral, shared tools_list/tools_man) --
+	 * no ownVehicleName/broker option needed here anymore. */
 	shell?: RegisterVehicleToolsOptions["shell"];
 }
 
 const DEFAULT_SHELL_OPTIONS: RegisterVehicleToolsOptions["shell"] = {
 	coreOperations: PIPES_CORE_OPERATIONS,
-	broker: { ownVehicleName: VEHICLE_NAME },
 };
 
 export async function registerPipesVehicle(pi: ExtensionAPI, deps: PipesVehicleDeps = {}): Promise<RegisteredPiVehicle | undefined> {

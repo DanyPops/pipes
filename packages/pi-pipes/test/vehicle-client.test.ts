@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
+import { __resetInProcessVehicleRegistryForTests, __resetVehicleShellHandleForTests } from "@danypops/vehicle-client-pi/test-utils";
 import type {
 	AtomicJsonFsAdapter,
 	VehicleClient,
@@ -201,6 +202,16 @@ describe("registerPipesVehicle", () => {
 		expect(tool?.renderCall).toBeDefined();
 		expect(tool?.renderResult).toBeDefined();
 	});
+});
+
+// registerVehicleTools()'s shared Vehicle Shell handle and in-process vehicle registry are both
+// process-wide globalThis singletons -- bun test runs this whole package's test files in one
+// process, so an earlier test's own registration would otherwise silently "win" the shared handle
+// forever, leaving a later test's own fresh fake pi with tools_list/tools_man never registered on
+// it at all. See @danypops/vehicle-client-pi/test-utils's own doc comment.
+beforeEach(() => {
+	__resetVehicleShellHandleForTests();
+	__resetInProcessVehicleRegistryForTests();
 });
 
 describe("registerPipesVehicle: Vehicle Shell broker mode", () => {
