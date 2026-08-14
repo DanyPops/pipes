@@ -249,6 +249,10 @@ export interface PipesVehicleDeps {
 	 * in the process is unconditional now (vehicle-client-pi's own neutral, shared tools_list/tools_man) --
 	 * no ownVehicleName/broker option needed here anymore. */
 	shell?: RegisterVehicleToolsOptions["shell"];
+	/** Overridden in tests that need a connector failure to surface immediately instead of waiting
+	 * out the real ~5s background retry budget. Defaults to true -- see vehicle-client's own
+	 * DEFAULT_CONNECT_RETRY, which covers a daemon that crashed and is mid systemd-restart. */
+	connectRetry?: boolean;
 }
 
 const DEFAULT_SHELL_OPTIONS: RegisterVehicleToolsOptions["shell"] = {
@@ -267,12 +271,18 @@ export async function registerPipesVehicle(pi: ExtensionAPI, deps: PipesVehicleD
 		// Re-resolves resolveTarget()/createClient fresh on every reconnect attempt rather than
 		// closing over the `target` captured above: the daemon rebinds a new random port on every
 		// restart, and a bare client built once has no way to notice its baseUrl died.
+		// connectRetry:true (vehicle-client's own bounded background retry budget) covers a
+		// daemon that crashed and is mid systemd-restart -- without it, the very first call
+		// during that window fails immediately instead of waiting the ~2s restart out.
 		const client = withConnectorDiagnostics(
-			createReconnectingVehicleClient(async () => {
-				const resolved = resolveTarget();
-				if (!resolved) throw new Error("Pipes daemon is not running");
-				return createClient(resolved);
-			}),
+			createReconnectingVehicleClient(
+				async () => {
+					const resolved = resolveTarget();
+					if (!resolved) throw new Error("Pipes daemon is not running");
+					return createClient(resolved);
+				},
+				{ connectRetry: deps.connectRetry ?? true },
+			),
 		);
 		const options: RegisterVehicleToolsOptions = {
 			permissions: ["pipes:read", "pipes:write"],

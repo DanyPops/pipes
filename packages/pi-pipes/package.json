@@ -11,7 +11,7 @@
 	},
 	"dependencies": {
 		"@danypops/pipes": "^0.17.0",
-		"@danypops/vehicle-client": "^0.9.1",
+		"@danypops/vehicle-client": "^0.10.0",
 		"@danypops/vehicle-client-pi": "^0.40.1",
 		"@danypops/vehicle-core": "^0.17.0",
 		"@danypops/vehicle-server": "^0.24.1",

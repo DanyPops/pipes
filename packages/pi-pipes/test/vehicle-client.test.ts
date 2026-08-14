@@ -144,6 +144,10 @@ describe("registerPipesVehicle", () => {
 				throw new Error("connection refused");
 			},
 			manifestCache: fakeManifestCache(),
+			// "connection refused" is stale-connection-shaped -- without disabling connectRetry
+			// here, this would wait out the real ~5s background retry budget (see vehicle-client's
+			// own DEFAULT_CONNECT_RETRY) before degrading.
+			connectRetry: false,
 		};
 		const result = await registerPipesVehicle(pi, deps);
 		expect(result).toBeUndefined();
@@ -168,6 +172,10 @@ describe("registerPipesVehicle", () => {
 			// Unrelated to broker/shell mode -- disabled so this test's registered-tool-names
 			// assertion stays about the manifest-cache fallback, not shell's own meta-tools.
 			shell: undefined,
+			// "connection refused" is stale-connection-shaped -- without disabling connectRetry
+			// here, this would wait out the real ~5s background retry budget (see vehicle-client's
+			// own DEFAULT_CONNECT_RETRY) before falling back to the cached manifest.
+			connectRetry: false,
 		};
 		const result = await registerPipesVehicle(pi, deps);
 		expect(result?.stale).toBe(true);
