@@ -24,7 +24,7 @@ import { VehicleRegistry } from "@danypops/vehicle-server";
 import { VEHICLE_NAME } from "../constants.ts";
 import { BackendUnavailableError } from "../orchestrator.ts";
 import { statusForKnownPipesError } from "../rpc/error-status.ts";
-import type { OperationInputs, OperationName, PipesService } from "../rpc/service.ts";
+import type { OperationInputs, OperationName, PipesService } from "../rpc/operation-types.ts";
 
 const OWNER = "pipes";
 
