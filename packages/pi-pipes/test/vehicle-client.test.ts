@@ -235,7 +235,7 @@ describe("registerPipesVehicle: Vehicle Shell broker mode", () => {
 		const result = await registerPipesVehicle(pi, deps);
 
 		expect(result?.shell).toBeDefined();
-		expect(active().sort()).toEqual(["ci_status", "tools_list", "tools_man"].sort());
+		expect(active().sort()).toEqual(["ci_status", "tools_list", "tools_man", "tools_type"].sort());
 	});
 });
 
