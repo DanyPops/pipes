@@ -302,8 +302,8 @@ export async function registerPipesVehicle(pi: ExtensionAPI, deps: PipesVehicleD
 					),
 			}),
 			// A crash-loop or slow restart at factory time (Pi awaits this before transcript replay)
-			// used to leave every ci_* tool unregistered for the rest of the session -- see the
-			// manifestCache doc comment on RegisterVehicleToolsOptions.
+			// falls back to the last cached manifest instead of registering zero ci_* tools for the
+			// rest of the session -- see the manifestCache doc comment on RegisterVehicleToolsOptions.
 			manifestCache,
 		};
 		let registered = await registerVehicleTools(pi, client, options);
