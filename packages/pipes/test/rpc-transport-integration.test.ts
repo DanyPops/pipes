@@ -17,7 +17,7 @@ function buildClient(app: ReturnType<typeof buildApp>) {
 	});
 }
 
-describe("pipes walking skeleton", () => {
+describe("pipes RPC transport integration", () => {
 	it("serves health, ready, ops discovery, and ci.help over the authenticated transport", async () => {
 		const client = buildClient(buildApp());
 
