@@ -67,7 +67,21 @@ export function isPipesVehicleTool(toolName: string): boolean {
 	return PIPES_TOOL_PREFIXES.some((prefix) => toolName.startsWith(prefix));
 }
 
-function renderCiCall(operationName: string, args: unknown, theme: Theme) {
+/** No ci_ or rp_ operation's own input schema declares any of these -- a defensive net for an
+ * unrecognized/malformed args shape with none of backend/jobRef/pipeline/runId present, so it
+ * shows something identifying rather than silently falling back to the bare action name alone. */
+const GENERIC_IDENTITY_ARG_KEYS = ["name", "title", "id", "text"] as const;
+
+function genericIdentityFallback(args: Record<string, unknown>): string | undefined {
+	for (const key of GENERIC_IDENTITY_ARG_KEYS) {
+		const value = args[key];
+		if (typeof value === "string" && value.trim()) return value.trim();
+	}
+	return undefined;
+}
+
+/** Exported for @danypops/vehicle-conformance's dual-channel fixture (test/tool-shell-dual-channel.test.ts) -- the real per-operation call renderer wired via `renderers()` above, not a test-only duplicate. */
+export function renderCiCall(operationName: string, args: unknown, theme: Theme) {
 	const input = args as { backend?: string; jobRef?: string; pipeline?: string; runId?: string } | undefined;
 	// operationName is always "<namespace>.<action>" (ci.status, rp.launches, ...) -- split on the
 	// first dot rather than assuming the "ci." namespace specifically, so a Report Portal (rp.*)
@@ -80,7 +94,12 @@ function renderCiCall(operationName: string, args: unknown, theme: Theme) {
 		text += ` ${theme.fg("accent", input.pipeline)}`;
 	} else {
 		const target = [input?.backend, input?.jobRef].filter(Boolean).join("/");
-		if (target) text += ` ${theme.fg("accent", target)}`;
+		if (target) {
+			text += ` ${theme.fg("accent", target)}`;
+		} else if (input && typeof input === "object") {
+			const identity = genericIdentityFallback(input as Record<string, unknown>);
+			if (identity) text += ` ${theme.fg("accent", identity)}`;
+		}
 	}
 	if (input?.runId) text += ` ${theme.fg("dim", `#${input.runId}`)}`;
 	return new Text(text, 0, 0);

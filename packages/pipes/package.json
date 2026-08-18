@@ -38,7 +38,7 @@
 		"@danypops/enigma-client": "^0.6.2",
 		"@danypops/vehicle-client": "^0.10.1",
 		"@danypops/vehicle-core": "^0.17.1",
-		"@danypops/vehicle-server": "^0.25.1",
+		"@danypops/vehicle-server": "^0.25.2",
 		"open": "^11.0.0"
 	},
 	"devDependencies": {
