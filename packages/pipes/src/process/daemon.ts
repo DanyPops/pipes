@@ -2,6 +2,9 @@
 
 import { runDaemonProcess } from "@danypops/vehicle-server/daemon";
 import { createLogger } from "@danypops/vehicle-server/logging";
+import { openVehicleMetricsStore } from "@danypops/vehicle-server/metrics";
+import { createVehicleMetricsMiddleware } from "@danypops/vehicle-server/metrics-middleware";
+import { registerVehicleMetricsOperations } from "@danypops/vehicle-server/metrics-operations";
 import { ensureAuthToken } from "@danypops/vehicle-server/paths";
 import { PushChannel } from "@danypops/vehicle-server/push-channel";
 import { buildConfiguredAdapters } from "../config/config.ts";
@@ -42,6 +45,14 @@ export async function serveMain(): Promise<void> {
 	const runPool = createRunPool(db);
 	const projectStore = createSqliteVehicleProjectStore(db);
 	const service = createPipesService(orchestrator, { runPool, launchBackend, projectStore });
+	// Records how often each real operation is invoked (server-side, every caller) plus, via
+	// metrics.recordClientEvent, client-observed Vehicle Shell meta-tool calls -- see
+	// @danypops/vehicle-server's own metrics README section. Wired directly onto the same registry
+	// every real Pipes operation is already registered on (service.vehicle), so it's discoverable
+	// through the exact same tools_list/tools_man path as any other operation.
+	const metrics = openVehicleMetricsStore(paths.metrics);
+	service.vehicle.useExecutionMiddleware(createVehicleMetricsMiddleware(metrics, VEHICLE_NAME));
+	registerVehicleMetricsOperations(service.vehicle, metrics, VEHICLE_NAME);
 	const pushChannel = new PushChannel({ token });
 
 	runDaemonProcess({
@@ -67,7 +78,10 @@ export async function serveMain(): Promise<void> {
 				run: () => syncRunPool(orchestrator, runPool, logger, (transition) => pushChannel.publish("ci", transition)),
 			},
 		],
-		onShutdown: () => db.close(),
+		onShutdown: () => {
+			db.close();
+			metrics.close();
+		},
 		onListen: ({ host, port }) => logger.info("listening", { host, port }),
 	});
 }

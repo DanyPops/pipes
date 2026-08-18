@@ -1,6 +1,10 @@
 /** Exercises createApp/createPipesService end to end, in-process, over the authenticated transport (auth, /health, /ready, /api/v1/ops). */
 import { describe, expect, it } from "bun:test";
+import { RemoteVehicleClient } from "@danypops/vehicle-client/http";
 import { AuthenticatedRpcClient } from "@danypops/vehicle-client/rpc-client";
+import { openVehicleMetricsStore } from "@danypops/vehicle-server/metrics";
+import { createVehicleMetricsMiddleware } from "@danypops/vehicle-server/metrics-middleware";
+import { registerVehicleMetricsOperations } from "@danypops/vehicle-server/metrics-operations";
 import { Orchestrator } from "../src/orchestrator.ts";
 import { createApp, createPipesService, type OperationInputs, type OperationName, type OperationOutputs } from "../src/rpc/service.ts";
 
@@ -16,6 +20,41 @@ function buildClient(app: ReturnType<typeof buildApp>) {
 		transport: (request) => app.fetch(request),
 	});
 }
+
+describe("pipes RPC transport integration: vehicle metrics (mirrors process/daemon.ts's own wiring)", () => {
+	it("a real Vehicle-surface op call is recorded by the wired-in metrics store, discoverable through the manifest itself", async () => {
+		// Deliberately NOT AuthenticatedRpcClient/`/api/v1/ops` -- that's Pipes' own separate, hand-
+		// written native RPC surface (see createApp's own doc comment); only `/vehicle/*` (routed to
+		// service.vehicle) reaches the execution middleware metrics are wired onto. pi-pipes' own real
+		// vehicle-client.ts uses RemoteVehicleClient against exactly this surface.
+		const service = createPipesService(new Orchestrator());
+		const metrics = openVehicleMetricsStore(":memory:");
+		service.vehicle.useExecutionMiddleware(createVehicleMetricsMiddleware(metrics, "pipes"));
+		registerVehicleMetricsOperations(service.vehicle, metrics, "pipes");
+		const app = createApp({ service, token: TOKEN });
+
+		const vehicleClient = new RemoteVehicleClient({
+			baseUrl: "http://pipes.local",
+			token: TOKEN,
+			// Cast: Bun's own `typeof fetch` type additionally requires a static `.preconnect` this
+			// in-process transport override has no use for -- same shape every other real caller of
+			// this option already accepts (the actual invocation is a plain 2-arg fetch call).
+			fetch: ((input: string | Request | URL, init?: RequestInit) =>
+				app.fetch(new Request(input as string, init))) as unknown as typeof fetch,
+		});
+
+		const manifest = await vehicleClient.manifest();
+		expect(manifest.operations.map((op) => op.name)).toContain("metrics.query");
+		expect(manifest.operations.map((op) => op.name)).toContain("metrics.recordClientEvent");
+
+		await vehicleClient.invoke("ci.help", 1, {}, { permissions: ["pipes:read", "pipes:write"] });
+
+		const rows = metrics.query({ toolName: "ci.help" });
+		expect(rows[0]).toMatchObject({ count: 1, successCount: 1, failureCount: 0 });
+
+		await vehicleClient.close();
+	});
+});
 
 describe("pipes RPC transport integration", () => {
 	it("serves health, ready, ops discovery, and ci.help over the authenticated transport", async () => {
