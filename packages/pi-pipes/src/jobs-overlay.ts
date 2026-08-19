@@ -15,11 +15,11 @@
 import type { AgentNotifier, AgentPollTicker } from "@danypops/vehicle-client-pi/agent-poll-ticker";
 import { reportAgentPollTick } from "@danypops/vehicle-client-pi/agent-poll-ticker";
 import type { ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
-import type { ProgressBarGlyphStyle, ProgressBarGlyphs } from "malevich-tui-components";
+import { AutoRotatingWindow, type ProgressBarGlyphStyle, type ProgressBarGlyphs } from "malevich-tui-components";
 import { BoundedPoll } from "./bounded-poll.ts";
 import { createJobTicker } from "./job-ticker.ts";
 import { fetchSubscribedJobs } from "./jobs-client.ts";
-import { buildJobsWidgetProjection, type JobsWidgetRow, renderJobsWidgetLines } from "./jobs-widget.ts";
+import { buildJobsWidgetProjection, type JobsWidgetRow, PIPES_JOBS_WIDGET_VISIBLE_ROWS, renderJobsWidgetLines } from "./jobs-widget.ts";
 
 export type { AgentNotifier } from "@danypops/vehicle-client-pi/agent-poll-ticker";
 
@@ -29,6 +29,9 @@ const WIDGET_KEY = "pi-pipes-jobs";
  * faster than the daemon's own background sync refreshes the pool would just re-read stale data. */
 export const JOBS_WIDGET_POLL_INTERVAL_MS = 15_000;
 
+/** How often the widget's own auto-rotating overflow page advances. */
+export const JOBS_WIDGET_ROTATION_INTERVAL_MS = 6_000;
+
 export class JobsOverlay {
 	private uiCtx: ExtensionUIContext | undefined;
 	private registered = false;
@@ -36,6 +39,14 @@ export class JobsOverlay {
 	private tui: any | undefined;
 	private rows: JobsWidgetRow[] = [];
 	private readonly poll = new BoundedPoll();
+	/** Repaint-only ticker (no data refetch) so the widget's own auto-rotating page visibly advances
+	 * even when nothing else has changed. */
+	private readonly rotationPoll = new BoundedPoll();
+	private readonly rotation = new AutoRotatingWindow({
+		totalRows: 0,
+		pageSize: PIPES_JOBS_WIDGET_VISIBLE_ROWS,
+		intervalMs: JOBS_WIDGET_ROTATION_INTERVAL_MS,
+	});
 	private readonly ticker: AgentPollTicker<JobsWidgetRow>;
 
 	constructor(
@@ -106,6 +117,7 @@ export class JobsOverlay {
 				this.uiCtx.setWidget(WIDGET_KEY, undefined);
 				this.registered = false;
 				this.tui = undefined;
+				this.rotationPoll.stop();
 			}
 			return;
 		}
@@ -117,7 +129,8 @@ export class JobsOverlay {
 				(tui: any, theme: Theme) => {
 					this.tui = tui;
 					return {
-						render: (width: number) => renderJobsWidgetLines(theme, buildJobsWidgetProjection(this.rows), width, this.progressBarGlyphs),
+						render: (width: number) =>
+							renderJobsWidgetLines(theme, buildJobsWidgetProjection(this.rows), width, this.progressBarGlyphs, this.rotation),
 						invalidate: () => {
 							// Theme changed -- force re-registration, matching pi-papyrus's own overlays.
 							this.registered = false;
@@ -128,6 +141,7 @@ export class JobsOverlay {
 				{ placement: "aboveEditor" },
 			);
 			this.registered = true;
+			this.rotationPoll.start(JOBS_WIDGET_ROTATION_INTERVAL_MS, () => this.tui?.requestRender?.());
 		} else {
 			this.tui?.requestRender?.();
 		}
@@ -147,6 +161,7 @@ export class JobsOverlay {
 
 	dispose(): void {
 		this.stopPolling();
+		this.rotationPoll.stop();
 		this.uiCtx?.setWidget(WIDGET_KEY, undefined);
 		this.registered = false;
 		this.tui = undefined;

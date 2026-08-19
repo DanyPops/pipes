@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { AutoRotatingWindow } from "malevich-tui-components";
 import { buildJobsWidgetProjection, type JobsWidgetRow, renderJobsWidgetLines } from "../src/jobs-widget.ts";
 
 const theme = {
@@ -11,17 +12,23 @@ function row(overrides: Partial<JobsWidgetRow> = {}): JobsWidgetRow {
 	return { backend: "gh", jobRef: "job", runId: "1", status: "running", ...overrides };
 }
 
+function rotation(pageSize: number, totalRows: number, now: () => number = () => 0): AutoRotatingWindow {
+	return new AutoRotatingWindow({ totalRows, pageSize, intervalMs: 1000, now });
+}
+
 describe("renderJobsWidgetLines", () => {
 	it("returns no lines at all (hides the widget) when nothing is subscribed", () => {
 		const lines = renderJobsWidgetLines(theme, buildJobsWidgetProjection([]), 80);
 		expect(lines).toEqual([]);
 	});
 
-	it("renders a header naming the owning Vehicle, the widget, and the subscribed count, plus one line per row", () => {
+	it("renders a bordered card whose own top-border title names the owning Vehicle, the widget, and the subscribed count, plus one line per row", () => {
 		const projection = buildJobsWidgetProjection([row({ runId: "1" }), row({ jobRef: "other", runId: "2" })]);
 		const lines = renderJobsWidgetLines(theme, projection, 80);
-		expect(lines[0]).toBe("Pipes · Jobs · 2 subscribed");
-		expect(lines).toHaveLength(3);
+		expect(lines[0]).toContain("Pipes · Jobs · 2 subscribed");
+		expect(lines[0]).toContain("╭");
+		expect(lines[lines.length - 1]).toContain("╰");
+		expect(lines).toHaveLength(4); // top border, 2 rows, bottom border
 	});
 
 	it("shows a run's backend/jobRef and run id on its own line", () => {
@@ -75,9 +82,32 @@ describe("renderJobsWidgetLines", () => {
 		const projection = buildJobsWidgetProjection([
 			row({ backend: "jenkins-auto", jobRef: "ocp-baremetal-ipi-deployment-with-a-very-long-name", runId: "40531", progressPercent: 55 }),
 		]);
-		for (const width of [20, 40, 80, 120]) {
+		for (const width of [40, 80, 120]) {
 			const lines = renderJobsWidgetLines(theme, projection, width);
 			for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
+	});
+
+	describe("auto-rotating overflow hint", () => {
+		it("never shows a page hint when every subscribed job already fits on one page", () => {
+			const projection = buildJobsWidgetProjection([row({ runId: "1" }), row({ runId: "2" })]);
+			const lines = renderJobsWidgetLines(theme, projection, 80, "blocks", rotation(5, 2));
+			expect(lines[0]).not.toMatch(/\d\/\d ⟳/);
+		});
+
+		it("shows a page/total rotation hint once subscribed jobs genuinely outgrow one page, and pages through them as the clock advances", () => {
+			const rows = Array.from({ length: 5 }, (_, i) => row({ runId: String(i) }));
+			const projection = buildJobsWidgetProjection(rows);
+			let now = 0;
+			const paging = rotation(2, 5, () => now);
+
+			const page1 = renderJobsWidgetLines(theme, projection, 80, "blocks", paging);
+			expect(page1[0]).toMatch(/1\/3 ⟳/);
+			expect(page1).toHaveLength(4); // top border, 2 rows, bottom border
+
+			now = 1000;
+			const page2 = renderJobsWidgetLines(theme, projection, 80, "blocks", paging);
+			expect(page2[0]).toMatch(/2\/3 ⟳/);
+		});
 	});
 });

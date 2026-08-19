@@ -8,9 +8,21 @@
 
 import { VEHICLE_NAME } from "@danypops/pipes";
 import { vehicleWidgetTitle } from "@danypops/vehicle-client-pi/widget-header";
-import { truncateToWidth } from "@earendil-works/pi-tui";
-import { ProgressBar, type ProgressBarGlyphStyle, type ProgressBarGlyphs } from "malevich-tui-components";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import {
+	type AutoRotatingWindow,
+	ProgressBar,
+	type ProgressBarGlyphStyle,
+	type ProgressBarGlyphs,
+	renderCardRow,
+	type TextMeasure,
+} from "malevich-tui-components";
 import { effectiveWatchPercent, statusGlyph } from "./ci-render.ts";
+
+const measure: TextMeasure = { visibleWidth, truncateToWidth, wrapTextWithAnsi };
+
+/** Visible job rows per page before the auto-rotating overflow hint pages to the next. */
+export const PIPES_JOBS_WIDGET_VISIBLE_ROWS = 5;
 
 /** One subscribed job's last-known status -- the widget's own minimal shape, not packages/pipes'
  * RunSnapshot directly: pi-pipes talks to the daemon over RPC/JSON, never imports the daemon's own
@@ -51,28 +63,53 @@ export function buildJobsWidgetProjection(runs: readonly JobsWidgetRow[]): JobsW
 
 const JOBS_WIDGET_BAR_WIDTH = 10;
 
-/** Renders the widget's lines for a given projection -- `[]` (hide the whole widget) when nothing is
- * subscribed, matching pi-papyrus's own `openTotal === 0` convention rather than an empty box. */
+function jobRowLine(
+	theme: { fg(color: string, text: string): string },
+	row: JobsWidgetRow,
+	width: number,
+	progressBarGlyphs: ProgressBarGlyphs | ProgressBarGlyphStyle,
+): string {
+	let line = `${statusGlyph(row.status, theme)} ${theme.fg("accent", `${row.backend}/${row.jobRef}`)} ${theme.fg("dim", `#${row.runId}`)}`;
+	if (row.projectName) line += ` ${theme.fg("dim", `(${row.projectName})`)}`;
+	if (row.progressPercent !== undefined) {
+		const shown = effectiveWatchPercent(row.status, row.progressPercent);
+		const bar = new ProgressBar({ value: shown, max: 100, width: JOBS_WIDGET_BAR_WIDTH, glyphs: progressBarGlyphs }).format();
+		line += ` ${theme.fg("accent", bar)} ${theme.fg("muted", `${Math.round(shown)}%`)}`;
+		if (row.overdue) line += ` ${theme.fg("warning", "overdue")}`;
+	}
+	return truncateToWidth(line, width, "…");
+}
+
+/** "Pipes · Jobs · <N> subscribed", plus a "page/total ⟳" suffix once genuinely paging. */
+function jobsCardLabel(projection: JobsWidgetProjection, rotation?: AutoRotatingWindow): string {
+	const base = vehicleWidgetTitle(VEHICLE_NAME, "Jobs", `${projection.total} subscribed`);
+	return rotation?.isPaging ? `${base} · ${rotation.pageIndex + 1}/${rotation.pageCount} ⟳` : base;
+}
+
+/** Renders the widget as a single bordered card -- `[]` (hide the whole widget) when nothing is
+ * subscribed, matching pi-papyrus's own `openTotal === 0` convention rather than an empty box.
+ * `rotation`, when given, bounds the visible rows to its own current page and is kept in sync with
+ * the real row count here (the caller only needs to own the instance, not maintain it). */
 export function renderJobsWidgetLines(
 	theme: { fg(color: string, text: string): string },
 	projection: JobsWidgetProjection,
 	width: number,
 	progressBarGlyphs: ProgressBarGlyphs | ProgressBarGlyphStyle = "blocks",
+	rotation?: AutoRotatingWindow,
 ): string[] {
 	if (projection.total === 0) return [];
+	rotation?.setTotalRows(projection.rows.length);
+	const { start, end } = rotation?.currentPageBounds() ?? { start: 0, end: projection.rows.length };
+	const visibleRows = projection.rows.slice(start, end);
 
-	const header = truncateToWidth(theme.fg("muted", vehicleWidgetTitle(VEHICLE_NAME, "Jobs", `${projection.total} subscribed`)), width, "…");
-	const lines: string[] = [header];
-	for (const row of projection.rows) {
-		let line = `${statusGlyph(row.status, theme)} ${theme.fg("accent", `${row.backend}/${row.jobRef}`)} ${theme.fg("dim", `#${row.runId}`)}`;
-		if (row.projectName) line += ` ${theme.fg("dim", `(${row.projectName})`)}`;
-		if (row.progressPercent !== undefined) {
-			const shown = effectiveWatchPercent(row.status, row.progressPercent);
-			const bar = new ProgressBar({ value: shown, max: 100, width: JOBS_WIDGET_BAR_WIDTH, glyphs: progressBarGlyphs }).format();
-			line += ` ${theme.fg("accent", bar)} ${theme.fg("muted", `${Math.round(shown)}%`)}`;
-			if (row.overdue) line += ` ${theme.fg("warning", "overdue")}`;
-		}
-		lines.push(truncateToWidth(line, width, "…"));
-	}
-	return lines;
+	return renderCardRow(
+		[
+			{
+				label: jobsCardLabel(projection, rotation),
+				render: (innerWidth: number) => visibleRows.map((row) => jobRowLine(theme, row, innerWidth, progressBarGlyphs)),
+			},
+		],
+		width,
+		{ measure, frameStyle: (s) => theme.fg("borderMuted", s) },
+	);
 }
