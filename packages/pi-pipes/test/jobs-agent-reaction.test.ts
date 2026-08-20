@@ -95,7 +95,11 @@ describe("ci_subscribe's status transitions and the agent -- deterministic, mock
 		expect(h.sentMessages).toHaveLength(1);
 		expect(h.sentMessages[0]?.message.content).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
 		expect(String(h.sentMessages[0]?.message.content).toLowerCase()).toContain("finished");
-		expect(h.sentMessages[0]?.message.display).toBe(true);
+		// vehicle-client-pi's own createAgentNotifier deliberately sends display: false -- convertToLlm()
+		// folds a "custom" message into the agent's own context regardless of display; display only
+		// governs whether the human's TUI also renders a visible chat bubble, which a background nudge
+		// should never force on every reminder/vanish tick (see agent-poll-ticker.ts's own doc comment).
+		expect(h.sentMessages[0]?.message.display).toBe(false);
 		expect(h.sentMessages[0]?.options).toEqual({ deliverAs: "followUp" });
 		expect(h.userMessages).toEqual([]); // never the always-turn-triggering sendUserMessage channel
 	});
