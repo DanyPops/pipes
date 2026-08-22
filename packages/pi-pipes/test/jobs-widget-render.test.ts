@@ -22,60 +22,76 @@ describe("renderJobsWidgetLines", () => {
 		expect(lines).toEqual([]);
 	});
 
-	it("renders a bordered card whose own top-border title names the owning Vehicle, the widget, and the subscribed count, plus one line per row", () => {
+	it("renders a bordered card whose own top-border title names the owning Vehicle, the widget, and the subscribed count, plus a header/separator and one line per row", () => {
 		const projection = buildJobsWidgetProjection([row({ runId: "1" }), row({ jobRef: "other", runId: "2" })]);
 		const lines = renderJobsWidgetLines(theme, projection, 80);
 		expect(lines[0]).toContain("Pipes · Jobs · 2 subscribed");
 		expect(lines[0]).toContain("╭");
 		expect(lines[lines.length - 1]).toContain("╰");
-		expect(lines).toHaveLength(4); // top border, 2 rows, bottom border
+		expect(lines).toHaveLength(6); // top border, table header, table separator, 2 rows, bottom border
+	});
+
+	it("aligns every row's Job/Run columns as a real table -- same column start position across rows", () => {
+		const projection = buildJobsWidgetProjection([
+			row({ backend: "gh", jobRef: "a", runId: "1" }),
+			row({ backend: "jenkins-auto", jobRef: "deploy", runId: "40531" }),
+		]);
+		const lines = renderJobsWidgetLines(theme, projection, 80);
+		expect(lines[1]).toMatch(/Job\s+Run/); // header row
+		const jobColumnStart = lines[1]?.indexOf("Job");
+		expect(lines[3]?.indexOf("gh/a")).toBe(jobColumnStart);
+		expect(lines[4]?.indexOf("jenkins-auto/deploy")).toBe(jobColumnStart);
 	});
 
 	it("shows a run's backend/jobRef and run id on its own line", () => {
 		const projection = buildJobsWidgetProjection([row({ backend: "jenkins-auto", jobRef: "deploy", runId: "40531" })]);
 		const lines = renderJobsWidgetLines(theme, projection, 80);
-		expect(lines[1]).toContain("jenkins-auto/deploy");
-		expect(lines[1]).toContain("#40531");
+		expect(lines[3]).toContain("jenkins-auto/deploy");
+		expect(lines[3]).toContain("#40531");
 	});
 
 	it("shows a bar and percent for a row with real progress data", () => {
 		const projection = buildJobsWidgetProjection([row({ progressPercent: 42 })]);
 		const lines = renderJobsWidgetLines(theme, projection, 80);
-		expect(lines[1]).toContain("42%");
-		expect(lines[1]).toContain("■"); // default "blocks" glyph style's filled cell
+		expect(lines[1]).toContain("Progress"); // header names the column
+		expect(lines[3]).toContain("42%");
+		expect(lines[3]).toContain("■"); // default "blocks" glyph style's filled cell
 	});
 
-	it("shows no bar/percent at all for a row with no progress data -- e.g. a GitLab run (estimateDuration always 0)", () => {
+	it("shows no Progress column at all for a row with no progress data -- e.g. a GitLab run (estimateDuration always 0)", () => {
 		const projection = buildJobsWidgetProjection([row({ status: "running" })]); // progressPercent omitted entirely
 		const lines = renderJobsWidgetLines(theme, projection, 80);
-		expect(lines[1]).not.toContain("%");
-		expect(lines[1]).not.toContain("■");
+		expect(lines[1]).not.toContain("Progress");
+		expect(lines[3]).not.toContain("%");
+		expect(lines[3]).not.toContain("■");
 	});
 
 	it("forces a terminal row to show 100%, not its raw actual-vs-estimated ratio, matching ci_wait's own display rule", () => {
 		const projection = buildJobsWidgetProjection([row({ status: "success", progressPercent: 92 })]);
 		const lines = renderJobsWidgetLines(theme, projection, 80);
-		expect(lines[1]).toContain("100%");
-		expect(lines[1]).not.toContain("92%");
+		expect(lines[3]).toContain("100%");
+		expect(lines[3]).not.toContain("92%");
 	});
 
 	it("flags an overdue row, even though its shown percent for a still-running row is its own raw (non-terminal) value", () => {
 		const projection = buildJobsWidgetProjection([row({ status: "running", progressPercent: 160, overdue: true })]);
 		const lines = renderJobsWidgetLines(theme, projection, 80);
-		expect(lines[1]?.toLowerCase()).toContain("overdue");
-		expect(lines[1]).toContain("100%"); // clamped, same as ci_wait's own overrun handling
+		expect(lines[3]?.toLowerCase()).toContain("overdue");
+		expect(lines[3]).toContain("100%"); // clamped, same as ci_wait's own overrun handling
 	});
 
 	it("shows a row's project name inline, in parentheses, when it has one", () => {
 		const projection = buildJobsWidgetProjection([row({ projectName: "pipes" })]);
 		const lines = renderJobsWidgetLines(theme, projection, 80);
-		expect(lines[1]).toContain("(pipes)");
+		expect(lines[1]).toContain("Project"); // header names the column
+		expect(lines[3]).toContain("(pipes)");
 	});
 
-	it("shows nothing extra for a row with no project name -- e.g. a raw RPC client's subscription", () => {
+	it("shows no Project column at all for a row with no project name -- e.g. a raw RPC client's subscription", () => {
 		const projection = buildJobsWidgetProjection([row()]); // projectName omitted
 		const lines = renderJobsWidgetLines(theme, projection, 80);
-		expect(lines[1]).not.toContain("(");
+		expect(lines[1]).not.toContain("Project");
+		expect(lines[3]).not.toContain("(");
 	});
 
 	it("never produces a line wider than the given width, across several widths", () => {
@@ -103,7 +119,7 @@ describe("renderJobsWidgetLines", () => {
 
 			const page1 = renderJobsWidgetLines(theme, projection, 80, "blocks", paging);
 			expect(page1[0]).toMatch(/1\/3 ⟳/);
-			expect(page1).toHaveLength(4); // top border, 2 rows, bottom border
+			expect(page1).toHaveLength(6); // top border, table header, table separator, 2 rows, bottom border
 
 			now = 1000;
 			const page2 = renderJobsWidgetLines(theme, projection, 80, "blocks", paging);

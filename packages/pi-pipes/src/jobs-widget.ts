@@ -15,6 +15,8 @@ import {
 	type ProgressBarGlyphStyle,
 	type ProgressBarGlyphs,
 	renderCardRow,
+	Table,
+	type TableColumn,
 	type TextMeasure,
 } from "malevich-tui-components";
 import { effectiveWatchPercent, statusGlyph } from "./ci-render.ts";
@@ -63,21 +65,39 @@ export function buildJobsWidgetProjection(runs: readonly JobsWidgetRow[]): JobsW
 
 const JOBS_WIDGET_BAR_WIDTH = 10;
 
-function jobRowLine(
+/** Columns are data-driven: "Progress"/"Project" only appear at all once at least one visible
+ * row actually has that field, matching the widget's own prior behavior of omitting an absent
+ * optional field entirely rather than rendering an always-empty column. */
+function jobsTableColumns(rows: readonly JobsWidgetRow[]): TableColumn[] {
+	const columns: TableColumn[] = [
+		{ header: "", key: "status" },
+		{ header: "Job", key: "job" },
+		{ header: "Run", key: "run" },
+	];
+	if (rows.some((row) => row.progressPercent !== undefined)) columns.push({ header: "Progress", key: "progress" });
+	if (rows.some((row) => row.projectName)) columns.push({ header: "Project", key: "project" });
+	return columns;
+}
+
+function jobsTableRow(
 	theme: { fg(color: string, text: string): string },
 	row: JobsWidgetRow,
-	width: number,
 	progressBarGlyphs: ProgressBarGlyphs | ProgressBarGlyphStyle,
-): string {
-	let line = `${statusGlyph(row.status, theme)} ${theme.fg("accent", `${row.backend}/${row.jobRef}`)} ${theme.fg("dim", `#${row.runId}`)}`;
-	if (row.projectName) line += ` ${theme.fg("dim", `(${row.projectName})`)}`;
+): Record<string, string> {
+	const cells: Record<string, string> = {
+		status: statusGlyph(row.status, theme),
+		job: theme.fg("accent", `${row.backend}/${row.jobRef}`),
+		run: theme.fg("dim", `#${row.runId}`),
+	};
 	if (row.progressPercent !== undefined) {
 		const shown = effectiveWatchPercent(row.status, row.progressPercent);
 		const bar = new ProgressBar({ value: shown, max: 100, width: JOBS_WIDGET_BAR_WIDTH, glyphs: progressBarGlyphs }).format();
-		line += ` ${theme.fg("accent", bar)} ${theme.fg("muted", `${Math.round(shown)}%`)}`;
-		if (row.overdue) line += ` ${theme.fg("warning", "overdue")}`;
+		let progress = `${theme.fg("accent", bar)} ${theme.fg("muted", `${Math.round(shown)}%`)}`;
+		if (row.overdue) progress += ` ${theme.fg("warning", "overdue")}`;
+		cells.progress = progress;
 	}
-	return truncateToWidth(line, width, "…");
+	if (row.projectName) cells.project = theme.fg("dim", `(${row.projectName})`);
+	return cells;
 }
 
 /** "Pipes · Jobs · <N> subscribed", plus a "page/total ⟳" suffix once genuinely paging. */
@@ -106,7 +126,13 @@ export function renderJobsWidgetLines(
 		[
 			{
 				label: jobsCardLabel(projection, rotation),
-				render: (innerWidth: number) => visibleRows.map((row) => jobRowLine(theme, row, innerWidth, progressBarGlyphs)),
+				render: (innerWidth: number) =>
+					new Table({
+						columns: jobsTableColumns(visibleRows),
+						rows: visibleRows.map((row) => jobsTableRow(theme, row, progressBarGlyphs)),
+						measure,
+						headerStyle: (text) => theme.fg("dim", text),
+					}).render(innerWidth),
 			},
 		],
 		width,
