@@ -3,6 +3,7 @@
 	"version": "0.18.3",
 	"license": "MIT",
 	"description": "Supervised Bun daemon for pi-pipes: authenticated loopback CI status/trigger/log operations across GitHub, GitLab, and Jenkins",
+	"keywords": ["ci", "github-actions", "gitlab-ci", "jenkins", "daemon", "cli"],
 	"type": "module",
 	"main": "./src/index.ts",
 	"types": "./src/index.ts",

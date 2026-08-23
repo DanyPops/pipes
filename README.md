@@ -1,35 +1,42 @@
 # pi-pipes
 
-A pi extension and daemon for cross-platform CI: GitHub Actions, GitLab CI,
-and Jenkins, from one agent-facing `ci` tool, without hand-rolling each
+A Pi extension and daemon for cross-platform CI: GitHub Actions, GitLab CI,
+and Jenkins, from one agent-facing `ci` tool set, without hand-rolling each
 backend's API.
+
+## Packages
+
+- **[`packages/pipes`](packages/pipes/README.md)** — `@danypops/pipes`, the
+  supervised daemon: CI credentials, backend adapters, orchestration, and a
+  local run-history pool (status + logs).
+- **[`packages/pi-pipes`](packages/pi-pipes/README.md)** — `@danypops/pi-pipes`,
+  the Pi extension: one real tool per operation (`ci_status`, `ci_trigger`,
+  `ci_subscribe`, ...), an authenticated daemon client, no direct
+  network/credential access of its own.
+
+## Architecture
+
+```text
+Pi ci_* tools                           (packages/pi-pipes)
+      ↓
+authenticated loopback client
+      ↓
+Pipes daemon: auth, dispatch, run pool  (packages/pipes)
+      ↓
+backend adapters: GitHub Actions, GitLab CI, Jenkins, Report Portal
+      ↓
+local SQLite pool (run status + cached logs)
+```
 
 ## Status
 
-Core is implemented: real GitHub, GitLab, and Jenkins adapters (OAuth device
-flow for GitHub, OAuth2 device flow/PKCE for GitLab, API-token auth for
-Jenkins — the one backend with no delegated-auth API), an orchestration
-layer with named pipeline presets, and a supervised daemon that composes
-them with a local SQLite pool of run status and cached logs. The agent-facing
-`ci` tool supports triggering, blocking waits, status/log/search, job-level
-subscribe/unsubscribe with autofocus onto a job's latest run, token-budgeted
-log tailing, and a bounded chain/artifact crawler for backends that expose
-downstream-pipeline data (GitLab; Jenkins via an explicit job-name lookup).
-
-Remaining: a TUI menu for preset management and manual intervention
-(secondary to the `ci` tool), end-to-end CLI parity, and the npm publish
-workflow.
-
-## Layout
-
-```text
-packages/pipes/           supervised daemon: owns CI credentials, backend
-                          adapters, orchestration, and a local run-history
-                          pool (status + logs)
-packages/pi-pipes/        pi extension: the agent-facing `ci` tool, an
-                          authenticated daemon client, no direct
-                          network/credential access
-```
+Real GitHub/GitLab/Jenkins adapters, orchestration with named pipeline
+presets, background job subscriptions with a persistent Jobs TUI widget, and
+the npm publish pipeline are all live. Outstanding: typed per-operation CLI
+subcommands and their own parity tests — today's CLI reaches every operation
+through one generic, typed `pipes call <op> [json]` passthrough (see
+`packages/pipes/README.md`) rather than a dedicated subcommand per
+operation.
 
 ## Development
 
