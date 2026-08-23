@@ -137,7 +137,7 @@ const OPERATIONS: readonly OperationSpec[] = [
 	{
 		action: "ci.trigger",
 		description:
-			"Starts a new run -- a real, externally visible CI trigger. Call with pipeline for a bookmarked preset (params override its own baked-in ones), or backend+jobRef directly.",
+			"Starts a new run -- a real, externally visible CI trigger. Call with pipeline for a bookmarked preset (params override its own baked-in ones, except any step's lockedParams -- an override attempting to set one of those is rejected outright, nothing gets triggered), or backend+jobRef directly.",
 		effect: "external-write",
 		properties: { backend: stringProp, jobRef: stringProp, pipeline: stringProp, params: objectProp },
 		required: [],
@@ -240,7 +240,7 @@ const OPERATIONS: readonly OperationSpec[] = [
 	{
 		action: "ci.presets.set",
 		description:
-			'Saves or overwrites a named pipeline preset, e.g. {name: "deploy", backend: "github", steps: [{jobName: "build"}, {jobName: "deploy", params: {env: "prod"}}]} -- once saved, ci.trigger/ci.status/ci.log can use it by name alone via the pipeline parameter.',
+			'Saves or overwrites a named pipeline preset, e.g. {name: "deploy", backend: "github", steps: [{jobName: "build"}, {jobName: "deploy", params: {env: "prod"}}]} -- once saved, ci.trigger/ci.status/ci.log can use it by name alone via the pipeline parameter. A step\'s lockedParams (same shape as params) stay fixed against ci.trigger\'s own per-invocation params -- an override attempting to set a locked key rejects the whole trigger instead of silently keeping the locked value, for a param whose value must stay fixed across every run (e.g. a bare-metal deploy job\'s network-management mode).',
 		effect: "local-write",
 		properties: { preset: objectProp },
 		required: ["preset"],

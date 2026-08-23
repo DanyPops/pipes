@@ -45,6 +45,14 @@ export class PipelineNotFoundError extends Error {
 	}
 }
 
+/** A trigger-time override attempted to set a key one of the pipeline's own steps locks. */
+export class LockedParamOverrideError extends Error {
+	constructor(pipeline: string, violations: Array<{ jobName: string; key: string }>) {
+		const detail = violations.map((violation) => `${violation.key} (step "${violation.jobName}")`).join(", ");
+		super(`pipeline "${pipeline}": override params cannot set locked key(s): ${detail}`);
+	}
+}
+
 export class BackendUnavailableError extends Error {
 	constructor(operation: string, backend: string, pipeline?: string) {
 		const identity = pipeline ? `pipeline "${pipeline}" (backend "${backend}")` : `backend "${backend}"`;
@@ -150,12 +158,27 @@ export class Orchestrator {
 	 * Runs a named preset's steps sequentially against its backend, stopping at the first failure.
 	 * `overrideParams`, when given, is merged on top of every step's own baked-in params (override
 	 * wins on key collision) -- the per-invocation escape hatch for a preset whose parameters
-	 * legitimately change between runs (a release version, a branch name) without needing to
-	 * re-bookmark the preset just to update one value.
+	 * legitimately change between runs (a release version, a branch name), letting one value
+	 * update in place instead of re-bookmarking the whole preset.
+	 *
+	 * A step's own `lockedParams` are exempt from that override: attempting to override a locked
+	 * key rejects the whole trigger with LockedParamOverrideError before any step runs, rather than
+	 * silently keeping the locked value -- a rejected trigger keeps a caller's own belief about
+	 * what happened accurate, for a class of param (e.g. a bare-metal IPI job's network-management
+	 * mode) where an accidental override has real physical consequences.
 	 */
 	async triggerPipeline(name: string, overrideParams: Record<string, string> = {}): Promise<PipelineRun> {
 		const pipeline = this.pipeline(name);
 		const backend = this.adapter(pipeline.backend);
+
+		// Validated up front, so a locked-param violation fails the whole pipeline atomically,
+		// before any step gets a chance to run.
+		const violations = pipeline.steps.flatMap((step) =>
+			Object.keys(step.lockedParams ?? {})
+				.filter((key) => key in overrideParams)
+				.map((key) => ({ jobName: step.jobName, key })),
+		);
+		if (violations.length > 0) throw new LockedParamOverrideError(name, violations);
 
 		const run: PipelineRun = {
 			pipeline: name,
@@ -178,7 +201,7 @@ export class Orchestrator {
 
 			let receipt: TriggerReceipt;
 			try {
-				receipt = await triggerable.trigger(step.jobName, { ...step.params, ...overrideParams });
+				receipt = await triggerable.trigger(step.jobName, { ...step.params, ...overrideParams, ...step.lockedParams });
 				while (receipt.needsResolve) {
 					await sleep(TRIGGER_RESOLVE_POLL_MS);
 					receipt = await triggerable.resolveReceipt(receipt);

@@ -3,6 +3,7 @@ import {
 	applyLogFilter,
 	BackendNotFoundError,
 	CapabilityUnsupportedError,
+	LockedParamOverrideError,
 	NotOwnedError,
 	Orchestrator,
 	PipelineNotFoundError,
@@ -135,6 +136,70 @@ describe("Orchestrator.triggerPipeline: named presets", () => {
 		await orchestrator.triggerPipeline("deploy-with-params");
 
 		expect(backend.calls.trigger).toEqual([{ jobRef: "build", params: { ENV: "stage" } }]);
+	});
+
+	it("applies a step's own lockedParams even when overrideParams doesn't touch that key", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({
+			name: "gh",
+			capabilities: Capability.Trigger,
+			triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "1" },
+			run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+		});
+		orchestrator.addAdapter(backend);
+		orchestrator.registerPipeline({
+			name: "deploy-hub",
+			backend: "gh",
+			steps: [{ jobName: "ipi-deploy", lockedParams: { PROVISIONING_NETWORK_STATE: "Disabled" } }],
+		});
+
+		await orchestrator.triggerPipeline("deploy-hub", { OCP_MINOR_VERSION: "22" });
+
+		expect(backend.calls.trigger).toEqual([
+			{ jobRef: "ipi-deploy", params: { OCP_MINOR_VERSION: "22", PROVISIONING_NETWORK_STATE: "Disabled" } },
+		]);
+	});
+
+	it("rejects the whole trigger with LockedParamOverrideError when overrideParams targets a locked key -- nothing runs", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({
+			name: "gh",
+			capabilities: Capability.Trigger,
+			triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "1" },
+			run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+		});
+		orchestrator.addAdapter(backend);
+		orchestrator.registerPipeline({
+			name: "deploy-hub",
+			backend: "gh",
+			steps: [{ jobName: "ipi-deploy", lockedParams: { PROVISIONING_NETWORK_STATE: "Disabled" } }],
+		});
+
+		await expect(orchestrator.triggerPipeline("deploy-hub", { PROVISIONING_NETWORK_STATE: "Managed" })).rejects.toThrow(
+			LockedParamOverrideError,
+		);
+		expect(backend.calls.trigger).toEqual([]);
+	});
+
+	it("rejects before any step runs when a locked key on a later step is violated, not just the first step", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({
+			name: "gh",
+			capabilities: Capability.Trigger,
+			triggerReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "1" },
+			run: { id: "1", name: "run", status: "success", startedAt: new Date(0) },
+		});
+		orchestrator.addAdapter(backend);
+		orchestrator.registerPipeline({
+			name: "deploy",
+			backend: "gh",
+			steps: [{ jobName: "build" }, { jobName: "ipi-deploy", lockedParams: { PROVISIONING_NETWORK_STATE: "Disabled" } }],
+		});
+
+		await expect(orchestrator.triggerPipeline("deploy", { PROVISIONING_NETWORK_STATE: "Managed" })).rejects.toThrow(
+			LockedParamOverrideError,
+		);
+		expect(backend.calls.trigger).toEqual([]); // the earlier "build" step never ran either
 	});
 });
 

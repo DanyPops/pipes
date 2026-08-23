@@ -10,6 +10,8 @@ export interface Pipeline {
 export interface PipelineStep {
 	jobName: string;
 	params?: Record<string, string>;
+	/** Keys here stay fixed against a caller's per-invocation params at trigger time -- see triggerPipeline. */
+	lockedParams?: Record<string, string>;
 }
 
 export interface StepResult {
