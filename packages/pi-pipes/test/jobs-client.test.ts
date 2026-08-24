@@ -43,8 +43,41 @@ describe("fetchSubscribedJobs", () => {
 				url: "https://jenkins.example/40531",
 				progressPercent: 42,
 				overdue: false,
+				startedAt: new Date(0),
+				durationMs: undefined,
 			},
 		]);
+	});
+
+	it("maps ci.subscribed's own durationMs through once a run has settled", async () => {
+		setJobsClientConnectorForTests(
+			() =>
+				({
+					async call() {
+						return {
+							runs: [
+								{
+									backend: "jenkins-auto",
+									jobRef: "ocp-baremetal-ipi-deployment",
+									runId: "40531",
+									status: "success",
+									result: "SUCCESS",
+									url: "",
+									startedAt: new Date(0),
+									fetchedAt: new Date(0),
+									watched: true,
+									durationMs: 123_456,
+								},
+							],
+						};
+					},
+					// biome-ignore lint/suspicious/noExplicitAny: minimal test double
+				}) as any,
+		);
+
+		const rows = await fetchSubscribedJobs();
+		expect(rows[0]?.durationMs).toBe(123_456);
+		expect(rows[0]?.startedAt).toEqual(new Date(0));
 	});
 
 	it("leaves progressPercent/overdue undefined when ci.subscribed's own run carries none (e.g. GitLab)", async () => {

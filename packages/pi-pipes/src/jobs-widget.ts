@@ -44,6 +44,12 @@ export interface JobsWidgetRow {
 	 * ci.subscribed and @danypops/vehicle-server/project-scope) -- undefined for a subscription
 	 * with no known project (e.g. a raw RPC client with no Pi session behind it at all). */
 	projectName?: string;
+	/** RunSnapshot's own real start time -- the still-running fallback runtimeMs() computes elapsed
+	 * from when durationMs isn't settled yet. */
+	startedAt?: Date;
+	/** RunSnapshot's own settled runtime once the daemon has one -- always preferred over computing
+	 * elapsed from startedAt, since a terminal run's runtime must stop advancing once it's actually done. */
+	durationMs?: number;
 }
 
 export interface JobsWidgetProjection {
@@ -65,16 +71,37 @@ export function buildJobsWidgetProjection(runs: readonly JobsWidgetRow[]): JobsW
 
 const JOBS_WIDGET_BAR_WIDTH = 10;
 
-/** Columns are data-driven: "Progress"/"Project" only appear at all once at least one visible
- * row actually has that field, matching the widget's own prior behavior of omitting an absent
- * optional field entirely rather than rendering an always-empty column. */
-function jobsTableColumns(rows: readonly JobsWidgetRow[]): TableColumn[] {
+/** A terminal row's own settled durationMs always wins over a live elapsed computation -- a
+ * finished run's runtime must not keep advancing just because the widget is still on screen.
+ * A still-running row with no durationMs yet computes elapsed from startedAt against `now`,
+ * letting the column tick up in step with the rotation ticker's own repaint-only refresh. */
+function runtimeMs(row: JobsWidgetRow, now: number): number | undefined {
+	if (row.durationMs !== undefined) return row.durationMs;
+	if (row.startedAt !== undefined) return Math.max(0, now - row.startedAt.getTime());
+	return undefined;
+}
+
+function formatRuntime(ms: number): string {
+	const totalSeconds = Math.floor(ms / 1000);
+	const hours = Math.floor(totalSeconds / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+	const seconds = totalSeconds % 60;
+	if (hours > 0) return `${hours}h${String(minutes).padStart(2, "0")}m`;
+	if (minutes > 0) return `${minutes}m${String(seconds).padStart(2, "0")}s`;
+	return `${seconds}s`;
+}
+
+/** Columns are data-driven: "Progress"/"Project"/"Runtime" only appear at all once at least one
+ * visible row actually has that field, matching the widget's own prior behavior of omitting an
+ * absent optional field entirely rather than rendering an always-empty column. */
+function jobsTableColumns(rows: readonly JobsWidgetRow[], now: number): TableColumn[] {
 	const columns: TableColumn[] = [
 		{ header: "", key: "status" },
 		{ header: "Job", key: "job" },
 		{ header: "Run", key: "run" },
 	];
 	if (rows.some((row) => row.progressPercent !== undefined)) columns.push({ header: "Progress", key: "progress" });
+	if (rows.some((row) => runtimeMs(row, now) !== undefined)) columns.push({ header: "Runtime", key: "runtime" });
 	if (rows.some((row) => row.projectName)) columns.push({ header: "Project", key: "project" });
 	if (rows.some((row) => row.url)) columns.push({ header: "URL", key: "url" });
 	return columns;
@@ -84,6 +111,7 @@ function jobsTableRow(
 	theme: { fg(color: string, text: string): string },
 	row: JobsWidgetRow,
 	progressBarGlyphs: ProgressBarGlyphs | ProgressBarGlyphStyle,
+	now: number,
 ): Record<string, string> {
 	const cells: Record<string, string> = {
 		status: statusGlyph(row.status, theme),
@@ -97,6 +125,8 @@ function jobsTableRow(
 		if (row.overdue) progress += ` ${theme.fg("warning", "overdue")}`;
 		cells.progress = progress;
 	}
+	const runtime = runtimeMs(row, now);
+	if (runtime !== undefined) cells.runtime = theme.fg("dim", formatRuntime(runtime));
 	if (row.projectName) cells.project = theme.fg("dim", `(${row.projectName})`);
 	if (row.url) cells.url = theme.fg("accent", hyperlink(row.url, row.url));
 	return cells;
@@ -118,6 +148,9 @@ export function renderJobsWidgetLines(
 	width: number,
 	progressBarGlyphs: ProgressBarGlyphs | ProgressBarGlyphStyle = "blocks",
 	rotation?: AutoRotatingWindow,
+	/** Injectable for tests; a still-running row's Runtime column computes elapsed against this
+	 * rather than calling Date.now() itself. */
+	now: number = Date.now(),
 ): string[] {
 	if (projection.total === 0) return [];
 	rotation?.setTotalRows(projection.rows.length);
@@ -130,8 +163,8 @@ export function renderJobsWidgetLines(
 				label: jobsCardLabel(projection, rotation),
 				render: (innerWidth: number) =>
 					new Table({
-						columns: jobsTableColumns(visibleRows),
-						rows: visibleRows.map((row) => jobsTableRow(theme, row, progressBarGlyphs)),
+						columns: jobsTableColumns(visibleRows, now),
+						rows: visibleRows.map((row) => jobsTableRow(theme, row, progressBarGlyphs, now)),
 						measure,
 						headerStyle: (text) => theme.fg("dim", text),
 					}).render(innerWidth),

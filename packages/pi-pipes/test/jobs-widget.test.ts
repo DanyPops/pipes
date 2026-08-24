@@ -44,4 +44,14 @@ describe("buildJobsWidgetProjection", () => {
 		expect(projection.rows[0]?.url).toBe("https://example.test/runs/1");
 		expect(projection.rows[1]?.url).toBeUndefined();
 	});
+
+	it("preserves a row's startedAt/durationMs unchanged, including once a run has settled", () => {
+		const projection = buildJobsWidgetProjection([
+			row({ runId: "1", startedAt: new Date(0) }), // still running -- no durationMs yet
+			row({ runId: "2", startedAt: new Date(0), durationMs: 5_000 }), // terminal
+		]);
+		expect(projection.rows[0]?.startedAt).toEqual(new Date(0));
+		expect(projection.rows[0]?.durationMs).toBeUndefined();
+		expect(projection.rows[1]?.durationMs).toBe(5_000);
+	});
 });

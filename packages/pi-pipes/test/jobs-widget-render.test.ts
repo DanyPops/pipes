@@ -107,6 +107,34 @@ describe("renderJobsWidgetLines", () => {
 		expect(lines[1]).not.toContain("URL");
 	});
 
+	it("shows a still-running row's Runtime as elapsed time since startedAt, against the given now", () => {
+		const projection = buildJobsWidgetProjection([row({ startedAt: new Date(0) })]);
+		const lines = renderJobsWidgetLines(theme, projection, 80, "blocks", undefined, 90_000); // 90s elapsed
+		expect(lines[1]).toContain("Runtime"); // header names the column
+		expect(lines[3]).toContain("1m30s");
+	});
+
+	it("ticks a still-running row's Runtime forward as now advances, unprompted by any change to the row itself", () => {
+		const projection = buildJobsWidgetProjection([row({ startedAt: new Date(0) })]);
+		const atTenSeconds = renderJobsWidgetLines(theme, projection, 80, "blocks", undefined, 10_000);
+		const atOneMinute = renderJobsWidgetLines(theme, projection, 80, "blocks", undefined, 60_000);
+		expect(atTenSeconds[3]).toContain("10s");
+		expect(atOneMinute[3]).toContain("1m00s");
+	});
+
+	it("shows a terminal row's exact durationMs, not elapsed-since-startedAt, so it stops advancing once the run is done", () => {
+		const projection = buildJobsWidgetProjection([row({ status: "success", startedAt: new Date(0), durationMs: 45_000 })]);
+		// now is far past startedAt -- if this were computing elapsed instead of using durationMs, it would show a much larger value.
+		const lines = renderJobsWidgetLines(theme, projection, 80, "blocks", undefined, 10 * 60 * 1000);
+		expect(lines[3]).toContain("45s");
+	});
+
+	it("shows no Runtime column at all for a row with neither startedAt nor durationMs", () => {
+		const projection = buildJobsWidgetProjection([row()]); // startedAt/durationMs both omitted
+		const lines = renderJobsWidgetLines(theme, projection, 80);
+		expect(lines[1]).not.toContain("Runtime");
+	});
+
 	it("keeps every line within the given width even once a long URL column is present", () => {
 		const projection = buildJobsWidgetProjection([
 			row({

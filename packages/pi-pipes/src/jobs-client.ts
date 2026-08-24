@@ -42,5 +42,7 @@ export async function fetchSubscribedJobs(subscriberId?: string): Promise<JobsWi
 		progressPercent: run.progressPercent,
 		overdue: run.overdue,
 		projectName: run.projectName,
+		startedAt: run.startedAt,
+		durationMs: run.durationMs,
 	}));
 }
