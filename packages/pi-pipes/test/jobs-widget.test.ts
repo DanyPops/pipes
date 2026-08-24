@@ -35,4 +35,13 @@ describe("buildJobsWidgetProjection", () => {
 		expect(projection.rows[0]?.progressPercent).toBe(42);
 		expect(projection.rows[1]?.progressPercent).toBeUndefined();
 	});
+
+	it("preserves a row's url unchanged when present, and leaves it undefined when the backend has none", () => {
+		const projection = buildJobsWidgetProjection([
+			row({ runId: "1", url: "https://example.test/runs/1" }),
+			row({ runId: "2" }), // no url -- e.g. a backend that never reported one
+		]);
+		expect(projection.rows[0]?.url).toBe("https://example.test/runs/1");
+		expect(projection.rows[1]?.url).toBeUndefined();
+	});
 });

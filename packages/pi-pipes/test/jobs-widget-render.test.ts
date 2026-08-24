@@ -94,6 +94,34 @@ describe("renderJobsWidgetLines", () => {
 		expect(lines[3]).not.toContain("(");
 	});
 
+	it("shows a row's URL when it has one", () => {
+		const projection = buildJobsWidgetProjection([row({ url: "https://example.test/runs/1" })]);
+		const lines = renderJobsWidgetLines(theme, projection, 80);
+		expect(lines[1]).toContain("URL"); // header names the column
+		expect(lines[3]).toContain("https://example.test/runs/1");
+	});
+
+	it("shows no URL column at all for a row with no url -- e.g. a backend that never reported one", () => {
+		const projection = buildJobsWidgetProjection([row()]); // url omitted
+		const lines = renderJobsWidgetLines(theme, projection, 80);
+		expect(lines[1]).not.toContain("URL");
+	});
+
+	it("keeps every line within the given width even once a long URL column is present", () => {
+		const projection = buildJobsWidgetProjection([
+			row({
+				backend: "jenkins-auto",
+				jobRef: "deploy",
+				runId: "40531",
+				url: "https://jenkins.example.test/job/deploy/40531/console-output-detail",
+			}),
+		]);
+		for (const width of [40, 80, 120]) {
+			const lines = renderJobsWidgetLines(theme, projection, width);
+			for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+		}
+	});
+
 	it("never produces a line wider than the given width, across several widths", () => {
 		const projection = buildJobsWidgetProjection([
 			row({ backend: "jenkins-auto", jobRef: "ocp-baremetal-ipi-deployment-with-a-very-long-name", runId: "40531", progressPercent: 55 }),

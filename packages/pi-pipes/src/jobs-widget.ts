@@ -8,7 +8,7 @@
 
 import { VEHICLE_NAME } from "@danypops/pipes";
 import { vehicleWidgetTitle } from "@danypops/vehicle-client-pi/widget-header";
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { hyperlink, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import {
 	type AutoRotatingWindow,
 	ProgressBar,
@@ -76,6 +76,7 @@ function jobsTableColumns(rows: readonly JobsWidgetRow[]): TableColumn[] {
 	];
 	if (rows.some((row) => row.progressPercent !== undefined)) columns.push({ header: "Progress", key: "progress" });
 	if (rows.some((row) => row.projectName)) columns.push({ header: "Project", key: "project" });
+	if (rows.some((row) => row.url)) columns.push({ header: "URL", key: "url" });
 	return columns;
 }
 
@@ -97,6 +98,7 @@ function jobsTableRow(
 		cells.progress = progress;
 	}
 	if (row.projectName) cells.project = theme.fg("dim", `(${row.projectName})`);
+	if (row.url) cells.url = theme.fg("accent", hyperlink(row.url, row.url));
 	return cells;
 }
 
