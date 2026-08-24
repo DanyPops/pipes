@@ -33,6 +33,10 @@ export function resetJobsClientConnectorForTests(): void {
 export async function fetchSubscribedJobs(subscriberId?: string): Promise<JobsWidgetRow[]> {
 	const client = connector();
 	const { runs } = await client.call("ci.subscribed", subscriberId === undefined ? {} : { subscriberId });
+	// AuthenticatedRpcClient.call() is `response.json()` under the hood -- no reviver. RunSnapshot's
+	// own type says `startedAt: Date`, but over the real wire it's a plain ISO string; `new Date(...)`
+	// on either a string or an existing Date instance produces a real Date either way, so this is safe
+	// regardless of which shape actually arrives (a mocked test double vs. the real HTTP transport).
 	return runs.map((run) => ({
 		backend: run.backend,
 		jobRef: run.jobRef,
@@ -42,7 +46,7 @@ export async function fetchSubscribedJobs(subscriberId?: string): Promise<JobsWi
 		progressPercent: run.progressPercent,
 		overdue: run.overdue,
 		projectName: run.projectName,
-		startedAt: run.startedAt,
+		startedAt: run.startedAt ? new Date(run.startedAt) : undefined,
 		durationMs: run.durationMs,
 	}));
 }

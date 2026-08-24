@@ -141,6 +141,37 @@ describe("fetchSubscribedJobs", () => {
 		expect(rows[0]?.projectName).toBe("pipes");
 	});
 
+	it("coerces startedAt into a real Date even when the wire actually sends a plain ISO string -- AuthenticatedRpcClient.call() is response.json() with no reviver, so RunSnapshot's own `startedAt: Date` type is a lie once it crosses the real HTTP transport; a mocked Date instance here would never have caught this", async () => {
+		setJobsClientConnectorForTests(
+			() =>
+				({
+					async call() {
+						return {
+							runs: [
+								{
+									backend: "jenkins-auto",
+									jobRef: "ocp-far-edge-vran-deployment",
+									runId: "9253",
+									status: "running",
+									result: "",
+									url: "",
+									// The real wire shape: a plain ISO string, not a Date instance.
+									startedAt: "2026-08-24T14:07:18.795Z",
+									fetchedAt: "2026-08-24T14:07:18.795Z",
+									watched: true,
+								},
+							],
+						};
+					},
+					// biome-ignore lint/suspicious/noExplicitAny: minimal test double, deliberately not the real PipesClient's declared (and here, misleading) types
+				}) as any,
+		);
+
+		const rows = await fetchSubscribedJobs();
+		expect(rows[0]?.startedAt).toBeInstanceOf(Date);
+		expect(rows[0]?.startedAt?.getTime()).toBe(Date.parse("2026-08-24T14:07:18.795Z"));
+	});
+
 	it("propagates a connector failure (e.g. daemon not running) as a rejection -- the overlay is responsible for catching it", async () => {
 		setJobsClientConnectorForTests(() => {
 			throw new Error("Pipes daemon is not running; run `pipes serve`.");
