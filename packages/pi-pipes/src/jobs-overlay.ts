@@ -38,6 +38,13 @@ export class JobsOverlay {
 	// biome-ignore lint/suspicious/noExplicitAny: same TUI-handle shape pi-papyrus's own overlays keep untyped (requestRender is all that's used).
 	private tui: any | undefined;
 	private rows: JobsWidgetRow[] = [];
+	/** De-dupes degradation reports so a persistently-failing fetch/render notifies once, not once
+	 * per poll tick (JOBS_WIDGET_POLL_INTERVAL_MS) -- see reportDegradation()'s own doc comment for
+	 * why this exists at all: refresh()'s catches below used to swallow every exception with zero
+	 * trace, which is exactly how a real regression (0.18.7's startedAt Date/string mismatch) went
+	 * unnoticed as "no jobs visible" with no error anywhere to investigate. */
+	private lastFetchErrorMessage: string | undefined;
+	private lastRenderErrorMessage: string | undefined;
 	private readonly poll = new BoundedPoll();
 	/** Repaint-only ticker (no data refetch) so the widget's own auto-rotating page visibly advances
 	 * even when nothing else has changed. */
@@ -89,9 +96,11 @@ export class JobsOverlay {
 		let fetched = true;
 		try {
 			this.rows = await fetchSubscribedJobs(this.subscriberId);
-		} catch {
+			this.lastFetchErrorMessage = undefined;
+		} catch (err) {
 			this.rows = [];
 			fetched = false;
+			this.reportDegradation("fetch", err);
 		}
 		// A failed fetch must never reach the ticker: an empty result from a transient daemon hiccup
 		// would otherwise read as every subscribed job having just finished. Skip the tick entirely
@@ -99,13 +108,47 @@ export class JobsOverlay {
 		if (fetched) this.notifyAgentIfNeeded();
 		try {
 			this.render();
-		} catch {
-			// A rendering bug must not crash the extension host over a best-effort status widget.
+			this.lastRenderErrorMessage = undefined;
+		} catch (err) {
+			// A rendering bug must not crash the extension host over a best-effort status widget --
+			// but it must still leave a trace (see reportDegradation()) instead of vanishing silently.
+			this.reportDegradation("render", err);
 		}
 	}
 
 	private notifyAgentIfNeeded(): void {
 		reportAgentPollTick(this.ticker, this.rows, this.notifier, { isIdle: this.isIdle });
+	}
+
+	/**
+	 * Surfaces a fetch/render failure exactly once per distinct message, via ctx.ui.notify (the only
+	 * sanctioned way an extension may report something -- never console.log/stdout, which corrupts
+	 * the real TUI stream). Re-arms as soon as the message changes or the operation succeeds again
+	 * (refresh() clears the corresponding lastXErrorMessage on success), so a fixed-then-different
+	 * failure is reported again rather than staying suppressed forever by the first one seen.
+	 *
+	 * Without this, refresh()'s own try/catch (needed so a daemon hiccup or a rendering bug never
+	 * crashes the extension host over a best-effort status widget) swallowed every exception with
+	 * zero trace -- exactly how the 0.18.7 regression (Runtime column's row.startedAt.getTime()
+	 * throwing on the real wire's plain ISO string, not a Date) presented as silent, unexplained
+	 * "no jobs visible" with nothing to investigate.
+	 */
+	private reportDegradation(kind: "fetch" | "render", err: unknown): void {
+		const message = err instanceof Error ? err.message : String(err);
+		const last = kind === "fetch" ? this.lastFetchErrorMessage : this.lastRenderErrorMessage;
+		if (last === message) return;
+		if (kind === "fetch") this.lastFetchErrorMessage = message;
+		else this.lastRenderErrorMessage = message;
+		try {
+			// `?.` on uiCtx alone is not enough -- a truthy-but-incomplete uiCtx (e.g. an older/test
+			// fixture stubbing only setWidget) has notify itself as undefined, and calling that would
+			// throw straight out of refresh()'s own catch block, defeating the exact "never throws"
+			// contract this method exists to preserve. The outer try/catch is further defense: reporting
+			// a failure must never itself become a new, unhandled way for refresh() to reject.
+			this.uiCtx?.notify?.(`Pipes Jobs widget ${kind} failed: ${message}`, "warning");
+		} catch {
+			// Nowhere left to report a failure of the failure-reporter itself.
+		}
 	}
 
 	private render(): void {
