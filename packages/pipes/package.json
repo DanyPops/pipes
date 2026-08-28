@@ -29,6 +29,7 @@
 			"name": "pipes",
 			"displayName": "Pipes CI daemon",
 			"binPath": "src/cli/index.ts",
+			"runtime": "bun",
 			"args": ["serve"],
 			"handleFilename": "daemon.json",
 			"restartOnFailure": true,
