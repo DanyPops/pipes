@@ -111,6 +111,10 @@ CREATE TABLE vehicle_projects (
 );
 `;
 
+const MIGRATION_8_PENDING_TRIGGER_RECEIPT = `
+ALTER TABLE job_watches ADD COLUMN pending_opaque_ref TEXT;
+`;
+
 export function openPipesDb(path: string): Database {
 	return openSqliteWithPragmas(path, {
 		databaseOptions: { create: true, strict: true },
@@ -122,6 +126,7 @@ export function openPipesDb(path: string): Database {
 			{ version: 5, up: (db) => db.exec(MIGRATION_5_PINNED_RUN_ID) },
 			{ version: 6, up: (db) => db.exec(MIGRATION_6_PROGRESS) },
 			{ version: 7, up: (db) => db.exec(MIGRATION_7_PROJECT_SCOPE) },
+			{ version: 8, up: (db) => db.exec(MIGRATION_8_PENDING_TRIGGER_RECEIPT) },
 		],
 	});
 }

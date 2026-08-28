@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { findVehicleProject, registerVehicleProject } from "@danypops/vehicle-server/project-scope";
+import { strToU8, zipSync } from "fflate";
 import { loadPresets } from "../../src/config/presets.ts";
 import { Orchestrator } from "../../src/orchestrator.ts";
 import { syncRunPool } from "../../src/process/pool-sync.ts";
@@ -12,6 +13,71 @@ import type { CIRun } from "../../src/run/ci-run.ts";
 import { openPipesDb } from "../../src/sqlite/db.ts";
 import { createRunPool, createSqliteVehicleProjectStore } from "../../src/sqlite/run-pool.ts";
 import { createStubCIBackend } from "../fixtures/stub-ci-backend.ts";
+
+describe("ci.artifacts", () => {
+	it("lists artifacts and extracts one bounded ZIP text entry", async () => {
+		const archive = zipSync({
+			"diagnostic-control-0-phase.json": strToU8('{"status":"failed"}'),
+			"other.txt": strToU8("ignored"),
+		});
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Artifacts,
+				artifacts: [{ name: "benchmark-evidence", path: "42", sizeBytes: archive.length }],
+				artifactBytes: archive,
+			}),
+		);
+		const service = createPipesService(orchestrator);
+
+		const listed = await service.execute("ci.artifacts", { backend: "gh", jobRef: "workflow.yml", runId: "1" });
+		const entries = await service.execute("ci.artifact.entries", {
+			backend: "gh",
+			jobRef: "workflow.yml",
+			runId: "1",
+			path: "42",
+			maxEntries: 10,
+		});
+		const text = await service.execute("ci.artifact.text", {
+			backend: "gh",
+			jobRef: "workflow.yml",
+			runId: "1",
+			path: "42",
+			entry: "diagnostic-control-0-phase.json",
+			maxBytes: 1024,
+		});
+
+		expect(listed.artifacts).toHaveLength(1);
+		expect(entries.entries.map((entry) => entry.name)).toEqual(["diagnostic-control-0-phase.json", "other.txt"]);
+		expect(entries.truncated).toBe(false);
+		expect(text.text).toBe('{"status":"failed"}');
+		expect(text.truncated).toBe(false);
+	});
+
+	it("rejects an archive entry larger than the caller's explicit bound", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Artifacts,
+				artifactBytes: zipSync({ "large.txt": strToU8("x".repeat(1025)) }),
+			}),
+		);
+		const service = createPipesService(orchestrator);
+
+		await expect(
+			service.execute("ci.artifact.text", {
+				backend: "gh",
+				jobRef: "workflow.yml",
+				runId: "1",
+				path: "42",
+				entry: "large.txt",
+				maxBytes: 1024,
+			}),
+		).rejects.toThrow(/exceeds.*1024/);
+	});
+});
 
 describe("ci.status", () => {
 	it("returns a verdict for backend+jobRef", async () => {
@@ -200,6 +266,33 @@ describe("ci.trigger", () => {
 		expect(result.result?.buildNumber).toBe("7");
 	});
 
+	it("preserves an unresolved receipt and subscribes it for exact later resolution", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				triggerReceipt: {
+					needsResolve: true,
+					backend: "gh",
+					jobRef: "repo/workflow.yml",
+					opaqueRef: "dispatch-time",
+				},
+			}),
+		);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		const result = await service.execute("ci.trigger", { backend: "gh", jobRef: "repo/workflow.yml" }, { callerSessionId: "session-42" });
+
+		expect(result.result?.opaqueRef).toBe("dispatch-time");
+		expect(runPool.watchedSubscriptions()[0]).toMatchObject({
+			jobRef: "repo/workflow.yml",
+			subscriberId: "session-42",
+			pendingOpaqueRef: "dispatch-time",
+		});
+	});
+
 	it("forwards params as a per-invocation override onto a pipeline's own baked-in step params", async () => {
 		const orchestrator = new Orchestrator();
 		const backend = createStubCIBackend({
@@ -303,18 +396,22 @@ describe("ci.wait", () => {
 	});
 
 	it("resolves an opaqueRef without watching a run", async () => {
-		const orchestrator = new Orchestrator();
-		orchestrator.addAdapter(
-			createStubCIBackend({
-				name: "gh",
-				capabilities: Capability.Trigger,
-				resolvedReceipt: { needsResolve: false, backend: "gh", jobRef: "job", runId: "99" },
-			}),
-		);
-		const service = createPipesService(orchestrator);
+		const backend = createStubCIBackend({
+			name: "gh",
+			capabilities: Capability.Trigger,
+			resolvedReceipt: { needsResolve: false, backend: "gh", jobRef: "repo/workflow.yml", runId: "99" },
+		});
+		const ownedOrchestrator = new Orchestrator();
+		ownedOrchestrator.addAdapter(backend);
+		const ownedService = createPipesService(ownedOrchestrator);
 
-		const result = await service.execute("ci.wait", { backend: "gh", opaqueRef: "queue-1" });
+		const result = await ownedService.execute("ci.wait", {
+			backend: "gh",
+			jobRef: "repo/workflow.yml",
+			opaqueRef: "queue-1",
+		});
 		expect(result).toEqual({ buildNumber: "99" });
+		expect(backend.calls.resolveReceipt[0]?.jobRef).toBe("repo/workflow.yml");
 	});
 
 	it("auto-unsubscribes the caller's own subscription once it's pinned to exactly the run ci.wait just watched to a terminal status -- a caller that also subscribed to the same run it's synchronously waiting on already has the answer in hand, so the background sync's own later notification would be pure noise", async () => {
@@ -454,6 +551,32 @@ describe("ci.cancel", () => {
 		await service.execute("ci.trigger", { backend: "gh", jobRef: "job", params: {} });
 		const result = await service.execute("ci.cancel", { backend: "gh", jobRef: "job", runId: "7" });
 		expect(result).toEqual({ status: "cancelled", runId: "7" });
+	});
+});
+
+describe("ci.rerun", () => {
+	it("delegates full and failed-only reruns to a capable backend", async () => {
+		const orchestrator = new Orchestrator();
+		const backend = createStubCIBackend({ name: "gh", capabilities: Capability.Rerun });
+		orchestrator.addAdapter(backend);
+		const runPool = createRunPool(openPipesDb(":memory:"));
+		const service = createPipesService(orchestrator, { runPool });
+
+		expect(
+			await service.execute("ci.rerun", { backend: "gh", jobRef: "workflow.yml", runId: "42" }, { callerSessionId: "session-42" }),
+		).toEqual({
+			status: "accepted",
+			runId: "42",
+		});
+		await service.execute("ci.rerun", { backend: "gh", jobRef: "workflow.yml", runId: "42", failedOnly: true });
+
+		expect(runPool.watchedSubscriptions()).toEqual(
+			expect.arrayContaining([expect.objectContaining({ subscriberId: "session-42", pinnedRunId: "42" })]),
+		);
+		expect(backend.calls.rerun).toEqual([
+			{ jobRef: "workflow.yml", runId: "42", failedOnly: false },
+			{ jobRef: "workflow.yml", runId: "42", failedOnly: true },
+		]);
 	});
 });
 

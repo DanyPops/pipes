@@ -8,6 +8,24 @@ import { createRunPool } from "../../src/sqlite/run-pool.ts";
 import { createStubCIBackend } from "../fixtures/stub-ci-backend.ts";
 
 describe("syncRunPool", () => {
+	it("resolves a pending trigger receipt and pins its exact run", async () => {
+		const orchestrator = new Orchestrator();
+		orchestrator.addAdapter(
+			createStubCIBackend({
+				name: "gh",
+				capabilities: Capability.Trigger,
+				resolvedReceipt: { needsResolve: false, backend: "gh", jobRef: "repo/workflow.yml", runId: "99" },
+				runsById: { "99": { id: "99", name: "job", status: "running", startedAt: new Date(0) } },
+			}),
+		);
+		const pool = createRunPool(openPipesDb(":memory:"));
+		pool.subscribeJob("gh", "repo/workflow.yml", { subscriberId: "session-42", pendingOpaqueRef: "dispatch-time" });
+
+		await syncRunPool(orchestrator, pool);
+
+		expect(pool.watchedSubscriptions()[0]).toMatchObject({ pinnedRunId: "99", pendingOpaqueRef: undefined });
+		expect(pool.get("gh", "repo/workflow.yml", "99")?.status).toBe("running");
+	});
 	it("resolves a watched job's latest run and caches its status and full log", async () => {
 		const orchestrator = new Orchestrator();
 		orchestrator.addAdapter(

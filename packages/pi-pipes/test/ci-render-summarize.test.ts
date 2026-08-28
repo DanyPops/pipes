@@ -219,6 +219,20 @@ describe("summarize: ci.cancel", () => {
 	});
 });
 
+describe("summarize: artifacts and rerun", () => {
+	it("summarizes artifact lists, archive entries, and extracted content", () => {
+		expect(summarize({ artifacts: [{ name: "evidence" }] }, theme)).toContain("1 artifact(s)");
+		expect(summarize({ entries: [{ name: "report.json" }], truncated: true }, theme)).toContain("truncated");
+		expect(summarize({ text: "{}", bytes: 2, truncated: false }, theme)).toContain("2 UTF-8 artifact byte(s)");
+	});
+
+	it("renders a rerun confirmation with the exact run id", () => {
+		const text = summarize({ status: "accepted", runId: "42" }, theme);
+		expect(text).toContain("Rerun accepted");
+		expect(text).toContain("#42");
+	});
+});
+
 describe("summarize: ci.log / ci.tail", () => {
 	it("renders a LogResult's line count and flags", () => {
 		const text = summarize({ lines: ["a", "b"], totalLines: 2, truncated: true, filtered: true }, theme);

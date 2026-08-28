@@ -15,6 +15,17 @@ import { DEFAULT_LOG_TAIL_TOKENS } from "../constants.ts";
 import type { Orchestrator } from "../orchestrator.ts";
 import type { TestItemFilter } from "../reportportal/launch.ts";
 import type { LaunchBackend } from "../reportportal/launch-backend.ts";
+import {
+	ARTIFACT_ARCHIVE_MAX_BYTES,
+	ARTIFACT_LIST_DEFAULT_LIMIT,
+	ARTIFACT_LIST_MAX_LIMIT,
+	ARTIFACT_TEXT_DEFAULT_MAX_BYTES,
+	ARTIFACT_TEXT_MAX_BYTES,
+	artifactEntries,
+	artifactText,
+	assertArtifactArchiveBound,
+	boundedArtifactInteger,
+} from "../run/artifact-evidence.ts";
 import type { LogResult, RunStatus } from "../run/ci-run.ts";
 import type { PipelineRun } from "../run/pipeline.ts";
 import { isTerminalStatus, type RunPool, type RunSnapshot } from "../sqlite/run-pool.ts";
@@ -58,6 +69,11 @@ export const OPERATION_NAMES: OperationName[] = [
 	"ci.wait",
 	"ci.cancel",
 	"ci.stages",
+	"ci.artifacts",
+	"ci.artifact.entries",
+	"ci.artifact.text",
+	"ci.artifact.get",
+	"ci.rerun",
 	"ci.chain",
 	"ci.pool",
 	"ci.subscribed",
@@ -182,7 +198,11 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 		}
 		if (!input.backend || !input.jobRef) throw new Error("backend and jobRef are required when pipeline is not set");
 		const result = await orchestrator.ciTrigger(input.backend, input.jobRef, input.params ?? {});
-		if (pool && result.buildNumber) seedPoolFromTrigger(pool, input.backend, input.jobRef, result.buildNumber, subscriberId, projectRoot);
+		if (pool && result.buildNumber) {
+			seedPoolFromTrigger(pool, input.backend, input.jobRef, result.buildNumber, subscriberId, projectRoot);
+		} else if (pool && result.opaqueRef) {
+			pool.subscribeJob(input.backend, input.jobRef, { subscriberId, pendingOpaqueRef: result.opaqueRef, projectRoot });
+		}
 		return { result };
 	}
 
@@ -306,7 +326,8 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 	 */
 	async function handleWait(input: OperationInputs["ci.wait"], callContext?: PipesCallContext): Promise<OperationOutputs["ci.wait"]> {
 		if (input.opaqueRef) {
-			return { buildNumber: await orchestrator.ciPoll(input.backend, input.opaqueRef) };
+			if (!input.jobRef) throw new Error("wait requires jobRef with opaqueRef");
+			return { buildNumber: await orchestrator.ciPoll(input.backend, input.jobRef, input.opaqueRef) };
 		}
 		if (!input.runId || !input.jobRef) {
 			throw new Error("wait requires opaqueRef (resolve) or jobRef+runId (watch)");
@@ -410,6 +431,62 @@ export function createPipesService(orchestrator: Orchestrator, options: CreatePi
 				}
 				case "ci.stages":
 					return (await handleStages(input as OperationInputs["ci.stages"])) as OperationOutputs[Name];
+				case "ci.artifacts": {
+					const artifacts = input as OperationInputs["ci.artifacts"];
+					const limit = boundedArtifactInteger(
+						artifacts.maxArtifacts ?? ARTIFACT_LIST_DEFAULT_LIMIT,
+						1,
+						ARTIFACT_LIST_MAX_LIMIT,
+						"maxArtifacts",
+					);
+					const listed = await orchestrator.ciArtifacts(artifacts.backend, artifacts.jobRef, artifacts.runId);
+					return { artifacts: listed.slice(0, limit), truncated: listed.length > limit } as OperationOutputs[Name];
+				}
+				case "ci.artifact.entries": {
+					const artifact = input as OperationInputs["ci.artifact.entries"];
+					const bytes = await orchestrator.ciArtifactGet(
+						artifact.backend,
+						artifact.jobRef,
+						artifact.runId,
+						artifact.path,
+						ARTIFACT_ARCHIVE_MAX_BYTES,
+					);
+					assertArtifactArchiveBound(bytes);
+					return artifactEntries(bytes, artifact.maxEntries) as OperationOutputs[Name];
+				}
+				case "ci.artifact.text": {
+					const artifact = input as OperationInputs["ci.artifact.text"];
+					const bytes = await orchestrator.ciArtifactGet(
+						artifact.backend,
+						artifact.jobRef,
+						artifact.runId,
+						artifact.path,
+						ARTIFACT_ARCHIVE_MAX_BYTES,
+					);
+					assertArtifactArchiveBound(bytes);
+					return artifactText(bytes, artifact.entry, artifact.maxBytes) as OperationOutputs[Name];
+				}
+				case "ci.artifact.get": {
+					const artifact = input as OperationInputs["ci.artifact.get"];
+					const maxBytes = artifact.maxBytes ?? ARTIFACT_TEXT_DEFAULT_MAX_BYTES;
+					if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > ARTIFACT_TEXT_MAX_BYTES) {
+						throw new Error(`maxBytes must be an integer from 1 to ${ARTIFACT_TEXT_MAX_BYTES}`);
+					}
+					const bytes = await orchestrator.ciArtifactGet(artifact.backend, artifact.jobRef, artifact.runId, artifact.path, maxBytes);
+					if (bytes.length > maxBytes) throw new Error(`artifact exceeds maxBytes ${maxBytes}`);
+					return { contentBase64: Buffer.from(bytes).toString("base64"), bytes: bytes.length } as OperationOutputs[Name];
+				}
+				case "ci.rerun": {
+					const rerun = input as OperationInputs["ci.rerun"];
+					await orchestrator.ciRerun(rerun.backend, rerun.jobRef, rerun.runId, rerun.failedOnly ?? false);
+					if (pool) {
+						const subscriberId = callContext?.callerSessionId ?? "";
+						const projectRoot = callContext?.callerProjectRoot;
+						if (projectRoot && options.projectStore) registerVehicleProject(options.projectStore, { projectRoot });
+						pool.subscribeJob(rerun.backend, rerun.jobRef, { subscriberId, runId: rerun.runId, projectRoot });
+					}
+					return { status: "accepted", runId: rerun.runId } as OperationOutputs[Name];
+				}
 				case "ci.chain": {
 					const chain = input as OperationInputs["ci.chain"];
 					return (await orchestrator.ciChain(

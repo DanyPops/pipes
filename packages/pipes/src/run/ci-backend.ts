@@ -9,6 +9,7 @@ export enum Capability {
 	Artifacts = 1 << 3,
 	Chain = 1 << 4,
 	Discover = 1 << 5,
+	Rerun = 1 << 6,
 }
 
 export type CapabilitySet = number;
@@ -24,6 +25,7 @@ const CAPABILITY_NAMES: [Capability, string][] = [
 	[Capability.Artifacts, "artifacts"],
 	[Capability.Chain, "chain"],
 	[Capability.Discover, "discover"],
+	[Capability.Rerun, "rerun"],
 ];
 
 export function describeCapabilities(set: CapabilitySet): string {
@@ -66,9 +68,13 @@ export interface CIPipeliner {
 	listStageNodesWithLogs(jobRef: string, runId: string): Promise<CIStageNode[]>;
 }
 
+export interface CIRerunnable {
+	rerun(jobRef: string, runId: string, failedOnly: boolean): Promise<void>;
+}
+
 export interface CIArtifactStore {
 	listArtifacts(jobRef: string, runId: string): Promise<CIArtifact[]>;
-	getArtifact(jobRef: string, runId: string, path: string): Promise<Uint8Array>;
+	getArtifact(jobRef: string, runId: string, path: string, maxBytes: number): Promise<Uint8Array>;
 }
 
 export interface CIChainable {
@@ -118,6 +124,10 @@ export function asHistorical(backend: CIBackend): (CIBackend & CIHistorical) | u
 
 export function asPipeliner(backend: CIBackend): (CIBackend & CIPipeliner) | undefined {
 	return asCapability<CIBackend & CIPipeliner>(backend, "listStages");
+}
+
+export function asRerunnable(backend: CIBackend): (CIBackend & CIRerunnable) | undefined {
+	return asCapability<CIBackend & CIRerunnable>(backend, "rerun");
 }
 
 export function asArtifactStore(backend: CIBackend): (CIBackend & CIArtifactStore) | undefined {

@@ -16,8 +16,10 @@ export interface TriggerReceipt {
 	jobRef: string;
 }
 
-/** Agent-facing trigger response — queueId is the deprecated alias for opaqueRef. */
+/** Agent-facing trigger response. */
 export interface TriggerResult {
+	opaqueRef?: string;
+	/** Deprecated compatibility alias for opaqueRef. */
 	queueId?: string;
 	buildNumber?: string;
 	jobRef: string;

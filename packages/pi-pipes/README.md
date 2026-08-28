@@ -15,13 +15,16 @@ pi install npm:@danypops/pi-pipes
 
 - **`ci_status`** / **`ci_log`** / **`ci_search`** — a run's verdict (with
   classified failure context), raw log text, or history search.
-- **`ci_trigger`** / **`ci_wait`** / **`ci_cancel`** — start a run, block
-  until it finishes, or cancel one.
+- **`ci_trigger`** / **`ci_wait`** / **`ci_cancel`** / **`ci_rerun`** —
+  start, resolve, watch, cancel, or rerun an exact run.
 - **`ci_subscribe`** / **`ci_unsubscribe`** / **`ci_tail`** — background
   watch a job; a subscribed run shows on the persistent Jobs TUI widget and
   auto-unsubscribes once terminal.
 - **`ci_stages`** / **`ci_chain`** / **`ci_downstream`** — a run's
   stage/step breakdown, and downstream pipeline/artifact trees.
+- **`ci_artifacts`** / **`ci_artifact_entries`** /
+  **`ci_artifact_text`** / **`ci_artifact_get`** — list bounded evidence,
+  inspect ZIP entries, extract UTF-8 reports, or retrieve a small artifact.
 - **`ci_discover`** — lists an account-scoped GitHub backend's real repos
   (or a repo's workflow files), or a Jenkins instance's job tree — the way
   to get a real `jobRef` instead of guessing one.

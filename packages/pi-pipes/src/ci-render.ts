@@ -202,8 +202,8 @@ export function summarize(data: unknown, theme: ThemeLike, displayPercentOverrid
 
 	// ci.trigger (direct backend/jobRef form): TriggerResult
 	if (d.result && typeof d.result === "object" && "jobRef" in (d.result as object)) {
-		const trigger = d.result as { backend: string; jobRef: string; buildNumber?: string; queueId?: string };
-		const id = trigger.buildNumber ?? trigger.queueId ?? "(pending)";
+		const trigger = d.result as { backend: string; jobRef: string; buildNumber?: string; opaqueRef?: string; queueId?: string };
+		const id = trigger.buildNumber ?? trigger.opaqueRef ?? trigger.queueId ?? "(pending)";
 		return `${theme.fg("success", "Triggered")} ${theme.fg("accent", `${trigger.backend}/${trigger.jobRef}`)} ${theme.fg("dim", `#${id}`)}`;
 	}
 
@@ -275,8 +275,16 @@ export function summarize(data: unknown, theme: ThemeLike, displayPercentOverrid
 	if (d.subscribed === true) return theme.fg("success", "✓ Subscribed");
 	if (d.unsubscribed === true) return theme.fg("success", "✓ Unsubscribed");
 
-	// ci.stages
+	// ci.stages and artifact evidence
 	if (Array.isArray(d.stages)) return theme.fg("muted", `${d.stages.length} stage(s)`);
+	if (Array.isArray(d.artifacts)) return theme.fg("muted", `${d.artifacts.length} artifact(s)`);
+	if (Array.isArray(d.entries)) {
+		return theme.fg("muted", `${d.entries.length} archive entr${d.entries.length === 1 ? "y" : "ies"}${d.truncated ? ", truncated" : ""}`);
+	}
+	if (typeof d.text === "string" && typeof d.bytes === "number") return theme.fg("muted", `${d.bytes} UTF-8 artifact byte(s)`);
+	if (typeof d.contentBase64 === "string" && typeof d.bytes === "number") return theme.fg("muted", `${d.bytes} artifact byte(s)`);
+	if (d.status === "accepted" && typeof d.runId === "string")
+		return `${theme.fg("success", "Rerun accepted")} ${theme.fg("dim", `#${d.runId}`)}`;
 
 	// ci.chain: CIRunNode (has its own status/name at the top level)
 	if (typeof d.status === "string" && typeof d.name === "string") {

@@ -184,7 +184,7 @@ describe("createGitLabAdapter.listArtifacts / getArtifact", () => {
 			return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
 		};
 		const adapter = createGitLabAdapter({ name: "gl", baseUrl: "https://gitlab.example.com", projectId: "1", fetchImpl });
-		const bytes = await adapter.getArtifact("main", "1", "7/report.xml");
+		const bytes = await adapter.getArtifact("main", "1", "7/report.xml", 1024);
 		expect(requestedUrl).toContain("/jobs/7/artifacts/report.xml");
 		expect(bytes).toEqual(new Uint8Array([1, 2, 3]));
 	});

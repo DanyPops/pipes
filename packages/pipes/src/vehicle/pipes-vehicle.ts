@@ -145,7 +145,7 @@ const OPERATIONS: readonly OperationSpec[] = [
 	{
 		action: "ci.wait",
 		description:
-			"Blocks until a run reaches a terminal status or timeoutS elapses. Given backend+jobRef+runId (watching a real run), streams a live status+log-tail snapshot every ~20s while it waits. Given opaqueRef instead (resolving a fresh trigger's receipt to a real run id), returns once resolved with no streaming. Bounded by timeoutS -- if the run outlives it, this returns the last-known (still non-terminal) status rather than throwing, so a job that might run longer than you want to hold this call open for is better tracked with ci_subscribe (persistent, survives this call ending) than by calling ci_wait again. Already ci_subscribed to this exact run? No need to unsubscribe first -- reaching a terminal status here auto-clears that subscription so you don't also get a redundant background notification for an answer you already have.",
+			"Blocks until a run reaches a terminal status or timeoutS elapses. Given backend+jobRef+runId (watching a real run), streams a live status+log-tail snapshot every ~20s while it waits. Given jobRef+opaqueRef instead (resolving a fresh trigger's receipt to a real run id), returns once resolved with no streaming. Bounded by timeoutS -- if the run outlives it, this returns the last-known (still non-terminal) status rather than throwing, so a job that might run longer than you want to hold this call open for is better tracked with ci_subscribe (persistent, survives this call ending) than by calling ci_wait again. Already ci_subscribed to this exact run? No need to unsubscribe first -- reaching a terminal status here auto-clears that subscription so you don't also get a redundant background notification for an answer you already have.",
 		effect: "read",
 		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, opaqueRef: stringProp, timeoutS: numberProp },
 		required: ["backend"],
@@ -165,6 +165,41 @@ const OPERATIONS: readonly OperationSpec[] = [
 		description: "A run's stage/step breakdown, optionally with each failed step's own log attached.",
 		effect: "read",
 		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, steps: booleanProp, includeFailedLog: booleanProp },
+		required: ["backend", "jobRef", "runId"],
+	},
+	{
+		action: "ci.artifacts",
+		description: "Lists the bounded artifact metadata attached to one exact run.",
+		effect: "read",
+		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, maxArtifacts: numberProp },
+		required: ["backend", "jobRef", "runId"],
+	},
+	{
+		action: "ci.artifact.entries",
+		description: "Lists safe ZIP entry metadata from one run artifact, bounded by maxEntries.",
+		effect: "read",
+		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, path: stringProp, maxEntries: numberProp },
+		required: ["backend", "jobRef", "runId", "path"],
+	},
+	{
+		action: "ci.artifact.text",
+		description: "Extracts one UTF-8 ZIP entry from a run artifact under an explicit byte ceiling.",
+		effect: "read",
+		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, path: stringProp, entry: stringProp, maxBytes: numberProp },
+		required: ["backend", "jobRef", "runId", "path", "entry"],
+	},
+	{
+		action: "ci.artifact.get",
+		description: "Returns one small run artifact as bounded base64 content.",
+		effect: "read",
+		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, path: stringProp, maxBytes: numberProp },
+		required: ["backend", "jobRef", "runId", "path"],
+	},
+	{
+		action: "ci.rerun",
+		description: "Reruns all jobs or only failed jobs for one exact run where the backend supports it.",
+		effect: "external-write",
+		properties: { backend: stringProp, jobRef: stringProp, runId: stringProp, failedOnly: booleanProp },
 		required: ["backend", "jobRef", "runId"],
 	},
 	{

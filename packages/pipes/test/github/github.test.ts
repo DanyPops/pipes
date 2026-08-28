@@ -2,7 +2,15 @@ import { describe, expect, it } from "bun:test";
 import type { FetchLike } from "../../src/auth/github-auth.ts";
 import { createGitHubAdapter, GitHubNotFoundError, GitHubParamsFilterUnsupportedError } from "../../src/github/github.ts";
 import { RateLimitError } from "../../src/http/rate-limit.ts";
-import { asArtifactStore, asHistorical, asPipeliner, asTriggerable, Capability, hasCapability } from "../../src/run/ci-backend.ts";
+import {
+	asArtifactStore,
+	asHistorical,
+	asPipeliner,
+	asRerunnable,
+	asTriggerable,
+	Capability,
+	hasCapability,
+} from "../../src/run/ci-backend.ts";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 	return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" }, ...init });
@@ -211,12 +219,71 @@ describe("createGitHubAdapter: capabilities", () => {
 		expect(hasCapability(caps, Capability.History)).toBe(true);
 		expect(hasCapability(caps, Capability.Stages)).toBe(true);
 		expect(hasCapability(caps, Capability.Artifacts)).toBe(true);
+		expect(hasCapability(caps, Capability.Rerun)).toBe(true);
 		expect(hasCapability(caps, Capability.Chain)).toBe(false);
 
 		expect(asTriggerable(adapter)).toBeDefined();
 		expect(asHistorical(adapter)).toBeDefined();
 		expect(asPipeliner(adapter)).toBeDefined();
 		expect(asArtifactStore(adapter)).toBeDefined();
+		expect(asRerunnable(adapter)).toBeDefined();
+	});
+});
+
+describe("createGitHubAdapter stages and reruns", () => {
+	it("maps jobs and their steps into stage nodes", async () => {
+		const fetchImpl: FetchLike = async () =>
+			jsonResponse({
+				jobs: [
+					{
+						id: 7,
+						name: "benchmark",
+						status: "completed",
+						conclusion: "failure",
+						started_at: "2026-01-01T00:00:00Z",
+						completed_at: "2026-01-01T00:02:00Z",
+						steps: [
+							{
+								number: 3,
+								name: "Run benchmark",
+								status: "completed",
+								conclusion: "failure",
+								started_at: "2026-01-01T00:00:10Z",
+								completed_at: "2026-01-01T00:01:50Z",
+							},
+						],
+					},
+				],
+			});
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl });
+
+		const stages = await adapter.listStageNodes("workflow.yml", "42");
+
+		expect(stages).toEqual([
+			{
+				id: "7",
+				name: "benchmark",
+				status: "failure",
+				durationMs: 120_000,
+				steps: [{ id: "3", name: "Run benchmark", status: "failure", durationMs: 100_000 }],
+			},
+		]);
+	});
+
+	it("reruns all jobs or failed jobs through distinct GitHub endpoints", async () => {
+		const requests: string[] = [];
+		const fetchImpl: FetchLike = async (url, init) => {
+			requests.push(`${init?.method ?? "GET"} ${url}`);
+			return new Response("", { status: 201 });
+		};
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl });
+		const rerunnable = asRerunnable(adapter);
+
+		await rerunnable?.rerun("workflow.yml", "42", false);
+		await rerunnable?.rerun("workflow.yml", "42", true);
+
+		expect(requests[0]).toContain("POST https://api.github.com/repos/o/r/actions/runs/42/rerun");
+		expect(requests[1]).toContain("POST https://api.github.com/repos/o/r/actions/runs/42/rerun-failed-jobs");
 	});
 });
 
@@ -227,6 +294,13 @@ describe("createGitHubAdapter.listArtifacts", () => {
 
 		const artifacts = await adapter.listArtifacts("workflow.yml", "1");
 		expect(artifacts).toEqual([{ name: "report.xml", path: "42", sizeBytes: 1024 }]);
+	});
+
+	it("stops artifact downloads at the caller's byte ceiling", async () => {
+		const fetchImpl: FetchLike = async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+		const adapter = createGitHubAdapter({ name: "gh", owner: "o", repo: "r", fetchImpl });
+
+		await expect(adapter.getArtifact("workflow.yml", "1", "42", 2)).rejects.toThrow(/exceeds maxBytes 2/);
 	});
 });
 

@@ -4,6 +4,7 @@
  */
 
 import type { FetchLike } from "../auth/github-auth.ts";
+import { readResponseBytesBounded } from "../http/bounded-body.ts";
 import { parseRateLimitHeaders, parseRetryAfterMs, RateLimitError } from "../http/rate-limit.ts";
 import { withTimeout } from "../http/timeout.ts";
 import {
@@ -14,6 +15,7 @@ import {
 	type CIDiscoverable,
 	type CIHistorical,
 	type CIPipeliner,
+	type CIRerunnable,
 	type CITriggerable,
 } from "../run/ci-backend.ts";
 import type { BuildFilter, CIArtifact, CIJob, CIRun, CIStageNode, SearchResult } from "../run/ci-run.ts";
@@ -75,7 +77,7 @@ const SEARCH_MAX_PAGES = 100;
 
 export function createGitHubAdapter(
 	options: GitHubAdapterOptions,
-): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIDiscoverable {
+): CIBackend & CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIDiscoverable & CIRerunnable {
 	const { name, owner, repo: fixedRepo, token } = options;
 	// A caller-supplied fetchImpl (tests, or a future custom transport) is used as-is; the real
 	// default fetch is wrapped so a stalled connection to GitHub can't hang ci.wait's poll loop forever.
@@ -164,6 +166,32 @@ export function createGitHubAdapter(
 	}
 
 	/** GitHub exposes no duration field directly; a completed run's wall-clock span is `updated_at - run_started_at` (falling back to `created_at` if the run never queued). Still-running/pending runs keep durationMs undefined -- orchestrator.ciWatch derives their elapsed time from startedAt instead. */
+	function durationBetween(startedAt: string | null, completedAt: string | null): number | undefined {
+		if (!startedAt || !completedAt) return undefined;
+		return Math.max(0, new Date(completedAt).getTime() - new Date(startedAt).getTime());
+	}
+
+	async function githubJobs(jobRef: string, runId: string): Promise<GhWorkflowJob[]> {
+		const { repo } = resolveJobRef(jobRef);
+		const page = await api<{ jobs: GhWorkflowJob[] }>("GET", `/repos/${owner}/${repo}/actions/runs/${runId}/jobs`);
+		return page?.jobs ?? [];
+	}
+
+	function githubStageNodes(jobs: GhWorkflowJob[]): CIStageNode[] {
+		return jobs.map((job) => ({
+			id: String(job.id),
+			name: job.name,
+			status: mapStatus(job.status, job.conclusion),
+			durationMs: durationBetween(job.started_at, job.completed_at),
+			steps: job.steps?.map((step) => ({
+				id: String(step.number),
+				name: step.name,
+				status: mapStatus(step.status, step.conclusion),
+				durationMs: durationBetween(step.started_at, step.completed_at),
+			})),
+		}));
+	}
+
 	function toCIRun(run: GhWorkflowRun): CIRun {
 		const status = mapStatus(run.status, run.conclusion);
 		const startedAt = new Date(run.run_started_at ?? run.created_at);
@@ -183,7 +211,7 @@ export function createGitHubAdapter(
 		name: () => name,
 		type: () => "github",
 		capabilities: (): CapabilitySet =>
-			Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Discover,
+			Capability.Trigger | Capability.History | Capability.Stages | Capability.Artifacts | Capability.Discover | Capability.Rerun,
 
 		/** "latest" is an explicit sentinel routed to a dedicated query, scoped to this exact workflow file
 		 * (not the repo's most recent run across every workflow -- two different workflow files resolving
@@ -286,6 +314,12 @@ export function createGitHubAdapter(
 			await api("POST", `/repos/${owner}/${repo}/actions/runs/${runId}/cancel`);
 		},
 
+		async rerun(jobRef: string, runId: string, failedOnly: boolean): Promise<void> {
+			const { repo } = resolveJobRef(jobRef);
+			const action = failedOnly ? "rerun-failed-jobs" : "rerun";
+			await api("POST", `/repos/${owner}/${repo}/actions/runs/${runId}/${action}`);
+		},
+
 		async trigger(jobRef: string, params: Record<string, string>): Promise<TriggerReceipt> {
 			const { repo, workflow } = resolveJobRef(jobRef);
 			const body: { ref: string; inputs?: Record<string, string> } = { ref: params.ref ?? "main" };
@@ -348,12 +382,24 @@ export function createGitHubAdapter(
 			}));
 		},
 
-		async listStageNodes(): Promise<CIStageNode[]> {
-			throw new Error("GitHub Actions does not expose step-level pipeline detail through this adapter yet");
+		async listStageNodes(jobRef: string, runId: string): Promise<CIStageNode[]> {
+			return githubStageNodes(await githubJobs(jobRef, runId));
 		},
 
-		async listStageNodesWithLogs(): Promise<CIStageNode[]> {
-			throw new Error("GitHub Actions does not expose step-level pipeline detail through this adapter yet");
+		async listStageNodesWithLogs(jobRef: string, runId: string): Promise<CIStageNode[]> {
+			const jobs = await githubJobs(jobRef, runId);
+			const nodes = githubStageNodes(jobs);
+			await Promise.all(
+				nodes.map(async (node, index) => {
+					if (node.status !== "failure") return;
+					const { repo } = resolveJobRef(jobRef);
+					const response = await fetchRaw(`/repos/${owner}/${repo}/actions/jobs/${jobs[index]?.id}/logs`);
+					if (!response.ok) return;
+					const failedStep = node.steps?.find((step) => step.status === "failure");
+					if (failedStep) failedStep.failedLog = await response.text();
+				}),
+			);
+			return nodes;
 		},
 
 		async listArtifacts(jobRef: string, runId: string): Promise<CIArtifact[]> {
@@ -366,12 +412,12 @@ export function createGitHubAdapter(
 			}));
 		},
 
-		async getArtifact(jobRef: string, _runId: string, path: string): Promise<Uint8Array> {
+		async getArtifact(jobRef: string, _runId: string, path: string, maxBytes: number): Promise<Uint8Array> {
 			const { repo } = resolveJobRef(jobRef);
 			const response = await fetchRaw(`/repos/${owner}/${repo}/actions/artifacts/${path}/zip`);
 			if (response.status === 404) throw new GitHubNotFoundError(`artifact ${path}`);
 			if (!response.ok) throw new GitHubApiError("GET", `artifact ${path}`, response.status, await response.text());
-			return new Uint8Array(await response.arrayBuffer());
+			return readResponseBytesBounded(response, maxBytes);
 		},
 
 		/**
@@ -405,12 +451,23 @@ interface GhWorkflowRun {
 	updated_at?: string;
 }
 
+interface GhWorkflowStep {
+	number: number;
+	name: string;
+	status: string;
+	conclusion: string | null;
+	started_at: string | null;
+	completed_at: string | null;
+}
+
 interface GhWorkflowJob {
 	id: number;
 	name: string;
 	status: string;
 	conclusion: string | null;
 	started_at: string | null;
+	completed_at: string | null;
+	steps?: GhWorkflowStep[];
 }
 
 interface GhArtifact {

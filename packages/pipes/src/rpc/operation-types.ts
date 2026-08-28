@@ -19,7 +19,8 @@ import type {
 	Widget,
 	WidgetAddInput,
 } from "../reportportal/launch.ts";
-import type { CIRunNode, CIStageNode, LogResult, RunResult } from "../run/ci-run.ts";
+import type { ArtifactEntry } from "../run/artifact-evidence.ts";
+import type { CIArtifact, CIRunNode, CIStageNode, LogResult, RunResult } from "../run/ci-run.ts";
 import type { RepoInfo, WorkflowInfo } from "../run/discovery.ts";
 import type { Pipeline, PipelineRun } from "../run/pipeline.ts";
 import type { TriggerResult, WatchStatus } from "../run/trigger.ts";
@@ -35,6 +36,11 @@ export type OperationName =
 	| "ci.wait"
 	| "ci.cancel"
 	| "ci.stages"
+	| "ci.artifacts"
+	| "ci.artifact.entries"
+	| "ci.artifact.text"
+	| "ci.artifact.get"
+	| "ci.rerun"
 	| "ci.chain"
 	| "ci.pool"
 	| "ci.subscribed"
@@ -84,6 +90,11 @@ export interface OperationInputs {
 	"ci.wait": { backend: string; jobRef?: string; runId?: string; opaqueRef?: string; timeoutS?: number };
 	"ci.cancel": { backend: string; jobRef: string; runId: string };
 	"ci.stages": { backend: string; jobRef: string; runId: string; steps?: boolean; includeFailedLog?: boolean };
+	"ci.artifacts": { backend: string; jobRef: string; runId: string; maxArtifacts?: number };
+	"ci.artifact.entries": { backend: string; jobRef: string; runId: string; path: string; maxEntries?: number };
+	"ci.artifact.text": { backend: string; jobRef: string; runId: string; path: string; entry: string; maxBytes?: number };
+	"ci.artifact.get": { backend: string; jobRef: string; runId: string; path: string; maxBytes?: number };
+	"ci.rerun": { backend: string; jobRef: string; runId: string; failedOnly?: boolean };
 	"ci.chain": { backend: string; jobRef: string; runId: string; depth?: number; artifacts?: boolean };
 	"ci.pool": { backend: string; jobRef: string; limit?: number };
 	/** Every currently-subscribed job across every backend/jobRef -- unlike ci.pool (one job's own recent
@@ -152,6 +163,11 @@ export interface OperationOutputs {
 	"ci.wait": WatchStatus | { buildNumber: string };
 	"ci.cancel": { status: "cancelled"; runId: string };
 	"ci.stages": { stages: CIStageNode[] | Array<{ id: string; name: string; status: string; durationMs?: number }> };
+	"ci.artifacts": { artifacts: CIArtifact[]; truncated: boolean };
+	"ci.artifact.entries": { entries: ArtifactEntry[]; truncated: boolean };
+	"ci.artifact.text": { text: string; bytes: number; truncated: false };
+	"ci.artifact.get": { contentBase64: string; bytes: number };
+	"ci.rerun": { status: "accepted"; runId: string };
 	"ci.chain": CIRunNode;
 	/** Reads only the local pool — never a live backend call, safe to call frequently. Empty when no pool is configured. */
 	"ci.pool": { runs: RunSnapshot[] };

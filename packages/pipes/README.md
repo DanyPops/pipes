@@ -31,14 +31,18 @@ callable via the CLI's generic passthrough (`pipes call <op> [json]`):
 - `ci.help` — configured backends and registered presets
 - `ci.status` / `ci.log` / `ci.search` — live backend reads, with grep/tail
   filtering and classified-failure context on the compact status verdict
-- `ci.trigger` / `ci.wait` / `ci.cancel` — trigger a raw job or a named
-  preset, block until terminal, session-ownership-gated cancel
+- `ci.trigger` / `ci.wait` / `ci.cancel` / `ci.rerun` — trigger a raw job or
+  named preset, resolve and watch its exact run, cancel owned runs, or rerun all
+  or failed jobs where supported
 - `ci.subscribe` / `ci.unsubscribe` / `ci.pool` / `ci.tail` — job-level
   background watching (autofocuses on a job's latest run, auto-unsubscribes
   once it finishes) with cheap, pool-only reads and token-budgeted log tails
 - `ci.stages` / `ci.chain` / `ci.downstream` — pipeline stage/step trees, a
   bounded (cycle-safe, node-capped) downstream/artifact tree, and a targeted
   downstream lookup for backends that need an explicit job name (Jenkins)
+- `ci.artifacts` / `ci.artifact.entries` / `ci.artifact.text` /
+  `ci.artifact.get` — bounded artifact metadata, safe ZIP entry discovery,
+  UTF-8 evidence extraction, and small base64 downloads
 - `rp.launches` / `rp.launch` / `rp.items` / `rp.search` / `rp.item` /
   `rp.items.get` — Report Portal launch and test-item queries. `rp.search`
   is cross-launch and requires `launchIds` — resolve a launch name/date range

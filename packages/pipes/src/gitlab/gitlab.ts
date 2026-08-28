@@ -7,6 +7,7 @@
  */
 
 import type { FetchLike } from "../auth/github-auth.ts";
+import { readResponseBytesBounded } from "../http/bounded-body.ts";
 import { parseRateLimitHeaders, parseRetryAfterMs, RateLimitError } from "../http/rate-limit.ts";
 import { withTimeout } from "../http/timeout.ts";
 import {
@@ -328,12 +329,12 @@ export function createGitLabAdapter(
 				);
 		},
 
-		async getArtifact(_jobRef: string, _runId: string, path: string): Promise<Uint8Array> {
+		async getArtifact(_jobRef: string, _runId: string, path: string, maxBytes: number): Promise<Uint8Array> {
 			const [jobId, ...rest] = path.split("/");
 			const response = await fetchRaw(`/projects/${projectId}/jobs/${jobId}/artifacts/${rest.join("/")}`);
 			if (response.status === 404) throw new GitLabNotFoundError(`artifact ${path}`);
 			if (!response.ok) throw new GitLabApiError("GET", `artifact ${path}`, response.status, await response.text());
-			return new Uint8Array(await response.arrayBuffer());
+			return readResponseBytesBounded(response, maxBytes);
 		},
 
 		/**

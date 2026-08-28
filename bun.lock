@@ -21,7 +21,7 @@
     },
     "packages/pi-pipes": {
       "name": "@danypops/pi-pipes",
-      "version": "0.18.2",
+      "version": "0.18.9",
       "dependencies": {
         "@danypops/pipes": "^0.18.0",
         "@danypops/vehicle-client": "^0.10.1",
@@ -48,7 +48,7 @@
     },
     "packages/pipes": {
       "name": "@danypops/pipes",
-      "version": "0.18.3",
+      "version": "0.18.5",
       "bin": {
         "pipes": "src/cli/index.ts",
       },
@@ -57,6 +57,7 @@
         "@danypops/vehicle-client": "^0.10.1",
         "@danypops/vehicle-core": "^0.17.1",
         "@danypops/vehicle-server": "^0.25.2",
+        "fflate": "0.8.2",
         "open": "^11.0.0",
       },
       "devDependencies": {
@@ -437,6 +438,8 @@
     "fdir": ["fdir@6.5.0", "", { "peerDependencies": { "picomatch": "^3 || ^4" }, "optionalPeers": ["picomatch"] }, "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg=="],
 
     "fetch-blob": ["fetch-blob@3.2.0", "", { "dependencies": { "node-domexception": "^1.0.0", "web-streams-polyfill": "^3.0.3" } }, "sha512-7yAQpD2UMJzLi1Dqv7qFYnPbaPx7ZfFK6PiIxQ4PfkGPyNyl2Ugx+a/umUonmKqjhM4DnfbMvdX6otXq83soQQ=="],
+
+    "fflate": ["fflate@0.8.2", "", {}, "sha512-cPJU47OaAoCbg0pBvzsgpTPhmhqI5eJjh/JIu8tPj5q+T7iLvW/JAYUqmE7KOB4R1ZyEhzBaIQpQpardBF5z8A=="],
 
     "file-entry-cache": ["file-entry-cache@8.0.0", "", { "dependencies": { "flat-cache": "^4.0.0" } }, "sha512-XXTUwCvisa5oacNGRP9SfNtYBNAMi+RPwBFmblZEF7N7swHYQS6/Zfk7SRwx4D5j3CH211YNRco1DEMNVfZCnQ=="],
 

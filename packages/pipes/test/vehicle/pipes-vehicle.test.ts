@@ -43,12 +43,13 @@ describe("createPipesVehicleRegistry (via PipesService.vehicle)", () => {
 		}
 	});
 
-	it("gives each action its own honest effect: external-write for a real trigger/cancel, local-write for local daemon state, read otherwise", () => {
+	it("gives each action its own honest effect: external-write for trigger/cancel/rerun, local-write for local state, read otherwise", () => {
 		const { service } = harness();
 		const effectOf = (name: string) => service.vehicle.manifest().operations.find((op) => op.name === name)?.effect;
 		expect(effectOf("ci.status")).toBe("read");
 		expect(effectOf("ci.trigger")).toBe("external-write");
 		expect(effectOf("ci.cancel")).toBe("external-write");
+		expect(effectOf("ci.rerun")).toBe("external-write");
 		expect(effectOf("ci.subscribe")).toBe("local-write");
 		expect(effectOf("ci.presets.set")).toBe("local-write");
 	});
@@ -151,7 +152,7 @@ describe("createPipesVehicleRegistry (via PipesService.vehicle)", () => {
 		await service.vehicle.invoke(
 			"ci.wait",
 			1,
-			{ backend: "gh", opaqueRef },
+			{ backend: "gh", jobRef: "job", opaqueRef },
 			{ ...PERMS, onProgress: (value: unknown) => progress.push(value) },
 		);
 		expect(progress).toHaveLength(0);

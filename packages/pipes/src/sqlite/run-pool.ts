@@ -57,8 +57,10 @@ export interface RunPool {
 	subscribeJob(
 		backend: string,
 		jobRef: string,
-		options?: { subscriberId?: string; scheduleMs?: number; runId?: string; projectRoot?: string },
+		options?: { subscriberId?: string; scheduleMs?: number; runId?: string; pendingOpaqueRef?: string; projectRoot?: string },
 	): void;
+	/** Replaces one pending trigger receipt with its exact resolved run id. */
+	pinSubscription(backend: string, jobRef: string, subscriberId: string, runId: string): void;
 	/** Removes exactly one subscriber's row. subscriberId defaults to "". Idempotent no-op if that subscription wasn't present. */
 	unsubscribeJob(backend: string, jobRef: string, subscriberId?: string): void;
 	/**
@@ -108,6 +110,8 @@ export interface JobSubscription {
 	lastCheckedAt?: Date;
 	/** When set, this subscription tracks exactly this run id, never "latest". */
 	pinnedRunId?: string;
+	/** Backend correlation token retained until the exact triggered run id resolves. */
+	pendingOpaqueRef?: string;
 	/** The calling Pi session's own cwd at ci.subscribe time, if any -- see this file's own VehicleProjectStore doc comment. */
 	projectRoot?: string;
 }
@@ -213,14 +217,28 @@ export function createRunPool(db: Database): RunPool {
 		subscribeJob(
 			backend: string,
 			jobRef: string,
-			options?: { subscriberId?: string; scheduleMs?: number; runId?: string; projectRoot?: string },
+			options?: { subscriberId?: string; scheduleMs?: number; runId?: string; pendingOpaqueRef?: string; projectRoot?: string },
 		): void {
 			const subscriberId = options?.subscriberId ?? "";
 			db.query(
-				`INSERT INTO job_watches (backend, job_ref, subscriber_id, schedule_ms, pinned_run_id, project_root)
-				 VALUES (?, ?, ?, ?, ?, ?)
-				 ON CONFLICT(backend, job_ref, subscriber_id) DO UPDATE SET schedule_ms = excluded.schedule_ms, pinned_run_id = excluded.pinned_run_id, project_root = excluded.project_root`,
-			).run(backend, jobRef, subscriberId, options?.scheduleMs ?? null, options?.runId ?? null, options?.projectRoot ?? null);
+				`INSERT INTO job_watches (backend, job_ref, subscriber_id, schedule_ms, pinned_run_id, pending_opaque_ref, project_root)
+				 VALUES (?, ?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(backend, job_ref, subscriber_id) DO UPDATE SET schedule_ms = excluded.schedule_ms, pinned_run_id = excluded.pinned_run_id, pending_opaque_ref = excluded.pending_opaque_ref, project_root = excluded.project_root`,
+			).run(
+				backend,
+				jobRef,
+				subscriberId,
+				options?.scheduleMs ?? null,
+				options?.runId ?? null,
+				options?.pendingOpaqueRef ?? null,
+				options?.projectRoot ?? null,
+			);
+		},
+
+		pinSubscription(backend: string, jobRef: string, subscriberId: string, runId: string): void {
+			db.query(
+				"UPDATE job_watches SET pinned_run_id = ?, pending_opaque_ref = NULL WHERE backend = ? AND job_ref = ? AND subscriber_id = ?",
+			).run(runId, backend, jobRef, subscriberId);
 		},
 
 		unsubscribeJob(backend: string, jobRef: string, subscriberId = ""): void {
@@ -251,6 +269,7 @@ export function createRunPool(db: Database): RunPool {
 				schedule_ms: number | null;
 				last_checked_at: number | null;
 				pinned_run_id: string | null;
+				pending_opaque_ref: string | null;
 				project_root: string | null;
 			}>;
 			return rows.map((row) => ({
@@ -260,6 +279,7 @@ export function createRunPool(db: Database): RunPool {
 				scheduleMs: row.schedule_ms ?? undefined,
 				lastCheckedAt: row.last_checked_at !== null ? new Date(row.last_checked_at) : undefined,
 				pinnedRunId: row.pinned_run_id ?? undefined,
+				pendingOpaqueRef: row.pending_opaque_ref ?? undefined,
 				projectRoot: row.project_root ?? undefined,
 			}));
 		},

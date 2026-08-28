@@ -10,6 +10,7 @@ import {
 	asDiscoverable,
 	asHistorical,
 	asPipeliner,
+	asRerunnable,
 	asTriggerable,
 	type CIBackend,
 } from "./run/ci-backend.ts";
@@ -455,7 +456,7 @@ export class Orchestrator {
 			receipt = await triggerable.resolveReceipt(receipt);
 		}
 
-		const result: TriggerResult = { queueId: receipt.opaqueRef, jobRef, backend: backendName };
+		const result: TriggerResult = { opaqueRef: receipt.opaqueRef, queueId: receipt.opaqueRef, jobRef, backend: backendName };
 		if (receipt.runId) {
 			result.buildNumber = receipt.runId;
 			this.recordOwnership(backendName, jobRef, receipt.runId, receipt.opaqueRef);
@@ -494,12 +495,19 @@ export class Orchestrator {
 	}
 
 	/** Resolves a bare opaque trigger reference to a run ID without blocking on a full watch loop. */
-	async ciPoll(backendName: string, opaqueRef: string): Promise<string> {
+	async ciPoll(backendName: string, jobRef: string, opaqueRef: string): Promise<string> {
 		const backend = this.adapter(backendName);
 		const triggerable = asTriggerable(backend);
 		if (!triggerable) throw new CapabilityUnsupportedError(backendName, "trigger resolution");
-		const resolved = await triggerable.resolveReceipt({ opaqueRef, needsResolve: true, backend: backendName, jobRef: "" });
+		const resolved = await triggerable.resolveReceipt({ opaqueRef, needsResolve: true, backend: backendName, jobRef });
 		return resolved.runId ?? "";
+	}
+
+	async ciRerun(backendName: string, jobRef: string, runId: string, failedOnly: boolean): Promise<void> {
+		const backend = this.adapter(backendName);
+		const rerunnable = asRerunnable(backend);
+		if (!rerunnable) throw new CapabilityUnsupportedError(backendName, "rerun");
+		await rerunnable.rerun(jobRef, runId, failedOnly);
 	}
 
 	async ciCancel(backendName: string, jobRef: string, runId: string): Promise<void> {
@@ -595,16 +603,16 @@ export class Orchestrator {
 		return store.listArtifacts(jobRef, runId);
 	}
 
-	async ciArtifactGet(backendName: string, jobRef: string, runId: string, path: string): Promise<Uint8Array> {
+	async ciArtifactGet(backendName: string, jobRef: string, runId: string, path: string, maxBytes: number): Promise<Uint8Array> {
 		const backend = this.adapter(backendName);
 		const store = asArtifactStore(backend);
 		if (!store) throw new CapabilityUnsupportedError(backendName, "artifact download");
-		return store.getArtifact(jobRef, runId, path);
+		return store.getArtifact(jobRef, runId, path, maxBytes);
 	}
 
 	/** Applies LogFilter to a text artifact; throws for binary content so callers fall back to ciArtifactGet. */
 	async ciArtifactText(backendName: string, jobRef: string, runId: string, path: string, filter: LogFilter): Promise<LogResult> {
-		const data = await this.ciArtifactGet(backendName, jobRef, runId, path);
+		const data = await this.ciArtifactGet(backendName, jobRef, runId, path, 128 * 1024);
 		let text: string;
 		try {
 			text = new TextDecoder("utf-8", { fatal: true }).decode(data);
@@ -663,6 +671,7 @@ function describeBackendCapabilities(backend: CIBackend): string {
 	if (asArtifactStore(backend)) parts.push("artifacts");
 	if (asChainable(backend)) parts.push("chain");
 	if (asDiscoverable(backend)) parts.push("discover");
+	if (asRerunnable(backend)) parts.push("rerun");
 	return parts.length > 0 ? parts.join(" ") : "none";
 }
 

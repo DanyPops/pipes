@@ -9,6 +9,7 @@ import {
 	type CIDiscoverable,
 	type CIHistorical,
 	type CIPipeliner,
+	type CIRerunnable,
 	type CITriggerable,
 } from "../../src/run/ci-backend.ts";
 import type { CIArtifact, CIJob, CIRun, CIStageNode } from "../../src/run/ci-run.ts";
@@ -29,25 +30,32 @@ export interface StubCIBackendOptions {
 	stages?: CIJob[];
 	stageNodes?: CIStageNode[];
 	artifacts?: CIArtifact[];
+	artifactBytes?: Uint8Array;
 	runParams?: Record<string, string>;
 	listRunsResult?: CIRun[];
 	downstreamRuns?: CIRun[];
 	repos?: RepoInfo[];
 	workflows?: WorkflowInfo[];
 	triggerReceipt?: TriggerReceipt;
+	rerun?: boolean;
 	resolvedReceipt?: TriggerReceipt;
 	estimatedDurationMs?: number;
 	err?: Error;
 }
 
 export type StubCIBackend = CIBackend &
-	Partial<CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIChainable & CIDiscoverable> & {
-		calls: { getRun: Array<{ jobRef: string; runId: string }>; trigger: Array<{ jobRef: string; params: Record<string, string> }> };
+	Partial<CITriggerable & CIHistorical & CIPipeliner & CIArtifactStore & CIChainable & CIDiscoverable & CIRerunnable> & {
+		calls: {
+			getRun: Array<{ jobRef: string; runId: string }>;
+			trigger: Array<{ jobRef: string; params: Record<string, string> }>;
+			resolveReceipt: TriggerReceipt[];
+			rerun: Array<{ jobRef: string; runId: string; failedOnly: boolean }>;
+		};
 	};
 
 /** Core-only backend: implements just the CIBackend mandatory methods, no optional capabilities. */
 export function createStubCIBackend(options: StubCIBackendOptions = {}): StubCIBackend {
-	const calls: StubCIBackend["calls"] = { getRun: [], trigger: [] };
+	const calls: StubCIBackend["calls"] = { getRun: [], trigger: [], resolveReceipt: [], rerun: [] };
 	const name = options.name ?? "stub";
 
 	const core: CIBackend = {
@@ -79,9 +87,21 @@ export function createStubCIBackend(options: StubCIBackendOptions = {}): StubCIB
 				if (options.err) throw options.err;
 				return options.triggerReceipt ?? { needsResolve: false, backend: name, jobRef, runId: "1" };
 			},
-			resolveReceipt: async (receipt: TriggerReceipt) => options.resolvedReceipt ?? receipt,
+			resolveReceipt: async (receipt: TriggerReceipt) => {
+				calls.resolveReceipt.push(receipt);
+				return options.resolvedReceipt ?? receipt;
+			},
 			estimateDuration: async () => options.estimatedDurationMs ?? 0,
 		} satisfies CITriggerable);
+	}
+
+	if ((capabilities & Capability.Rerun) === Capability.Rerun) {
+		Object.assign(stub, {
+			rerun: async (jobRef: string, runId: string, failedOnly: boolean) => {
+				calls.rerun.push({ jobRef, runId, failedOnly });
+				if (options.err) throw options.err;
+			},
+		} satisfies CIRerunnable);
 	}
 
 	if ((capabilities & Capability.History) === Capability.History) {
@@ -102,7 +122,7 @@ export function createStubCIBackend(options: StubCIBackendOptions = {}): StubCIB
 	if ((capabilities & Capability.Artifacts) === Capability.Artifacts) {
 		Object.assign(stub, {
 			listArtifacts: async () => options.artifacts ?? [],
-			getArtifact: async () => new Uint8Array(),
+			getArtifact: async () => options.artifactBytes ?? new Uint8Array(),
 		} satisfies CIArtifactStore);
 	}
 

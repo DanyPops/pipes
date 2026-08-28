@@ -6,6 +6,7 @@
 
 import type { FetchLike } from "../auth/github-auth.ts";
 import { type CrumbCache, createCrumbCache, type JenkinsCredentials, withCrumbHeaders } from "../auth/jenkins-auth.ts";
+import { readResponseBytesBounded } from "../http/bounded-body.ts";
 import { withTimeout } from "../http/timeout.ts";
 import {
 	Capability,
@@ -385,13 +386,13 @@ export function createJenkinsAdapter(
 			}));
 		},
 
-		async getArtifact(jobRef: string, runId: string, path: string): Promise<Uint8Array> {
+		async getArtifact(jobRef: string, runId: string, path: string, maxBytes: number): Promise<Uint8Array> {
 			const response = await doFetch(`${baseUrl}/${buildJobPath(jobRef)}/${buildSelector(runId)}/artifact/${path}`, {
 				headers: { authorization: basicAuthHeaderFor(credentials) },
 			});
 			if (response.status === 404) throw new JenkinsNotFoundError(`artifact ${path}`);
 			if (!response.ok) throw new JenkinsApiError("GET", `artifact ${path}`, response.status, await response.text());
-			return new Uint8Array(await response.arrayBuffer());
+			return readResponseBytesBounded(response, maxBytes);
 		},
 
 		/**

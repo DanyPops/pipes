@@ -65,15 +65,34 @@ export async function syncRunPool(
 	now: () => number = Date.now,
 ): Promise<void> {
 	const groupsByKey = new Map<string, FetchGroup>();
+	const nowMs = now();
 	for (const subscription of pool.watchedSubscriptions()) {
-		const targetRunId = subscription.pinnedRunId ?? "latest";
+		let targetRunId = subscription.pinnedRunId;
+		if (!targetRunId && subscription.pendingOpaqueRef) {
+			if (!isDue(subscription, nowMs)) continue;
+			try {
+				targetRunId = await orchestrator.ciPoll(subscription.backend, subscription.jobRef, subscription.pendingOpaqueRef);
+				if (!targetRunId) {
+					pool.markSubscriptionChecked(subscription.backend, subscription.jobRef, subscription.subscriberId, new Date(nowMs));
+					continue;
+				}
+				pool.pinSubscription(subscription.backend, subscription.jobRef, subscription.subscriberId, targetRunId);
+			} catch (error) {
+				logger.warn("pending trigger resolution failed", {
+					backend: subscription.backend,
+					jobRef: subscription.jobRef,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				continue;
+			}
+		}
+		targetRunId ??= "latest";
 		const key = `${subscription.backend}\u0000${subscription.jobRef}\u0000${targetRunId}`;
 		const existing = groupsByKey.get(key);
 		if (existing) existing.subscriptions.push(subscription);
 		else groupsByKey.set(key, { backend: subscription.backend, jobRef: subscription.jobRef, targetRunId, subscriptions: [subscription] });
 	}
 
-	const nowMs = now();
 	const dueGroups = [...groupsByKey.values()].filter((group) => group.subscriptions.some((s) => isDue(s, nowMs)));
 
 	await Promise.all(
