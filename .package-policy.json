@@ -1,0 +1,22 @@
+{
+	"allowedDuplicateResolutions": {
+		"@danypops/vehicle-client": {
+			"0.10.4": ["@danypops/enigma-client/@danypops/vehicle-client"],
+			"0.10.5": ["@danypops/vehicle-client"]
+		},
+		"@danypops/vehicle-core": {
+			"0.17.1": ["@danypops/vehicle-core"],
+			"0.18.4": [
+				"@danypops/vehicle-client-pi/@danypops/vehicle-core",
+				"@danypops/vehicle-client/@danypops/vehicle-core"
+			]
+		},
+		"@danypops/vehicle-server": {
+			"0.25.2": ["@danypops/vehicle-server"],
+			"0.26.0": [
+				"@danypops/vehicle-client-pi/@danypops/vehicle-server",
+				"@danypops/vehicle-client/@danypops/vehicle-server"
+			]
+		}
+	}
+}
