@@ -12,12 +12,12 @@
 	"dependencies": {
 		"@danypops/pipes": "^0.19.1",
 		"@danypops/vehicle-client": "^0.10.1",
-		"@danypops/vehicle-core": "^0.17.1",
-		"@danypops/vehicle-server": "^0.25.2",
+		"@danypops/vehicle-core": "^0.19.0",
+		"@danypops/vehicle-server": "^0.27.0",
 		"malevich-tui-components": "^0.32.1"
 	},
 	"peerDependencies": {
-		"@danypops/vehicle-client-pi": "^0.45.0",
+		"@danypops/vehicle-client-pi": "^0.48.2",
 		"@earendil-works/pi-coding-agent": "*",
 		"@earendil-works/pi-tui": "*"
 	},
@@ -27,7 +27,7 @@
 	},
 	"devDependencies": {
 		"@danypops/pi-extension-harness": "^0.7.0",
-		"@danypops/vehicle-client-pi": "^0.45.0",
+		"@danypops/vehicle-client-pi": "^0.48.2",
 		"@danypops/vehicle-conformance": "^0.4.0",
 		"@earendil-works/pi-ai": "^0.82.1",
 		"@earendil-works/pi-coding-agent": "^0.82.1",
