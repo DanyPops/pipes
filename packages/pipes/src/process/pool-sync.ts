@@ -31,13 +31,19 @@ import { isTerminalStatus } from "../run/ci-run.ts";
 import type { JobSubscription, RunPool } from "../sqlite/run-pool.ts";
 
 const NOOP_LOGGER: Logger = { debug() {}, info() {}, warn() {}, error() {} };
+const MAX_TRANSITION_SUBSCRIBERS = 100;
 
+/** Carries a bounded, session-addressed run status update over the daemon push channel. */
 export interface RunStatusTransition {
 	backend: string;
 	jobRef: string;
 	runId: string;
 	status: RunStatus;
+	result: string;
 	url: string;
+	/** Subscriber identities authorized to receive this transition. */
+	subscriberIds: string[];
+	subscribersTruncated: boolean;
 }
 
 /** True if this subscription's own cadence has elapsed since it was last checked -- always true for a subscription with no scheduleMs, matching the original every-tick behavior. */
@@ -123,7 +129,16 @@ export async function syncRunPool(
 				});
 				pool.upsertLog(backend, jobRef, run.id, log);
 				if (previous?.status !== run.status) {
-					onStatusChange?.({ backend, jobRef, runId: run.id, status: run.status, url: run.url ?? "" });
+					onStatusChange?.({
+						backend,
+						jobRef,
+						runId: run.id,
+						status: run.status,
+						result: run.result ?? "",
+						url: run.url ?? "",
+						subscriberIds: subscriptions.slice(0, MAX_TRANSITION_SUBSCRIBERS).map((subscription) => subscription.subscriberId),
+						subscribersTruncated: subscriptions.length > MAX_TRANSITION_SUBSCRIBERS,
+					});
 				}
 
 				if (isTerminalStatus(run.status)) {

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { fetchSubscribedJobs, resetJobsClientConnectorForTests, setJobsClientConnectorForTests } from "../src/jobs-client.ts";
+import {
+	fetchJobCompletion,
+	fetchSubscribedJobs,
+	parseJobCompletionTransition,
+	resetJobsClientConnectorForTests,
+	setJobsClientConnectorForTests,
+} from "../src/jobs-client.ts";
 
 describe("fetchSubscribedJobs", () => {
 	afterEach(resetJobsClientConnectorForTests);
@@ -178,5 +184,53 @@ describe("fetchSubscribedJobs", () => {
 		});
 
 		await expect(fetchSubscribedJobs()).rejects.toThrow(/daemon is not running/);
+	});
+});
+
+describe("completion delivery", () => {
+	afterEach(resetJobsClientConnectorForTests);
+
+	it("resolves the terminal verdict after a subscribed row disappears", async () => {
+		setJobsClientConnectorForTests(
+			() =>
+				({
+					async call() {
+						return {
+							verdict: {
+								check: { status: "failure", url: "https://ci.example/run/9" },
+								failure: { classification: "test_failure" },
+							},
+						};
+					},
+					// biome-ignore lint/suspicious/noExplicitAny: minimal typed-RPC test double
+				}) as any,
+		);
+
+		const result = await fetchJobCompletion({ backend: "gh", jobRef: "ci.yml", runId: "9", status: "running" });
+
+		expect(result).toEqual({
+			backend: "gh",
+			jobRef: "ci.yml",
+			runId: "9",
+			status: "failure",
+			url: "https://ci.example/run/9",
+			failureClassification: "test_failure",
+		});
+	});
+
+	it("accepts terminal push transitions only for the subscribing session", () => {
+		const payload = {
+			backend: "gh",
+			jobRef: "ci.yml",
+			runId: "9",
+			status: "success",
+			result: "SUCCESS",
+			url: "https://ci.example/run/9",
+			subscriberIds: ["session-a"],
+		};
+
+		expect(parseJobCompletionTransition(payload, "session-a")?.result).toBe("SUCCESS");
+		expect(parseJobCompletionTransition(payload, "session-b")).toBeUndefined();
+		expect(parseJobCompletionTransition({ ...payload, status: "running" }, "session-a")).toBeUndefined();
 	});
 });

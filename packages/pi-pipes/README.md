@@ -18,8 +18,9 @@ pi install npm:@danypops/pi-pipes
 - **`ci_trigger`** / **`ci_wait`** / **`ci_cancel`** / **`ci_rerun`** —
   start, resolve, watch, cancel, or rerun an exact run.
 - **`ci_subscribe`** / **`ci_unsubscribe`** / **`ci_tail`** — background
-  watch a job; a subscribed run shows on the persistent Jobs TUI widget and
-  auto-unsubscribes once terminal.
+  watch a job; a subscribed run shows on the persistent Jobs TUI widget,
+  auto-unsubscribes once terminal, and wakes the agent with its exact terminal
+  status through authenticated push delivery or bounded polling fallback.
 - **`ci_stages`** / **`ci_chain`** / **`ci_downstream`** — a run's
   stage/step breakdown, and downstream pipeline/artifact trees.
 - **`ci_artifacts`** / **`ci_artifact_entries`** /

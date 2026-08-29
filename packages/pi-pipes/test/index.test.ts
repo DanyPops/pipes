@@ -203,7 +203,7 @@ describe("pipesExtension: subscribed-jobs widget", () => {
 				}) as any,
 		);
 		const { pi, fire, sentMessages } = fakePi();
-		await pipesExtension(pi, { registerVehicle: async () => undefined });
+		await pipesExtension(pi, { registerVehicle: async () => undefined, resolveVehicleTarget: () => undefined });
 
 		const ui = { setWidget: () => {} };
 		await fire("session_start", { hasUI: true, ui }); // baseline: tracking the job -- no message yet
@@ -212,7 +212,8 @@ describe("pipesExtension: subscribed-jobs widget", () => {
 		setJobsClientConnectorForTests(
 			() =>
 				({
-					async call() {
+					async call(operation: string) {
+						if (operation === "ci.status") return { verdict: { check: { status: "success" } } };
 						return { runs: [] };
 					},
 					// biome-ignore lint/suspicious/noExplicitAny: minimal test double, not the real PipesClient shape
@@ -222,6 +223,6 @@ describe("pipesExtension: subscribed-jobs widget", () => {
 
 		expect(sentMessages).toHaveLength(1);
 		expect(sentMessages[0]?.message.content).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
-		expect(sentMessages[0]?.options).toEqual({ deliverAs: "followUp" });
+		expect(sentMessages[0]?.options).toEqual({ deliverAs: "followUp", triggerTurn: true });
 	});
 });

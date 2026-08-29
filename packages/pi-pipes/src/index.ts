@@ -8,10 +8,11 @@
  * credentials of its own.
  */
 
-import { createPipesClient } from "@danypops/pipes";
-import { createAgentNotifier } from "@danypops/vehicle-client-pi/agent-poll-ticker";
+import { createPipesClient, resolveVehicleClientTarget } from "@danypops/pipes";
+import { connectPushChannel, type PushChannelClient } from "@danypops/vehicle-client/daemon-client";
 import { registerSharedSecretsCommand } from "@danypops/vehicle-client-pi/secrets-tui";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { parseJobCompletionTransition } from "./jobs-client.ts";
 import { JobsOverlay } from "./jobs-overlay.ts";
 import { runPipesCommand } from "./pipes-tui.ts";
 import { buildPipesSecretsBackends } from "./secrets.ts";
@@ -20,10 +21,14 @@ import { registerPipesVehicle, resolvePipesProgressBarStyle } from "./vehicle-cl
 export interface PiPipesDeps {
 	/** Overridden in tests instead of exercising the real (daemon-talking) registerPipesVehicle. */
 	registerVehicle?: typeof registerPipesVehicle;
+	connectCompletionChannel?: typeof connectPushChannel;
+	resolveVehicleTarget?: typeof resolveVehicleClientTarget;
 }
 
 export default async function pipesExtension(pi: ExtensionAPI, deps: PiPipesDeps = {}) {
 	const registerVehicle = deps.registerVehicle ?? registerPipesVehicle;
+	const connectCompletionChannel = deps.connectCompletionChannel ?? connectPushChannel;
+	const resolveVehicleTarget = deps.resolveVehicleTarget ?? resolveVehicleClientTarget;
 
 	pi.registerCommand("pipes", {
 		description: "Cross-platform CI: GitHub Actions, GitLab CI, Jenkins, Prow — trigger, cancel, view logs, manage presets",
@@ -38,17 +43,10 @@ export default async function pipesExtension(pi: ExtensionAPI, deps: PiPipesDeps
 	// in it regardless of load order.
 	registerSharedSecretsCommand(pi, { source: "pipes", resolve: () => ({ backends: buildPipesSecretsBackends() }) });
 
-	// Persistent "Jobs · N subscribed" widget above the editor, mirroring pi-papyrus's own
-	// TaskOverlay/NoteOverlay pattern -- see jobs-overlay.ts. Poll-only (no push channel wired up
-	// for "ci" yet); never spawns the daemon (jobs-client.ts's fetchSubscribedJobs uses
-	// connectPipesClient, not createPipesClient), so a session with the daemon not running just
-	// shows nothing instead of starting one for a passive background widget.
-	//
-	// Also wired to pi.sendUserMessage (see job-ticker.ts): a subscribed job disappearing between
-	// polls (the daemon's own terminal-status signal) or a slow "still in flight" reminder both
-	// reach the agent itself, not just this widget -- otherwise ci_subscribe's own background
-	// watch never wakes the agent up on its own; see this extension's own jobs-agent-reaction.test.ts.
+	// The session-scoped Jobs overlay consumes authenticated CI push transitions and uses bounded
+	// polling as a fallback. Passive startup reads the daemon handle only; it never starts a daemon.
 	let jobsOverlay: JobsOverlay | undefined;
+	let completionChannel: PushChannelClient | undefined;
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
 		// This session's own real id, so ci.subscribed only ever returns (and the ticker only ever
@@ -57,18 +55,48 @@ export default async function pipesExtension(pi: ExtensionAPI, deps: PiPipesDeps
 		// ctx.isIdle is captured once here and reused by every later poll tick (startPolling()'s own
 		// BoundedPoll has no ExtensionContext of its own to ask) -- see jobs-overlay.ts's own doc
 		// comment for the blocking-turn bug this closes.
+		const subscriberId = ctx.sessionManager.getSessionId();
 		jobsOverlay ??= new JobsOverlay(
 			resolvePipesProgressBarStyle(),
-			createAgentNotifier(pi),
+			{
+				sendUserMessage: (content, options) =>
+					void pi.sendMessage(
+						{ customType: "pi-pipes:ci-completion", content, display: false },
+						{ deliverAs: options.deliverAs, triggerTurn: options.triggerTurn },
+					),
+			},
 			undefined,
-			ctx.sessionManager.getSessionId(),
+			subscriberId,
 			() => ctx.isIdle(),
 		);
 		jobsOverlay.setUI(ctx.ui);
 		await jobsOverlay.refresh();
 		jobsOverlay.startPolling();
+
+		const target = resolveVehicleTarget();
+		if (!completionChannel && target) {
+			completionChannel = connectCompletionChannel({
+				url: () => {
+					const current = resolveVehicleTarget();
+					if (!current) throw new Error("Pipes daemon is not running");
+					const url = new URL(current.baseUrl);
+					url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+					url.pathname = "/push";
+					return url.toString();
+				},
+				token: target.token,
+				topics: ["ci"],
+				onMessage: (topic, payload) => {
+					if (topic !== "ci") return;
+					const completion = parseJobCompletionTransition(payload, subscriberId);
+					if (completion) jobsOverlay?.notifyCompletion(completion);
+				},
+			});
+		}
 	});
 	pi.on("session_shutdown", async () => {
+		completionChannel?.close();
+		completionChannel = undefined;
 		jobsOverlay?.dispose();
 	});
 

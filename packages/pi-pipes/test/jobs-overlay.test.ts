@@ -5,7 +5,8 @@ import { JobsOverlay } from "../src/jobs-overlay.ts";
 
 function fakeClient(runs: unknown[]) {
 	return {
-		async call() {
+		async call(operation: string) {
+			if (operation === "ci.status") return { verdict: { check: { status: "success" } } };
 			return { runs };
 		},
 		// biome-ignore lint/suspicious/noExplicitAny: minimal test double, not the real PipesClient shape
@@ -152,7 +153,7 @@ describe("JobsOverlay", () => {
 
 			expect(notifier.calls).toHaveLength(1);
 			expect(notifier.calls[0]?.content).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
-			expect(notifier.calls[0]?.options).toEqual({ deliverAs: "followUp" }); // reportAgentPollTick's own default, since createAgentNotifier now forwards to the gentler pi.sendMessage()
+			expect(notifier.calls[0]?.options).toEqual({ deliverAs: "followUp", triggerTurn: true });
 		});
 
 		it("does not treat a failed fetch as every job having vanished -- ticker state is untouched by a fetch error", async () => {

@@ -1,27 +1,20 @@
 /**
- * Persistent above-editor widget for currently ci_subscribe'd jobs -- mirrors pi-papyrus's own
- * TaskOverlay/NoteOverlay (extension/src/index.ts): factory-form ctx.ui.setWidget registration,
- * requestRender on refresh, hides the widget entirely (setWidget(key, undefined)) rather than an
- * empty box once nothing is subscribed, and a BoundedPoll fallback since pi-pipes has no push
- * channel yet for "ci" (packages/pipes' own PushChannel.publish("ci", ...) exists daemon-side but
- * nothing here subscribes to it -- see the filed task's own note on this).
- *
- * Deliberately poll-only (no push channel wired up for "ci" yet), but IS session-scoped: each
- * overlay instance is constructed with its own real Pi session id (see index.ts) and passes it as
- * ci.subscribed's subscriberId on every fetch, so this session's own widget/ticker only ever sees
- * (and gets notified about) the jobs *this* session itself subscribed to -- fixing a real, proven
- * leak where any session's finished job notified every other concurrently-running session too.
+ * Renders this session's subscribed CI jobs and delivers exact terminal results. Authenticated
+ * push transitions provide immediate completion delivery; bounded polling refreshes the widget and
+ * resolves terminal status when a push event is missed. Every path is scoped by Pi session id.
  */
-import type { AgentNotifier, AgentPollTicker } from "@danypops/vehicle-client-pi/agent-poll-ticker";
-import { reportAgentPollTick } from "@danypops/vehicle-client-pi/agent-poll-ticker";
+
 import type { ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
 import { AutoRotatingWindow, type ProgressBarGlyphStyle, type ProgressBarGlyphs } from "malevich-tui-components";
 import { BoundedPoll } from "./bounded-poll.ts";
-import { createJobTicker } from "./job-ticker.ts";
-import { fetchSubscribedJobs } from "./jobs-client.ts";
+import { createJobTicker, type JobCompletion, type JobTicker } from "./job-ticker.ts";
+import { createJobsClientSession, type JobsClientSession } from "./jobs-client.ts";
 import { buildJobsWidgetProjection, type JobsWidgetRow, PIPES_JOBS_WIDGET_VISIBLE_ROWS, renderJobsWidgetLines } from "./jobs-widget.ts";
 
-export type { AgentNotifier } from "@danypops/vehicle-client-pi/agent-poll-ticker";
+/** Delivers background CI state into the active Pi session. */
+export interface AgentNotifier {
+	sendUserMessage(content: string, options: { deliverAs: "followUp"; triggerTurn: boolean }): void;
+}
 
 const WIDGET_KEY = "pi-pipes-jobs";
 
@@ -54,12 +47,12 @@ export class JobsOverlay {
 		pageSize: PIPES_JOBS_WIDGET_VISIBLE_ROWS,
 		intervalMs: JOBS_WIDGET_ROTATION_INTERVAL_MS,
 	});
-	private readonly ticker: AgentPollTicker<JobsWidgetRow>;
+	private readonly ticker: JobTicker;
 
 	constructor(
 		private readonly progressBarGlyphs: ProgressBarGlyphs | ProgressBarGlyphStyle = "blocks",
 		private readonly notifier?: AgentNotifier,
-		ticker: AgentPollTicker<JobsWidgetRow> = createJobTicker(),
+		ticker: JobTicker = createJobTicker(),
 		/** This session's own real Pi session id, threaded into every ci.subscribed fetch as
 		 * subscriberId. Undefined falls back to the daemon's global, unscoped view (e.g. a caller with
 		 * no real session identity to scope by). */
@@ -94,8 +87,10 @@ export class JobsOverlay {
 	 */
 	async refresh(): Promise<void> {
 		let fetched = true;
+		let client: JobsClientSession | undefined;
 		try {
-			this.rows = await fetchSubscribedJobs(this.subscriberId);
+			client = createJobsClientSession();
+			this.rows = await client.fetchSubscribedJobs(this.subscriberId);
 			this.lastFetchErrorMessage = undefined;
 		} catch (err) {
 			this.rows = [];
@@ -105,7 +100,7 @@ export class JobsOverlay {
 		// A failed fetch must never reach the ticker: an empty result from a transient daemon hiccup
 		// would otherwise read as every subscribed job having just finished. Skip the tick entirely
 		// (not feed it []) so the ticker's own baseline survives the hiccup unchanged.
-		if (fetched) this.notifyAgentIfNeeded();
+		if (fetched && client) await this.notifyAgentIfNeeded(client);
 		try {
 			this.render();
 			this.lastRenderErrorMessage = undefined;
@@ -116,8 +111,27 @@ export class JobsOverlay {
 		}
 	}
 
-	private notifyAgentIfNeeded(): void {
-		reportAgentPollTick(this.ticker, this.rows, this.notifier, { isIdle: this.isIdle });
+	private async notifyAgentIfNeeded(client: JobsClientSession): Promise<void> {
+		if (!this.notifier || (this.isIdle && !this.isIdle())) return;
+		const notice = await this.ticker.tick(this.rows, (row) => client.fetchJobCompletion(row));
+		if (!notice) return;
+		try {
+			this.notifier.sendUserMessage(notice.content, { deliverAs: "followUp", triggerTurn: notice.triggerTurn });
+		} catch {
+			// A background notification must not crash the extension host.
+		}
+	}
+
+	/** Delivers a session-authorized terminal transition from the daemon push channel. */
+	notifyCompletion(completion: JobCompletion): void {
+		if (!this.notifier) return;
+		const notice = this.ticker.completion(completion);
+		if (!notice) return;
+		try {
+			this.notifier.sendUserMessage(notice.content, { deliverAs: "followUp", triggerTurn: true });
+		} catch {
+			// A background notification must not crash the extension host.
+		}
 	}
 
 	/**
@@ -190,8 +204,7 @@ export class JobsOverlay {
 		}
 	}
 
-	/** Fallback for a subscription change no event announces yet -- there is no push channel wired
-	 * up for "ci" on the client side today (see this file's own doc comment). */
+	/** Polling fallback for widget refresh and terminal events missed while push was disconnected. */
 	startPolling(intervalMs: number = JOBS_WIDGET_POLL_INTERVAL_MS): void {
 		this.poll.start(intervalMs, () => {
 			void this.refresh();

@@ -44,7 +44,7 @@ function toWireRun(run: FakeRun) {
 }
 
 function harnessFactory(): (pi: ExtensionAPI) => Promise<void> {
-	return (pi: ExtensionAPI) => pipesExtension(pi, { registerVehicle: async () => undefined });
+	return (pi: ExtensionAPI) => pipesExtension(pi, { registerVehicle: async () => undefined, resolveVehicleTarget: () => undefined });
 }
 
 /** Creates one harness pre-configured as a real interactive session: a UI-carrying ctx (the Jobs
@@ -75,7 +75,11 @@ describe("multiple Pi sessions, each with its own subscribed job, against one sh
 		setJobsClientConnectorForTests(
 			() =>
 				({
-					async call(_op: string, input: { subscriberId?: string }) {
+					async call(operation: string, input: { subscriberId?: string; runId?: string }) {
+						if (operation === "ci.status") {
+							const run = runs.find((candidate) => candidate.runId === input.runId);
+							return { verdict: { check: { status: run?.status ?? "failure" } } };
+						}
 						const live = runs.filter((r) => r.status !== "success");
 						const scoped = input.subscriberId === undefined ? live : live.filter((r) => r.subscriberId === input.subscriberId);
 						return { runs: scoped.map(toWireRun) };

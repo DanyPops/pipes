@@ -50,7 +50,12 @@ function subscribedRun(status: string) {
  * file on this machine -- the actual "no side effects" guarantee the harness alone doesn't give
  * for free, since registerPipesVehicle would otherwise really run during boot(). */
 function harnessFactory(): (pi: ExtensionAPI) => Promise<void> {
-	return (pi: ExtensionAPI) => pipesExtension(pi, { registerVehicle: async () => undefined });
+	return (pi: ExtensionAPI) =>
+		pipesExtension(pi, {
+			registerVehicle: async () => undefined,
+			connectCompletionChannel: () => ({ state: () => "open", close() {} }),
+			resolveVehicleTarget: () => undefined,
+		});
 }
 
 describe("ci_subscribe's status transitions and the agent -- deterministic, mocked, no real daemon/timer/side effects", () => {
@@ -61,9 +66,14 @@ describe("ci_subscribe's status transitions and the agent -- deterministic, mock
 		setJobsClientConnectorForTests(
 			() =>
 				({
-					async call() {
-						// Once terminal, the real ci.subscribed (RunPool.watchedRuns()) drops the run too --
-						// mirrored here as an empty result once "success", matching real server behavior.
+					async call(operation: string) {
+						if (operation === "ci.status") {
+							return {
+								verdict: {
+									check: { status: "success", url: "https://ci.example/run/40531" },
+								},
+							};
+						}
 						return { runs: currentStatus === "success" ? [] : [subscribedRun(currentStatus)] };
 					},
 					// biome-ignore lint/suspicious/noExplicitAny: minimal test double, not the real PipesClient shape
@@ -94,14 +104,44 @@ describe("ci_subscribe's status transitions and the agent -- deterministic, mock
 
 		expect(h.sentMessages).toHaveLength(1);
 		expect(h.sentMessages[0]?.message.content).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
-		expect(String(h.sentMessages[0]?.message.content).toLowerCase()).toContain("finished");
+		expect(String(h.sentMessages[0]?.message.content).toLowerCase()).toContain("success");
 		// vehicle-client-pi's own createAgentNotifier deliberately sends display: false -- convertToLlm()
 		// folds a "custom" message into the agent's own context regardless of display; display only
 		// governs whether the human's TUI also renders a visible chat bubble, which a background nudge
 		// should never force on every reminder/vanish tick (see agent-poll-ticker.ts's own doc comment).
 		expect(h.sentMessages[0]?.message.display).toBe(false);
-		expect(h.sentMessages[0]?.options).toEqual({ deliverAs: "followUp" });
+		expect(h.sentMessages[0]?.options).toEqual({ deliverAs: "followUp", triggerTurn: true });
 		expect(h.userMessages).toEqual([]); // never the always-turn-triggering sendUserMessage channel
+	});
+
+	it("an authorized terminal push wakes the agent with the exact result", async () => {
+		let onMessage: ((topic: string, payload: unknown) => void) | undefined;
+		const h = createExtensionHarness((pi: ExtensionAPI) =>
+			pipesExtension(pi, {
+				registerVehicle: async () => undefined,
+				resolveVehicleTarget: () => ({ baseUrl: "http://127.0.0.1:1234", token: "test-token" }),
+				connectCompletionChannel: (options) => {
+					onMessage = options.onMessage;
+					return { state: () => "open", close() {} };
+				},
+			}),
+		);
+		Object.assign(h.ctx, { hasUI: true, ui: { ...h.ctx.ui, setWidget: () => {} } });
+		await h.boot();
+
+		onMessage?.("ci", {
+			backend: "gh",
+			jobRef: "ci.yml",
+			runId: "99",
+			status: "failure",
+			result: "FAILURE",
+			url: "https://ci.example/run/99",
+			subscriberIds: [h.ctx.sessionManager.getSessionId()],
+		});
+
+		expect(h.sentMessages).toHaveLength(1);
+		expect(h.sentMessages[0]?.message.content).toContain("gh/ci.yml/99: failure (FAILURE)");
+		expect(h.sentMessages[0]?.options).toEqual({ deliverAs: "followUp", triggerTurn: true });
 	});
 
 	it("does not nudge the agent again on the very next tick once the finish has already been reported", async () => {
@@ -109,7 +149,8 @@ describe("ci_subscribe's status transitions and the agent -- deterministic, mock
 		setJobsClientConnectorForTests(
 			() =>
 				({
-					async call() {
+					async call(operation: string) {
+						if (operation === "ci.status") return { verdict: { check: { status: "success" } } };
 						return { runs };
 					},
 					// biome-ignore lint/suspicious/noExplicitAny: minimal test double, not the real PipesClient shape

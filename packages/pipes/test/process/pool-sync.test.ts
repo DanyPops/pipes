@@ -243,12 +243,32 @@ describe("syncRunPool", () => {
 
 		const transitions: unknown[] = [];
 		await syncRunPool(orchestrator, pool, undefined, (t) => transitions.push(t));
-		expect(transitions).toEqual([{ backend: "gh", jobRef: "job", runId: "1", status: "running", url: "" }]);
+		expect(transitions).toEqual([
+			{
+				backend: "gh",
+				jobRef: "job",
+				runId: "1",
+				status: "running",
+				result: "",
+				url: "",
+				subscriberIds: [""],
+				subscribersTruncated: false,
+			},
+		]);
 
 		runsById.latest = { id: "1", name: "job", status: "success", startedAt: new Date(0) };
 		await syncRunPool(orchestrator, pool, undefined, (t) => transitions.push(t));
 		expect(transitions).toHaveLength(2);
-		expect(transitions[1]).toEqual({ backend: "gh", jobRef: "job", runId: "1", status: "success", url: "" });
+		expect(transitions[1]).toEqual({
+			backend: "gh",
+			jobRef: "job",
+			runId: "1",
+			status: "success",
+			result: "",
+			url: "",
+			subscriberIds: [""],
+			subscribersTruncated: false,
+		});
 	});
 
 	it("does not call onStatusChange when a tick re-fetches the exact same status", async () => {

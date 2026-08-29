@@ -1,88 +1,83 @@
-/**
- * pi-pipes' own domain config over @danypops/vehicle-client-pi's generic AgentPollTicker -- the
- * vanish/reminder/throttle state machine itself is exhaustively covered by that package's own
- * test/agent-poll-ticker.test.ts now (see ~/Projects/vehicle). What's tested here is only what's
- * genuinely pi-pipes-specific: the CI job row key format and message wording, and that
- * createJobTicker() really does wire up to the shared ticker (not a full re-test of its state
- * machine).
- */
 import { describe, expect, it } from "bun:test";
-import { createJobTicker, resolveJobTickerReminderIntervalMs } from "../src/job-ticker.ts";
+import { createJobTicker, type JobCompletion, resolveJobTickerReminderIntervalMs } from "../src/job-ticker.ts";
 import type { JobsWidgetRow } from "../src/jobs-widget.ts";
 
 function row(overrides: Partial<JobsWidgetRow> = {}): JobsWidgetRow {
 	return {
 		backend: "jenkins-auto",
-		jobRef: "ocp-baremetal-ipi-deployment",
+		jobRef: "deployment",
 		runId: "40531",
 		status: "running",
 		...overrides,
 	};
 }
 
+async function completion(value: JobsWidgetRow): Promise<JobCompletion> {
+	return { ...value, status: "success", result: "SUCCESS", url: "https://ci.example/run/40531" };
+}
+
 describe("createJobTicker", () => {
-	it("says nothing on the very first tick -- delegates the no-baseline-yet rule to the shared AgentPollTicker", () => {
+	it("is quiet on the initial observation", async () => {
 		const ticker = createJobTicker({ now: () => 0 });
-		expect(ticker.tick([row()])).toBeUndefined();
+		expect(await ticker.tick([row()], completion)).toBeUndefined();
 	});
 
-	it("reports a vanished job by its backend/jobRef/runId key, asking the agent to probe rather than guessing its result", () => {
-		let now = 0;
-		const ticker = createJobTicker({ now: () => now });
-		ticker.tick([row()]); // baseline
-		now += 1;
+	it("resolves a vanished job and requests an immediate turn", async () => {
+		const ticker = createJobTicker({ now: () => 0 });
+		await ticker.tick([row()], completion);
 
-		const message = ticker.tick([]);
+		const notice = await ticker.tick([], completion);
 
-		expect(message).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
-		expect(message?.toLowerCase()).toContain("finished");
-		expect(message?.toLowerCase()).toContain("probe");
+		expect(notice?.content).toContain("jenkins-auto/deployment/40531: success (SUCCESS)");
+		expect(notice?.content).toContain("https://ci.example/run/40531");
+		expect(notice?.triggerTurn).toBe(true);
 	});
 
-	it("reports every vanished job's key together in one message", () => {
-		let now = 0;
-		const ticker = createJobTicker({ now: () => now });
-		ticker.tick([row(), row({ jobRef: "other-job", runId: "99" })]);
-		now += 1;
+	it("retries a failed terminal lookup on the next poll", async () => {
+		const ticker = createJobTicker({ now: () => 0 });
+		await ticker.tick([row()], completion);
+		let attempts = 0;
+		const flaky = async (value: JobsWidgetRow) => {
+			attempts++;
+			if (attempts === 1) throw new Error("temporary backend failure");
+			return completion(value);
+		};
 
-		const message = ticker.tick([]);
-
-		expect(message).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
-		expect(message).toContain("jenkins-auto/other-job/99");
+		expect(await ticker.tick([], flaky)).toBeUndefined();
+		expect((await ticker.tick([], flaky))?.content).toContain("success");
 	});
 
-	it("reports a still-in-flight reminder once reminderIntervalMs has elapsed with nothing vanished", () => {
+	it("deduplicates push and polling completion delivery", async () => {
+		const ticker = createJobTicker({ now: () => 0 });
+		await ticker.tick([row()], completion);
+		expect(ticker.completion(await completion(row()))).toBeDefined();
+		expect(ticker.completion(await completion(row()))).toBeUndefined();
+		expect(await ticker.tick([], completion)).toBeUndefined();
+	});
+
+	it("emits throttled in-flight reminders without triggering a turn", async () => {
 		let now = 0;
 		const ticker = createJobTicker({ now: () => now, reminderIntervalMs: 1000 });
-		ticker.tick([row()]);
+		await ticker.tick([row()], completion);
 		now = 1000;
 
-		const message = ticker.tick([row()]);
+		const notice = await ticker.tick([row()], completion);
 
-		expect(message).toContain("jenkins-auto/ocp-baremetal-ipi-deployment/40531");
-		expect(message?.toLowerCase()).toContain("probe");
-		expect(message?.toLowerCase()).not.toContain("finished");
-	});
-
-	it("defaults reminderIntervalMs to resolveJobTickerReminderIntervalMs()'s own value", () => {
-		let now = 0;
-		const ticker = createJobTicker({ now: () => now });
-		ticker.tick([row()]);
-		now = 15_000; // well under the 5-minute default -- must still be quiet
-		expect(ticker.tick([row()])).toBeUndefined();
+		expect(notice?.content).toContain("still in flight");
+		expect(notice?.triggerTurn).toBe(false);
 	});
 });
 
 describe("resolveJobTickerReminderIntervalMs", () => {
-	it("defaults to 5 minutes when unset", () => {
+	it("defaults to five minutes", () => {
 		expect(resolveJobTickerReminderIntervalMs(undefined)).toBe(5 * 60_000);
 	});
 
-	it("parses a valid positive override", () => {
+	it("accepts a positive override", () => {
 		expect(resolveJobTickerReminderIntervalMs("60000")).toBe(60_000);
 	});
 
-	it("falls back to the default for a non-numeric or non-positive override", () => {
+	it("rejects invalid overrides", () => {
 		expect(resolveJobTickerReminderIntervalMs("not-a-number")).toBe(5 * 60_000);
 		expect(resolveJobTickerReminderIntervalMs("0")).toBe(5 * 60_000);
 		expect(resolveJobTickerReminderIntervalMs("-5")).toBe(5 * 60_000);
