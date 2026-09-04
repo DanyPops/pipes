@@ -434,6 +434,7 @@ export function createPipesVehicleRegistry(service: PipesService): VehicleRegist
 		packageJsonUrl: new URL("../../package.json", import.meta.url),
 		description: "Cross-platform CI operations across GitHub Actions, GitLab CI, Jenkins, and Prow.",
 	});
+	registry.configureApprovals({ requireApprovalForEffects: ["external-write"] });
 	// Every handler passes through the reviewed mapper above; unmatched failures stay redacted.
 	registry.setExposeHandlerFailureDetails(true);
 
@@ -446,6 +447,9 @@ export function createPipesVehicleRegistry(service: PipesService): VehicleRegist
 			output: passthroughVehicleSchema,
 			permissions: ["pipes:read", "pipes:write"],
 			effect: spec.effect,
+			// Backend mutations cross the trust boundary and require exact-scoped approval.
+			// Subscription and preset writes remain local and intentionally ungated.
+			requiresApproval: spec.effect === "external-write",
 			idempotency: { mode: spec.effect === "read" ? "safe" : "unsafe" },
 			streaming: spec.streaming,
 			longRunning: spec.longRunning,

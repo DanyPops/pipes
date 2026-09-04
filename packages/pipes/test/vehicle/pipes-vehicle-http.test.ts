@@ -43,6 +43,25 @@ function startRealDaemon(service: PipesService): { baseUrl: string } {
 	return { baseUrl: `http://127.0.0.1:${server.port}` };
 }
 
+async function invokeApprovedTrigger(client: RemoteVehicleClient, callerSessionId: string): Promise<void> {
+	const input = { backend: "gh", jobRef: "job", params: {} };
+	const failure = await client.invoke("ci.trigger", 1, input, { permissions: PERMS, callerSessionId }).catch((error: unknown) => error);
+	const requestId = (failure as { details?: { requestId?: string } }).details?.requestId;
+	expect(typeof requestId).toBe("string");
+	const resolved = (await client.invoke(
+		"vehicle.approval.resolve",
+		1,
+		{ requestId, decision: "granted" },
+		{ permissions: ["vehicle:approvals:resolve"] },
+	)) as { capability?: string };
+	expect(typeof resolved.capability).toBe("string");
+	await client.invoke("ci.trigger", 1, input, {
+		permissions: PERMS,
+		callerSessionId,
+		approvalCapability: resolved.capability,
+	});
+}
+
 function harness(): { service: PipesService; runPool: RunPool } {
 	const orchestrator = new Orchestrator();
 	orchestrator.addAdapter(
@@ -66,12 +85,7 @@ describe("ci.trigger / ci.subscribe over a real HTTP round trip (RemoteVehicleCl
 		const { baseUrl } = startRealDaemon(service);
 		const client = new RemoteVehicleClient({ baseUrl, token: TOKEN });
 
-		await client.invoke(
-			"ci.trigger",
-			1,
-			{ backend: "gh", jobRef: "job", params: {} },
-			{ permissions: PERMS, callerSessionId: "session-42" },
-		);
+		await invokeApprovedTrigger(client, "session-42");
 
 		expect(runPool.isJobSubscribed("gh", "job", "session-42")).toBe(true);
 		expect(runPool.isJobSubscribed("gh", "job", "")).toBe(false);
@@ -93,12 +107,7 @@ describe("ci.trigger / ci.subscribe over a real HTTP round trip (RemoteVehicleCl
 		const { baseUrl } = startRealDaemon(service);
 		const client = new RemoteVehicleClient({ baseUrl, token: TOKEN });
 
-		await client.invoke(
-			"ci.trigger",
-			1,
-			{ backend: "gh", jobRef: "job", params: {} },
-			{ permissions: PERMS, callerSessionId: "session-42" },
-		);
+		await invokeApprovedTrigger(client, "session-42");
 
 		const scoped = (await client.invoke("ci.subscribed", 1, { subscriberId: "session-42" }, { permissions: PERMS })) as {
 			runs: Array<{ jobRef: string }>;

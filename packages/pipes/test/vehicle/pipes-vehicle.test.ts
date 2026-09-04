@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { Orchestrator } from "../../src/orchestrator.ts";
 import { createPipesService, OPERATION_NAMES, type PipesService } from "../../src/rpc/service.ts";
 import { Capability } from "../../src/run/ci-backend.ts";
+import { createPipesVehicleRegistry } from "../../src/vehicle/pipes-vehicle.ts";
 import { VERSION } from "../../src/version.ts";
 import { createStubCIBackend } from "../fixtures/stub-ci-backend.ts";
 
@@ -26,13 +27,13 @@ describe("createPipesVehicleRegistry (via PipesService.vehicle)", () => {
 		expect(service.vehicle.manifest().version).toBe(VERSION);
 	});
 
-	it("registers every real ci.* operation, dotted names preserved, daemon-only ops excluded", () => {
+	it("registers every real ci.* operation plus Vehicle's approval resolve/status operations", () => {
 		const { service } = harness();
 		const names = service.vehicle
 			.manifest()
 			.operations.map((op) => op.name)
 			.sort();
-		expect(names).toEqual([...OPERATION_NAMES].sort());
+		expect(names).toEqual([...OPERATION_NAMES, "vehicle.approval.resolve", "vehicle.approval.status"].sort());
 	});
 
 	it("no operation's own schema is itself an action-dispatch blob", () => {
@@ -43,15 +44,99 @@ describe("createPipesVehicleRegistry (via PipesService.vehicle)", () => {
 		}
 	});
 
-	it("gives each action its own honest effect: external-write for trigger/cancel/rerun, local-write for local state, read otherwise", () => {
+	it("gives each action its own honest effect and approval policy", () => {
 		const { service } = harness();
-		const effectOf = (name: string) => service.vehicle.manifest().operations.find((op) => op.name === name)?.effect;
-		expect(effectOf("ci.status")).toBe("read");
-		expect(effectOf("ci.trigger")).toBe("external-write");
-		expect(effectOf("ci.cancel")).toBe("external-write");
-		expect(effectOf("ci.rerun")).toBe("external-write");
-		expect(effectOf("ci.subscribe")).toBe("local-write");
-		expect(effectOf("ci.presets.set")).toBe("local-write");
+		const operation = (name: string) => service.vehicle.manifest().operations.find((candidate) => candidate.name === name);
+		expect(operation("ci.status")).toMatchObject({ effect: "read", approvalRequired: false });
+		expect(operation("ci.trigger")).toMatchObject({ effect: "external-write", approvalRequired: true });
+		expect(operation("ci.cancel")).toMatchObject({ effect: "external-write", approvalRequired: true });
+		expect(operation("ci.rerun")).toMatchObject({ effect: "external-write", approvalRequired: true });
+		expect(operation("rp.defects.update")).toMatchObject({ effect: "external-write", approvalRequired: true });
+		expect(operation("rp.dashboard.create")).toMatchObject({ effect: "external-write", approvalRequired: true });
+		expect(operation("rp.dashboard.widget.add")).toMatchObject({ effect: "external-write", approvalRequired: true });
+		expect(operation("ci.subscribe")).toMatchObject({ effect: "local-write", approvalRequired: false });
+		expect(operation("ci.presets.set")).toMatchObject({ effect: "local-write", approvalRequired: false });
+		expect(operation("ci.presets.remove")).toMatchObject({ effect: "local-write", approvalRequired: false });
+	});
+
+	it("blocks every external mutation before service dispatch", async () => {
+		const calls: string[] = [];
+		const registry = createPipesVehicleRegistry({
+			execute: async (action: string) => {
+				calls.push(action);
+				return {};
+			},
+		} as unknown as PipesService);
+		const mutations: Array<[string, Record<string, unknown>]> = [
+			["ci.trigger", { backend: "gh", jobRef: "build" }],
+			["ci.cancel", { backend: "gh", jobRef: "build", runId: "1" }],
+			["ci.rerun", { backend: "gh", jobRef: "build", runId: "1" }],
+			["rp.defects.update", { updates: [] }],
+			["rp.dashboard.create", { name: "quality" }],
+			["rp.dashboard.widget.add", { dashboardId: "1", name: "failures", type: "table" }],
+		];
+
+		for (const [name, input] of mutations) {
+			await expect(registry.invoke(name, 1, input, PERMS)).rejects.toMatchObject({
+				code: "approval-required",
+				category: "authorization",
+			});
+		}
+		expect(calls).toEqual([]);
+	});
+
+	it("keeps status, logs, discovery, and artifact reads ungated", async () => {
+		const calls: string[] = [];
+		const registry = createPipesVehicleRegistry({
+			execute: async (action: string) => {
+				calls.push(action);
+				return {};
+			},
+		} as unknown as PipesService);
+		const reads: Array<[string, Record<string, unknown>]> = [
+			["ci.status", { backend: "gh", jobRef: "build" }],
+			["ci.log", { backend: "gh", jobRef: "build" }],
+			["ci.discover", { backend: "gh" }],
+			["ci.artifacts", { backend: "gh", jobRef: "build", runId: "1" }],
+			["ci.artifact.entries", { backend: "gh", jobRef: "build", runId: "1", path: "logs.zip" }],
+			["ci.artifact.text", { backend: "gh", jobRef: "build", runId: "1", path: "logs.zip", entry: "job.log" }],
+			["ci.artifact.get", { backend: "gh", jobRef: "build", runId: "1", path: "report.json" }],
+		];
+
+		for (const [name, input] of reads) await registry.invoke(name, 1, input, PERMS);
+		expect(calls).toEqual(reads.map(([name]) => name));
+	});
+
+	it("uses exact-scoped, single-use capabilities for approved mutations", async () => {
+		const calls: string[] = [];
+		const registry = createPipesVehicleRegistry({
+			execute: async (action: string) => {
+				calls.push(action);
+				return { accepted: true };
+			},
+		} as unknown as PipesService);
+		const input = { backend: "gh", jobRef: "build" };
+		const denied = await registry.invoke("ci.trigger", 1, input, PERMS).catch((error: unknown) => error);
+		const requestId = (denied as { details?: { requestId?: string } }).details?.requestId;
+		expect(typeof requestId).toBe("string");
+		await expect(registry.invoke("vehicle.approval.status", 1, { requestId }, {})).resolves.toMatchObject({ status: "pending" });
+		const { capability } = (await registry.invoke(
+			"vehicle.approval.resolve",
+			1,
+			{ requestId, decision: "granted" },
+			{ permissions: ["vehicle:approvals:resolve"] },
+		)) as { capability: string };
+
+		await expect(
+			registry.invoke("ci.cancel", 1, { ...input, runId: "1" }, { ...PERMS, approvalCapability: capability }),
+		).rejects.toMatchObject({ code: "approval-capability-invalid" });
+		await expect(registry.invoke("ci.trigger", 1, input, { ...PERMS, approvalCapability: capability })).resolves.toEqual({
+			accepted: true,
+		});
+		await expect(registry.invoke("ci.trigger", 1, input, { ...PERMS, approvalCapability: capability })).rejects.toMatchObject({
+			code: "approval-capability-invalid",
+		});
+		expect(calls).toEqual(["ci.trigger"]);
 	});
 
 	it("ci.subscribe/ci.unsubscribe expose subscriberId (and ci.subscribe's scheduleMs) as optional -- not required, so every existing caller stays valid", () => {
@@ -88,7 +173,7 @@ describe("createPipesVehicleRegistry (via PipesService.vehicle)", () => {
 		expect(wait?.limits.maxTimeoutMs).toBeGreaterThan(30_000);
 		expect(wait?.limits.maxTimeoutMs).toBeGreaterThanOrEqual(3_600_000);
 		for (const op of operations) {
-			if (op.name === "ci.wait") continue;
+			if (op.name === "ci.wait" || op.name.startsWith("vehicle.approval.")) continue;
 			expect(op.limits.maxTimeoutMs).toBe(30_000);
 		}
 	});
